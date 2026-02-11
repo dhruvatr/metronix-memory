@@ -6,6 +6,8 @@ pipeline, and stores the results in vector + graph stores.
 
 from __future__ import annotations
 
+import time
+
 import structlog
 
 from metatron.core.interfaces import (
@@ -14,7 +16,7 @@ from metatron.core.interfaces import (
     VectorStoreInterface,
 )
 from metatron.core.models import Chunk, Document, SyncResult
-from metatron.ingestion.chunking import root_child_chunk
+from metatron.ingestion.chunking import chunk_text, root_child_chunk
 from metatron.ingestion.dedup import is_near_duplicate, simhash
 
 logger = structlog.get_logger()
@@ -74,3 +76,103 @@ class IngestionPipeline:
         # 4. Upsert to vector store (self._vector_store.upsert())
         # 5. Build and return SyncResult
         raise NotImplementedError("Ingestion pipeline not yet implemented")
+
+
+def ingest_documents(
+    documents: list[Document],
+    workspace_id: str,
+    connector_type: str = "",
+) -> SyncResult:
+    """Ingest documents into Qdrant + Memgraph (sync, uses existing stores).
+
+    Simplified pipeline that works with the current sync code:
+    1. Chunk each document's content
+    2. Store each chunk in Qdrant (embedding happens inside add_document)
+    3. For Jira documents, also write to Memgraph knowledge graph
+
+    Args:
+        documents: Documents fetched from a connector.
+        workspace_id: Target workspace for storage.
+        connector_type: Source type (e.g. "jira", "confluence").
+
+    Returns:
+        SyncResult with ingestion statistics.
+    """
+    from metatron.storage.qdrant import get_hybrid_store
+
+    t0 = time.time()
+    store = get_hybrid_store(workspace_id)
+    new_count = 0
+    skip_count = 0
+    errors: list[str] = []
+
+    for doc in documents:
+        try:
+            if not doc.content or not doc.content.strip():
+                skip_count += 1
+                continue
+
+            chunks = chunk_text(doc.content)
+            for chunk in chunks:
+                metadata = {
+                    "title": doc.title,
+                    "type": doc.source_type or connector_type,
+                    "source_id": doc.source_id,
+                    "doc_label": doc.source_id,
+                    "workspace_id": workspace_id,
+                    "author": doc.author,
+                    **(doc.metadata or {}),
+                }
+                store.add_document(chunk, metadata=metadata, doc_id=doc.source_id)
+            new_count += 1
+
+            # Jira: also write to knowledge graph
+            if doc.source_type == "jira":
+                _write_jira_to_graph(doc, workspace_id)
+
+            if new_count % 50 == 0:
+                logger.info("ingest.progress", new=new_count, total=len(documents))
+
+        except Exception as e:
+            logger.warning("ingest.document.error", source_id=doc.source_id, error=str(e))
+            errors.append(f"{doc.source_id}: {e}")
+
+    duration_ms = (time.time() - t0) * 1000
+    logger.info("ingest.done", new=new_count, skipped=skip_count,
+                errors=len(errors), duration_ms=round(duration_ms))
+
+    return SyncResult(
+        connector_type=connector_type,
+        workspace_id=workspace_id,
+        documents_fetched=len(documents),
+        documents_new=new_count,
+        documents_skipped=skip_count,
+        errors=errors,
+        duration_ms=duration_ms,
+    )
+
+
+def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:
+    """Write a Jira document to Memgraph knowledge graph."""
+    try:
+        from metatron.connectors.jira_processing import process_jira_issue
+        from metatron.storage.graph_jira import write_jira_graph_to_memgraph
+
+        # Re-parse structured data from metadata if available
+        jira_data = {
+            "key": doc.source_id,
+            "summary": doc.title,
+            "status": doc.metadata.get("status", ""),
+            "assignee": doc.metadata.get("assignee"),
+            "reporter": doc.metadata.get("reporter"),
+            "issuetype": doc.metadata.get("issuetype"),
+            "priority": doc.metadata.get("priority"),
+            "description": doc.content[:2000],
+        }
+        write_jira_graph_to_memgraph(
+            jira_data, doc.content,
+            workspace_id=workspace_id,
+            doc_label=doc.source_id,
+        )
+    except Exception as e:
+        logger.warning("ingest.jira_graph.error", source_id=doc.source_id, error=str(e))
