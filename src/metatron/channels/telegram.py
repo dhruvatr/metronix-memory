@@ -2,12 +2,13 @@
 
 Receives messages via long-polling (MVP). Routes through AgentRouter
 using asyncio.to_thread() since the router is sync. Handles typing
-indicator, long message splitting, and Markdown parse fallback.
+indicator, long message splitting, and Markdown→HTML→plain fallback.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 
 import structlog
 from aiogram import Bot, Dispatcher, types
@@ -101,11 +102,12 @@ class TelegramChannel:
     async def _send_response(
         self, chat_id: int, text: str, reply_to: int | None = None,
     ) -> None:
-        """Send a response, splitting long messages and handling Markdown errors."""
+        """Send a response with 3-step fallback: Markdown → HTML → plain text."""
         chunks = _split_message(text)
 
         for i, chunk in enumerate(chunks):
             reply_id = reply_to if i == 0 else None
+            # Step 1: try Markdown
             try:
                 await self._bot.send_message(
                     chat_id=chat_id,
@@ -113,17 +115,52 @@ class TelegramChannel:
                     reply_to_message_id=reply_id,
                     parse_mode=ParseMode.MARKDOWN,
                 )
+                continue
             except Exception:
-                # Markdown parse failed — fall back to plain text
-                try:
-                    await self._bot.send_message(
-                        chat_id=chat_id,
-                        text=chunk,
-                        reply_to_message_id=reply_id,
-                        parse_mode=None,
-                    )
-                except Exception as e:
-                    logger.error("telegram.send.error", chat_id=chat_id, error=str(e))
+                pass
+            # Step 2: try HTML (keeps basic formatting)
+            try:
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=_markdown_to_html(chunk),
+                    reply_to_message_id=reply_id,
+                    parse_mode=ParseMode.HTML,
+                )
+                continue
+            except Exception:
+                pass
+            # Step 3: plain text
+            try:
+                await self._bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    reply_to_message_id=reply_id,
+                    parse_mode=None,
+                )
+            except Exception as e:
+                logger.error("telegram.send.error", chat_id=chat_id, error=str(e))
+
+
+def _markdown_to_html(text: str) -> str:
+    """Convert common Markdown to Telegram-compatible HTML.
+
+    Used as a fallback when Telegram's Markdown parser rejects LLM output.
+    HTML is more forgiving and preserves basic formatting.
+    """
+    # Code blocks first (before inline code)
+    text = re.sub(r"```\w*\n?(.*?)```", r"<pre>\1</pre>", text, flags=re.DOTALL)
+    # Inline code
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    # Bold: **text** or __text__
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
+    # Italic: *text* (but not inside already-converted tags)
+    text = re.sub(r"(?<![<\w])\*(?!\*)(.+?)(?<!\*)\*(?![>\w])", r"<i>\1</i>", text)
+    # Links: [text](url)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+    # Headings: ### text → <b>text</b>
+    text = re.sub(r"^#{1,6}\s+(.+)", r"<b>\1</b>", text, flags=re.MULTILINE)
+    return text
 
 
 def _split_message(text: str, max_length: int = _TG_MAX_LENGTH) -> list[str]:

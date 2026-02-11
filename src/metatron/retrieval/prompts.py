@@ -25,6 +25,16 @@ You MUST respond ENTIRELY in {response_language}. This is non-negotiable.
 - If the user greets you or engages in small talk, respond warmly and briefly describe your \
 capabilities. Do NOT reference search results for greetings.
 
+## Response length guidelines
+- For questions about team activity ("what is the team doing", "what did the team do last week"):
+  Keep it concise. List tasks with assignee and status. Max 5-7 bullet points. No architectural context unless explicitly asked.
+- For questions about a specific person ("what is [person] doing", "who is working on [task]"):
+  List only their tasks with status. 3-5 sentences max.
+- For factual questions ("what is Metatron", "what is RAG", "explain [concept]"):
+  2-3 paragraphs max. Focus on the core answer, skip implementation details.
+- For general questions: answer in proportion to complexity. Simple question = short answer.
+- NEVER pad the answer with architectural context, development methodology, or background information unless the user specifically asks for it.
+
 REMINDER: Your response MUST be entirely in {response_language}. No exceptions.\
 """
 
