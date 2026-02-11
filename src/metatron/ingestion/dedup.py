@@ -99,3 +99,39 @@ def is_near_duplicate(
         True if the texts are likely near-duplicates.
     """
     return hamming_distance(hash1, hash2) <= threshold
+
+
+class DeduplicationIndex:
+    """In-memory SimHash index for near-duplicate detection during ingestion.
+
+    Tracks (simhash → doc_label) mappings. A chunk is considered a duplicate
+    if its SimHash is within Hamming distance ≤ threshold of any existing
+    chunk from a DIFFERENT document.
+
+    Same-document chunks are not flagged (handled by delete-before-reingest).
+    """
+
+    def __init__(self, threshold: int = DEFAULT_THRESHOLD) -> None:
+        self._hashes: dict[int, str] = {}  # simhash → doc_label
+        self._threshold = threshold
+
+    def check_and_add(self, text: str, doc_label: str) -> bool:
+        """Check if text is a near-duplicate, then register it.
+
+        Returns True if a near-duplicate from a different document exists.
+        """
+        h = simhash(text)
+        if h == 0:
+            return False  # empty/whitespace text, skip dedup check
+        for existing_hash, existing_label in self._hashes.items():
+            if existing_label != doc_label and is_near_duplicate(h, existing_hash, self._threshold):
+                return True
+        self._hashes[h] = doc_label
+        return False
+
+    def remove_doc(self, doc_label: str) -> None:
+        """Remove all hashes for a document (call before re-ingesting)."""
+        self._hashes = {h: lbl for h, lbl in self._hashes.items() if lbl != doc_label}
+
+    def __len__(self) -> int:
+        return len(self._hashes)

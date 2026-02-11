@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from metatron.ingestion.dedup import hamming_distance, is_near_duplicate, simhash
+from metatron.ingestion.dedup import (
+    DeduplicationIndex,
+    hamming_distance,
+    is_near_duplicate,
+    simhash,
+)
 
 
 class TestSimhash:
@@ -71,3 +76,69 @@ class TestIsNearDuplicate:
         dist = hamming_distance(h1, h2)
         assert is_near_duplicate(h1, h2, threshold=dist) is True
         assert is_near_duplicate(h1, h2, threshold=dist - 1) is False
+
+
+class TestDeduplicationIndex:
+    def test_first_chunk_never_duplicate(self) -> None:
+        idx = DeduplicationIndex()
+        assert idx.check_and_add("Some unique text content here", "doc1") is False
+        assert len(idx) == 1
+
+    def test_identical_text_different_doc_is_duplicate(self) -> None:
+        idx = DeduplicationIndex()
+        text = "The quick brown fox jumps over the lazy dog in the park"
+        idx.check_and_add(text, "doc1")
+        assert idx.check_and_add(text, "doc2") is True
+
+    def test_same_doc_not_flagged(self) -> None:
+        """Same-document chunks should not be flagged as duplicates."""
+        idx = DeduplicationIndex()
+        text = "The quick brown fox jumps over the lazy dog in the park"
+        idx.check_and_add(text, "doc1")
+        # Same text, same doc — not a duplicate (handled by delete-before-reingest)
+        assert idx.check_and_add(text, "doc1") is False
+
+    def test_different_text_not_duplicate(self) -> None:
+        idx = DeduplicationIndex()
+        idx.check_and_add("Python programming language features and benefits", "doc1")
+        assert idx.check_and_add("Cooking Italian pasta dishes with fresh ingredients", "doc2") is False
+        assert len(idx) == 2
+
+    def test_empty_text_skipped(self) -> None:
+        idx = DeduplicationIndex()
+        assert idx.check_and_add("", "doc1") is False
+        assert idx.check_and_add("   ", "doc1") is False
+        assert len(idx) == 0
+
+    def test_remove_doc(self) -> None:
+        idx = DeduplicationIndex()
+        idx.check_and_add("First document chunk content for testing", "doc1")
+        idx.check_and_add("Second document chunk content for testing", "doc2")
+        assert len(idx) == 2
+        idx.remove_doc("doc1")
+        assert len(idx) == 1
+
+    def test_remove_doc_allows_reingest(self) -> None:
+        """After removing a doc, its text no longer blocks other docs."""
+        idx = DeduplicationIndex()
+        text = "The quick brown fox jumps over the lazy dog in the park"
+        idx.check_and_add(text, "doc1")
+        # Would be flagged as duplicate of doc1
+        assert idx.check_and_add(text, "doc2") is True
+        # doc2 was NOT registered (duplicate detected → skipped)
+        assert len(idx) == 1
+        # Remove doc1 → index empty
+        idx.remove_doc("doc1")
+        assert len(idx) == 0
+        # Now doc3 with same text is accepted (nothing to compare against)
+        assert idx.check_and_add(text, "doc3") is False
+        assert len(idx) == 1
+
+    def test_custom_threshold(self) -> None:
+        # With threshold=0, only exact hash matches are duplicates
+        idx = DeduplicationIndex(threshold=0)
+        idx.check_and_add("The quick brown fox jumps over the lazy dog", "doc1")
+        # Slightly different text — different hash, should not match with threshold=0
+        result = idx.check_and_add("The quick brown fox leaps over the lazy dog", "doc2")
+        # With threshold=0 these likely won't match (different hashes)
+        assert result is False

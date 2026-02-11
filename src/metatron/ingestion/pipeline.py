@@ -18,7 +18,7 @@ from metatron.core.interfaces import (
 )
 from metatron.core.models import Chunk, Document, SyncResult
 from metatron.ingestion.chunking import chunk_text, root_child_chunk
-from metatron.ingestion.dedup import is_near_duplicate, simhash
+from metatron.ingestion.dedup import DeduplicationIndex, simhash
 from metatron.ingestion.processors.dates import extract_date_from_text
 
 logger = structlog.get_logger()
@@ -150,9 +150,11 @@ def ingest_documents(
 
     t0 = time.time()
     store = get_hybrid_store(workspace_id)
+    dedup_index = DeduplicationIndex()
     new_count = 0
     updated_count = 0
     skip_count = 0
+    dedup_count = 0
     errors: list[str] = []
 
     for doc in documents:
@@ -168,6 +170,7 @@ def ingest_documents(
                 deleted = store.delete_by_doc_labels([doc.source_id])
                 if deleted > 0:
                     was_updated = True
+                    dedup_index.remove_doc(doc.source_id)
                     _delete_graph_node(doc.source_id, workspace_id)
 
             chunks = chunk_text(doc.content)
@@ -180,6 +183,14 @@ def ingest_documents(
             )
 
             for chunk in chunks:
+                # Dedup: skip near-duplicate chunks from different documents
+                if dedup_index.check_and_add(chunk, doc.source_id):
+                    dedup_count += 1
+                    logger.debug("ingest.chunk.duplicate", title=doc.title,
+                                 source_id=doc.source_id)
+                    continue
+
+                chunk_hash = simhash(chunk)
                 metadata = {
                     "title": doc.title,
                     "type": doc.source_type or connector_type,
@@ -188,6 +199,7 @@ def ingest_documents(
                     "workspace_id": workspace_id,
                     "author": doc.author,
                     "date": doc_date,
+                    "simhash": chunk_hash,
                     **(doc.metadata or {}),
                 }
                 store.add_document(chunk, metadata=metadata, doc_id=doc.source_id)
@@ -212,7 +224,8 @@ def ingest_documents(
 
     duration_ms = (time.time() - t0) * 1000
     logger.info("ingest.done", new=new_count, updated=updated_count,
-                skipped=skip_count, errors=len(errors), duration_ms=round(duration_ms))
+                skipped=skip_count, duplicates=dedup_count,
+                errors=len(errors), duration_ms=round(duration_ms))
 
     return SyncResult(
         connector_type=connector_type,

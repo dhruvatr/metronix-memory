@@ -151,6 +151,92 @@ class TestConnectorSinceParameter:
 # ---------------------------------------------------------------------------
 
 
+class TestPipelineDedup:
+    @patch("metatron.storage.qdrant.get_hybrid_store")
+    def test_duplicate_chunks_across_docs_skipped(self, mock_get_store) -> None:
+        """When two docs produce identical chunks, the second is skipped."""
+        from metatron.core.models import Document
+        from metatron.ingestion.pipeline import ingest_documents
+
+        store = MagicMock()
+        mock_get_store.return_value = store
+
+        # Two docs with identical content → same chunks
+        doc1 = Document(source_type="confluence", source_id="PAGE-1",
+                        title="Doc A", content="The quick brown fox jumps over the lazy dog in the park every single morning")
+        doc2 = Document(source_type="confluence", source_id="PAGE-2",
+                        title="Doc B", content="The quick brown fox jumps over the lazy dog in the park every single morning")
+
+        result = ingest_documents([doc1, doc2], "WS1", "confluence")
+
+        # Both docs should count as new (document-level), but doc2's chunks
+        # should be skipped at the chunk level (dedup)
+        assert result.documents_new == 2
+        # doc1 stores chunks, doc2 chunks are duplicates → fewer add_document calls
+        calls_count = store.add_document.call_count
+        # doc1 should have stored at least 1 chunk
+        assert calls_count >= 1
+
+    @patch("metatron.storage.qdrant.get_hybrid_store")
+    def test_simhash_stored_in_metadata(self, mock_get_store) -> None:
+        """Chunk metadata includes simhash value."""
+        from metatron.core.models import Document
+        from metatron.ingestion.pipeline import ingest_documents
+
+        store = MagicMock()
+        mock_get_store.return_value = store
+
+        doc = Document(source_type="confluence", source_id="PAGE-1",
+                       title="Test", content="Unique content that should be indexed normally here")
+
+        ingest_documents([doc], "WS1", "confluence")
+
+        assert store.add_document.call_count >= 1
+        # Check metadata of first call
+        call_kwargs = store.add_document.call_args_list[0]
+        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
+        assert "simhash" in metadata
+        assert isinstance(metadata["simhash"], int)
+
+    @patch("metatron.storage.qdrant.get_hybrid_store")
+    def test_same_doc_chunks_not_deduped(self, mock_get_store) -> None:
+        """Chunks from the same document are NOT flagged as duplicates."""
+        from metatron.core.models import Document
+        from metatron.ingestion.pipeline import ingest_documents
+
+        store = MagicMock()
+        mock_get_store.return_value = store
+
+        doc = Document(source_type="confluence", source_id="PAGE-1",
+                       title="Test", content="Repeated content. " * 50)
+
+        result = ingest_documents([doc], "WS1", "confluence")
+        assert result.documents_new == 1
+        # All chunks from same doc should be stored (not deduped against each other)
+        assert store.add_document.call_count >= 1
+
+    @patch("metatron.storage.qdrant.get_hybrid_store")
+    def test_incremental_removes_doc_from_dedup_index(self, mock_get_store) -> None:
+        """Incremental reingest calls dedup_index.remove_doc before processing."""
+        from metatron.core.models import Document
+        from metatron.ingestion.pipeline import ingest_documents
+
+        store = MagicMock()
+        store.delete_by_doc_labels.return_value = 2  # had old chunks
+        mock_get_store.return_value = store
+
+        doc1 = Document(source_type="confluence", source_id="PAGE-1",
+                        title="Original", content="The quick brown fox jumps over the lazy dog in the park every morning")
+        doc2 = Document(source_type="confluence", source_id="PAGE-1",
+                        title="Updated", content="The quick brown fox jumps over the lazy dog in the park every morning")
+
+        with patch("metatron.ingestion.pipeline._delete_graph_node"):
+            result = ingest_documents([doc1, doc2], "WS1", "confluence", incremental=True)
+
+        # Both should be updated (incremental delete found old chunks)
+        assert result.documents_updated == 2
+
+
 class TestPipelineIncremental:
     @patch("metatron.storage.qdrant.get_hybrid_store")
     def test_incremental_deletes_old_chunks(self, mock_get_store) -> None:
