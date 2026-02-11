@@ -106,6 +106,11 @@ class TestRouteGreeting:
         assert "Metatron" in result
         assert "knowledge assistant" in result
 
+    def test_start_command_returns_greeting(self, router: AgentRouter) -> None:
+        result = router.route("/start", user_id="u1")
+        assert "Metatron" in result
+        assert "knowledge assistant" in result
+
 
 class TestRouteSmallTalk:
     @patch("metatron.agent.router.chat_completion")

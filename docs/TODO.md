@@ -18,13 +18,13 @@ Open-source core (metatron-core). Enterprise features tracked separately in meta
 - [x] Person name aliases (Russian nicknames → Jira display names) — `aliases.py`
 - [x] Follow-up detection (independent questions don't get session history) — `_is_follow_up()`
 - [x] Query/intent_query parameter fix (language detection uses current message only)
+- [x] Handle `/start` command — return greeting response
 
 ---
 
 ## P0 — Current Iteration
 
 ### Bot UX
-- [ ] Handle `/start` command — return greeting response
 - [ ] Reduce answer verbosity — too much architectural context in activity answers
 - [ ] Fix Markdown formatting fallback — some LLM responses break Telegram's parser
 
