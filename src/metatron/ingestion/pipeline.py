@@ -158,6 +158,7 @@ def ingest_documents(
     for doc in documents:
         try:
             if not doc.content or not doc.content.strip():
+                logger.debug("ingest.skipped", title=doc.title, source_id=doc.source_id, reason="empty body")
                 skip_count += 1
                 continue
 
@@ -205,6 +206,7 @@ def ingest_documents(
                             total=len(documents))
 
         except Exception as e:
+            logger.debug("ingest.skipped", title=doc.title, source_id=doc.source_id, reason=f"error: {e}")
             logger.warning("ingest.document.error", source_id=doc.source_id, error=str(e))
             errors.append(f"{doc.source_id}: {e}")
 

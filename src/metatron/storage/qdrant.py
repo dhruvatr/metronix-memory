@@ -227,16 +227,18 @@ class QdrantVectorStore:
         match = MatchAny(any=doc_labels) if len(doc_labels) > 1 else MatchValue(value=doc_labels[0])
         filt = Filter(must=[FieldCondition(key="doc_label", match=match)])
         try:
-            # Count before delete
-            before, _ = self.client.scroll(
+            # Count existing points before delete
+            existing, _ = self.client.scroll(
                 collection_name=self.collection_name,
-                scroll_filter=filt, limit=0, with_payload=False, with_vectors=False,
+                scroll_filter=filt, limit=100, with_payload=False, with_vectors=False,
             )
+            count = len(existing)
+            if count == 0:
+                return 0
             self.client.delete(
                 collection_name=self.collection_name,
                 points_selector=filt,
             )
-            count = len(before)
             logger.info("qdrant.delete_by_doc_labels", doc_labels=doc_labels[:5], deleted=count)
             return count
         except Exception as e:
