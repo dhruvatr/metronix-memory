@@ -6,7 +6,7 @@ and services. They pull instances from app.state (set during lifespan).
 
 from __future__ import annotations
 
-from fastapi import Depends, Request
+from fastapi import Request
 
 from metatron.core.config import Settings
 

@@ -10,7 +10,7 @@ import structlog
 
 from metatron.agent.router import AgentRouter
 from metatron.core.interfaces import ChannelInterface
-from metatron.core.models import IncomingMessage, OutgoingMessage
+from metatron.core.models import OutgoingMessage
 
 logger = structlog.get_logger()
 

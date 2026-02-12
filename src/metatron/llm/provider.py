@@ -5,7 +5,7 @@ from typing import Dict, Optional, Type
 import structlog
 
 from metatron.core.config import Settings
-from metatron.llm.base import LLMProvider, LLMError, LLMConnectionError, LLMAuthenticationError
+from metatron.llm.base import LLMProvider
 from metatron.llm.providers import (
     DeepSeekProvider,
     OpenRouterProvider,

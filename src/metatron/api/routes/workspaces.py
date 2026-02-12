@@ -11,7 +11,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from metatron.workspaces import WorkspaceStats, get_workspace_manager
+from metatron.workspaces import get_workspace_manager
 
 logger = structlog.get_logger()
 

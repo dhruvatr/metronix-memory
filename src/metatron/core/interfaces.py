@@ -17,7 +17,6 @@ from metatron.core.models import (
     Chunk,
     Connection,
     Document,
-    IncomingMessage,
     OutgoingMessage,
     User,
 )

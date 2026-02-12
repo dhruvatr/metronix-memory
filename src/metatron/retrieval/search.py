@@ -21,7 +21,7 @@ from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
 from metatron.retrieval.query_expansion import expand_query
 from metatron.retrieval.routing import (
-    _extract_json_object, is_jira_query, is_jira_result,
+    _extract_json_object, is_jira_query,
     should_use_team_workflow_schema,
 )
 from metatron.storage.qdrant import get_hybrid_store  # TODO: async migration

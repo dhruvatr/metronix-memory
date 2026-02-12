@@ -508,7 +508,7 @@ class AgentRouter:
             added = registry.populate_from_qdrant(store)
         except Exception as e:
             logger.error("router.rebuild_aliases.error", error=str(e), exc_info=True)
-            return f"Failed to scan Qdrant: the error has been logged."
+            return "Failed to scan Qdrant: the error has been logged."
 
         return (
             f"Alias registry rebuilt: {added} new persons found, "

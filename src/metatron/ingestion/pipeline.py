@@ -16,8 +16,8 @@ from metatron.core.interfaces import (
     ProcessorInterface,
     VectorStoreInterface,
 )
-from metatron.core.models import Chunk, Document, SyncResult
-from metatron.ingestion.chunking import chunk_text, root_child_chunk
+from metatron.core.models import Document, SyncResult
+from metatron.ingestion.chunking import chunk_text
 from metatron.ingestion.dedup import DeduplicationIndex, simhash
 from metatron.ingestion.processors.dates import extract_date_from_text
 
@@ -285,7 +285,6 @@ def _register_persons(doc: Document) -> None:
 def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:
     """Write a Jira document to Memgraph knowledge graph."""
     try:
-        from metatron.connectors.jira_processing import process_jira_issue
         from metatron.storage.graph_jira import write_jira_graph_to_memgraph
 
         # Re-parse structured data from metadata if available

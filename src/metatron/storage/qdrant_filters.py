@@ -7,12 +7,12 @@ Migrated from PoC: metatron_experiments/metatron/indexers/hybrid_store_workspace
 """
 from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 import structlog
 from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
 
-from metatron.storage.qdrant import QdrantVectorStore, _normalize_workspace_id
+from metatron.storage.qdrant import QdrantVectorStore
 
 logger = structlog.get_logger()
 

@@ -7,7 +7,6 @@ This module generates sparse vectors compatible with Qdrant's sparse vector sear
 Migrated from PoC: metatron_experiments/metatron/indexers/bm25.py
 """
 import re
-import math
 from collections import Counter
 from typing import Dict, List, Tuple
 

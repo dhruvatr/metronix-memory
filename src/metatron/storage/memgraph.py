@@ -8,12 +8,11 @@ from __future__ import annotations
 import atexit, json, re, time
 from datetime import datetime, UTC
 from threading import Lock
-from typing import Dict, List, Optional
+from typing import Optional
 
 import structlog
 from neo4j import GraphDatabase
 
-from metatron.core.config import Settings
 from metatron.llm import chat_completion  # wired up when metatron.llm.chat_completion is available
 
 logger = structlog.get_logger()
@@ -73,7 +72,6 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         '"relationships": [{"source": "...", "target": "...", "type": "..."}]}\n\n'
         f'Текст:\n\n"""{text}"""'
     )
-    last_error = None
     content = ""
     for attempt in range(3):
         try:
@@ -87,7 +85,6 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
             )
             break
         except Exception as e:
-            last_error = e
             if attempt < 2:
                 wait = 2 * (attempt + 1)
                 logger.warning("memgraph.extract.retry", attempt=attempt + 1, wait=wait, error=str(e))

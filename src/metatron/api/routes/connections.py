@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 from metatron.connectors.registry import ConnectorRegistry, register_builtins
 from metatron.core.config import Settings
-from metatron.core.models import Connection, SyncResult
+from metatron.core.models import Connection
 
 logger = structlog.get_logger()
 
