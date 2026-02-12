@@ -156,7 +156,10 @@ class ConfluenceConnector(ConnectorInterface):
 
         version = page.get("version", {})
         history = page.get("history", {})
-        author = history.get("createdBy", {}).get("displayName", "")
+        created_by = history.get("createdBy", {})
+        author = created_by.get("displayName", "")
+        author_email = created_by.get("email", "") or created_by.get("emailAddress", "")
+        last_modified_by = version.get("by", {})
         last_modified = version.get("when", "")
         labels = [lb["name"] for lb in page.get("metadata", {}).get("labels", {}).get("results", [])]
 
@@ -183,6 +186,10 @@ class ConfluenceConnector(ConnectorInterface):
                 "space_key": space_key,
                 "page_id": page_id,
                 "last_modified": last_modified,
+                "author": author,
+                "author_email": author_email,
+                "last_modified_by": last_modified_by.get("displayName", ""),
+                "last_modified_by_email": last_modified_by.get("email", "") or last_modified_by.get("emailAddress", ""),
                 "type": "confluence",
             },
             **({"created_at": created_at} if created_at else {}),

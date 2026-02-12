@@ -3,10 +3,17 @@
 Maps Russian nicknames, short forms, and transliterations to full Jira
 display names so that queries like "Что делает Женя?" find tasks assigned
 to "Evgeny Shcherbinin".
+
+NOTE: This module is the hardcoded fallback. New deployments should rely
+on AliasRegistry (alias_registry.py) which auto-populates from Jira sync.
+Use seed_custom_aliases() to migrate these entries into the registry.
 """
 from __future__ import annotations
 
-from typing import List
+from typing import TYPE_CHECKING, List
+
+if TYPE_CHECKING:
+    from metatron.retrieval.alias_registry import AliasRegistry
 
 # Mapping: lowercase alias -> list of possible full Jira displayName values.
 # Each alias can map to multiple names (rare but possible).
@@ -70,3 +77,20 @@ def resolve_person_name(extracted: str) -> List[str]:
         return NAME_ALIASES[key]
     # No alias — return original capitalized as fallback
     return [extracted.strip().capitalize()]
+
+
+def seed_custom_aliases(registry: AliasRegistry) -> int:
+    """Seed hardcoded NAME_ALIASES into an AliasRegistry as custom aliases.
+
+    Idempotent — safe to call multiple times. Only adds aliases that
+    don't already exist in the registry.
+
+    Returns:
+        Number of aliases added.
+    """
+    added = 0
+    for alias, names in NAME_ALIASES.items():
+        if names:
+            registry.add_custom_alias(alias, names[0])
+            added += 1
+    return added

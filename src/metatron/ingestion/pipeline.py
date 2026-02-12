@@ -209,6 +209,9 @@ def ingest_documents(
             else:
                 new_count += 1
 
+            # Register people from any source into alias registry
+            _register_persons(doc)
+
             # Jira: also write to knowledge graph
             if doc.source_type == "jira":
                 _write_jira_to_graph(doc, workspace_id)
@@ -246,6 +249,37 @@ def _delete_graph_node(doc_label: str, workspace_id: str) -> None:
         delete_document_node(doc_label, workspace_id)
     except Exception as e:
         logger.warning("ingest.graph_delete.error", doc_label=doc_label, error=str(e))
+
+
+_PERSON_FIELDS = [
+    ("assignee", "assignee_email"),       # Jira
+    ("reporter", "reporter_email"),       # Jira
+    ("author", "author_email"),           # Confluence, generic
+    ("last_modified_by", "last_modified_by_email"),  # Confluence
+    ("creator", "creator_email"),         # Generic / future connectors
+]
+
+
+def _register_persons(doc: Document) -> None:
+    """Register people from document metadata in the alias registry (best-effort).
+
+    Scans well-known person fields (assignee, reporter, author, creator)
+    so any connector that puts names in metadata is picked up automatically.
+    """
+    try:
+        from metatron.retrieval.alias_registry import get_alias_registry
+
+        registry = get_alias_registry()
+        meta = doc.metadata or {}
+        for name_field, email_field in _PERSON_FIELDS:
+            name = meta.get(name_field)
+            if name and name.strip():
+                registry.register_person(
+                    display_name=name,
+                    email=meta.get(email_field) or None,
+                )
+    except Exception as e:
+        logger.warning("ingest.alias_register.error", source_id=doc.source_id, error=str(e))
 
 
 def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:

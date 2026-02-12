@@ -17,6 +17,7 @@ from metatron.retrieval.prompts import (
     HYBRID_SYSTEM_PROMPT, TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT,
     TEAM_WORKFLOW_SCHEMA_SPEC,
 )
+from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
 from metatron.retrieval.query_expansion import expand_query
 from metatron.retrieval.routing import (
@@ -314,7 +315,9 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     if person:
         # Person-specific: only their tasks, skip general In Progress
         person = person.strip()
-        full_names = resolve_person_name(person)
+        full_names = get_alias_registry().resolve(person)
+        if not full_names:
+            full_names = resolve_person_name(person)
         try:
             store = get_hybrid_store(workspace_id)
             for fname in full_names:
