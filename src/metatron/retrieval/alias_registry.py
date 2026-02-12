@@ -128,6 +128,55 @@ class AliasRegistry:
 
         return results
 
+    def populate_from_qdrant(self, qdrant_store: object) -> int:
+        """Scan existing Qdrant points and register all persons found in metadata.
+
+        Scrolls through every point in the collection, extracts person-related
+        payload fields (assignee, reporter, author, etc.), and registers them.
+        No LLM calls, no re-embedding — just a metadata scan.
+
+        Args:
+            qdrant_store: A QdrantVectorStore instance (has .client and .collection_name).
+
+        Returns:
+            Number of new persons registered.
+        """
+        from metatron.ingestion.pipeline import _PERSON_FIELDS
+
+        before = self.person_count
+        offset = None
+        name_fields = [nf for nf, _ in _PERSON_FIELDS]
+        email_fields = [ef for _, ef in _PERSON_FIELDS]
+        payload_keys = list(set(name_fields + email_fields))
+
+        while True:
+            results, offset = qdrant_store.client.scroll(  # type: ignore[attr-defined]
+                collection_name=qdrant_store.collection_name,  # type: ignore[attr-defined]
+                limit=100,
+                offset=offset,
+                with_payload=payload_keys,
+                with_vectors=False,
+            )
+            for point in results:
+                payload = point.payload or {}
+                for name_field, email_field in _PERSON_FIELDS:
+                    name = payload.get(name_field)
+                    if name and name.strip():
+                        self.register_person(
+                            display_name=name,
+                            email=payload.get(email_field) or None,
+                        )
+            if offset is None:
+                break
+
+        added = self.person_count - before
+        logger.info(
+            "alias_registry.populated_from_qdrant",
+            new_persons=added,
+            total_persons=self.person_count,
+        )
+        return added
+
     @property
     def person_count(self) -> int:
         """Number of registered persons."""

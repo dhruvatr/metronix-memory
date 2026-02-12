@@ -217,6 +217,8 @@ class AgentRouter:
             return "Conversation history cleared."
         if command == "/start":
             return self._handle_greeting(user_id, workspace_id)
+        if command == "/rebuild-aliases":
+            return self._cmd_rebuild_aliases(workspace_id)
 
         return f"Unknown command: {command}. Type /help for available commands."
 
@@ -225,9 +227,11 @@ class AgentRouter:
         return (
             "**Available commands:**\n"
             "/search <query> — Search the knowledge base\n"
-            "/sync [connector] [full] — Sync data sources (incremental by default)\n"
+            "/sync confluence|jira — Incremental sync (only changes)\n"
+            "/sync confluence|jira full — Full re-sync from scratch\n"
             "/status — Show workspace status\n"
             "/clear — Clear conversation history\n"
+            "/rebuild-aliases — Rebuild person name registry from stored data\n"
             "/help — Show this help message\n\n"
             "Or just type your question and I'll search for the answer."
         )
@@ -370,6 +374,29 @@ class AgentRouter:
             lines.append(f"**LLM fallback:** {self._settings.llm_fallback_provider}")
 
         return "\n".join(lines)
+
+    def _cmd_rebuild_aliases(self, workspace_id: str) -> str:
+        """Rebuild person alias registry by scanning existing Qdrant data."""
+        from metatron.retrieval.alias_registry import get_alias_registry
+        from metatron.retrieval.aliases import seed_custom_aliases
+        from metatron.storage.qdrant import get_hybrid_store
+
+        registry = get_alias_registry()
+
+        # Seed hardcoded aliases first (idempotent)
+        seed_custom_aliases(registry)
+
+        try:
+            store = get_hybrid_store(workspace_id)
+            added = registry.populate_from_qdrant(store)
+        except Exception as e:
+            logger.error("router.rebuild_aliases.error", error=str(e), exc_info=True)
+            return f"Failed to scan Qdrant: the error has been logged."
+
+        return (
+            f"Alias registry rebuilt: {added} new persons found, "
+            f"{registry.person_count} total."
+        )
 
 
 def _config_from_env(connector_type: str, settings: Settings) -> dict[str, str]:
