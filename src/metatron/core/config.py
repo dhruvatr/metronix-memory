@@ -19,6 +19,7 @@ class Settings(BaseSettings):
 
     # --- Application ---
     env: str = Field("development", alias="METATRON_ENV")
+    host: str = Field("0.0.0.0", alias="METATRON_HOST")
     port: int = Field(8000, alias="METATRON_PORT")
     log_level: str = Field("INFO", alias="METATRON_LOG_LEVEL")
     secret_key: str = Field("change-me-in-production", alias="METATRON_SECRET_KEY")
@@ -91,6 +92,7 @@ class Settings(BaseSettings):
 
     # --- Channels ---
     telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
+    discord_bot_token: str = Field("", alias="DISCORD_BOT_TOKEN")
     slack_bot_token: str = Field("", alias="SLACK_BOT_TOKEN")
     slack_app_token: str = Field("", alias="SLACK_APP_TOKEN")
     slack_signing_secret: str = Field("", alias="SLACK_SIGNING_SECRET")
