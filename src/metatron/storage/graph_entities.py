@@ -120,6 +120,67 @@ TYPE_ALIASES: dict[str, str] = {
 }
 
 
+ROLE_KEYWORDS: set[str] = {
+    "admins", "engineers", "developers", "analysts", "managers", "directors",
+    "executives", "leads", "owners", "consumers", "stewards", "users",
+    "team leads", "pms", "c-level", "bi developers", "bi leads",
+}
+
+PERSON_MERGE_MAP: dict[str, str] = {
+    # Artem
+    "artem": "Artem Tov Ben",
+    "артем": "Artem Tov Ben",
+    "артём": "Artem Tov Ben",
+    "tovbin": "Artem Tov Ben",
+    # Konstantin
+    "konstantin": "Kuzmin Konstantin",
+    "константин": "Kuzmin Konstantin",
+    "константин кузьмин": "Kuzmin Konstantin",
+    "костя": "Kuzmin Konstantin",
+    "kk": "Kuzmin Konstantin",
+    # Andrey
+    "андрей": "Andrew Ermakov",
+    "андрей ермаков": "Andrew Ermakov",
+    "ермаков": "Andrew Ermakov",
+    "андрей качалов": "Andrey Kachalov",
+    # Vadim
+    "вадим": "Pozdnyakov Vadim",
+    # Zhenya
+    "женя": "Evgeny Shcherbinin",
+    # Sergej
+    "сергей": "Seliverstov Sergej",
+    "сергей сильвестров": "Seliverstov Sergej",
+    # Vladimir
+    "владимир": "Vladimir Belykh",
+    "вова": "Vladimir Belykh",
+    "володя": "Vladimir Belykh",
+    "belykh": "Vladimir Belykh",
+    # Vasiliy
+    "василий": "Vasiliy Kazanin",
+    "вася": "Vasiliy Kazanin",
+    # Dudu/David
+    "дуду": "Dudu",
+    "dudo": "Dudu",
+    "дэвид (дуду)": "Dudu",
+    "давид": "Dudu",
+    # Ines
+    "инес": "Ines",
+    "inessa case": "Ines",
+    # Maxim
+    "макс": "Maxim",
+    "максим": "Maxim",
+    # Michael
+    "михаэль": "Michael",
+    "миша": "Michael",
+    # Alexander Gusev
+    "саша": "Alexander Gusev",
+    "саша гусев": "Alexander Gusev",
+    "александр": "Alexander Gusev",
+    # Alexander Fatin — separate person
+    "александр фатин": "Alexander Fatin",
+}
+
+
 def normalize_entity_type(raw_type: str) -> str:
     """Normalize a freeform entity type to the fixed taxonomy.
 
@@ -149,7 +210,9 @@ def is_valid_entity_name(name: str) -> bool:
     name = name.strip()
     if len(name) < 2:
         return False
-    if len(name) > 80:
+    if len(name) > 50:
+        return False
+    if _looks_like_sentence(name):
         return False
     if name.startswith(("http://", "https://", "/")):
         return False
@@ -158,3 +221,44 @@ def is_valid_entity_name(name: str) -> bool:
     if name.count("_") > 3:
         return False
     return True
+
+
+def _looks_like_sentence(name: str) -> bool:
+    """Detect task descriptions or long phrases stored as entity names."""
+    words = name.split()
+    if len(words) >= 6:
+        return True
+    lower = name.lower()
+    _RU_VERB_PREFIXES = (
+        "написать", "создать", "разобраться", "подключить",
+        "автоматизировать", "определить", "документировать", "починить",
+        "завершить", "продолжить", "перевод", "распределение", "обучение",
+        "получение", "уточнение", "исправление", "генерация", "презентация",
+    )
+    if any(lower.startswith(v) for v in _RU_VERB_PREFIXES):
+        return True
+    return False
+
+
+def is_role_not_person(name: str, entity_type: str) -> bool:
+    """Return True if this looks like a role/group, not an individual person.
+
+    Used to reclassify generic role names (e.g. "Engineers", "Admins")
+    from Person to Organization.
+    """
+    if entity_type != "Person":
+        return False
+    name_lower = name.lower().strip()
+    return name_lower in ROLE_KEYWORDS
+
+
+def normalize_person_name(name: str, entity_type: str) -> str:
+    """Resolve person name variants to a canonical name via PERSON_MERGE_MAP.
+
+    Only applies to Person entities. Returns the original name unchanged
+    if no mapping exists.
+    """
+    if entity_type != "Person":
+        return name
+    key = name.lower().strip()
+    return PERSON_MERGE_MAP.get(key, name)

@@ -129,18 +129,48 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         raw_entities = data.get("entities", [])
         raw_relationships = data.get("relationships", [])
 
-        # Post-process: normalize types and validate names
-        from metatron.storage.graph_entities import normalize_entity_type, is_valid_entity_name
+        # Post-process: normalize types, validate names, merge persons
+        from metatron.storage.graph_entities import (
+            normalize_entity_type, is_valid_entity_name,
+            is_role_not_person, normalize_person_name,
+        )
 
         entities: list[dict] = []
+        merged_aliases: dict[str, str] = {}  # alias_name → canonical_name
         for ent in raw_entities:
             name = (ent.get("name") or "").strip()
             if not is_valid_entity_name(name):
                 logger.debug("memgraph.extract.entity_filtered", name=name)
                 continue
+            ent_type = normalize_entity_type(ent.get("type", ""))
+
+            # Reclassify roles/groups from Person → Organization
+            if is_role_not_person(name, ent_type):
+                logger.debug("memgraph.extract.role_reclassified",
+                             name=name, old_type=ent_type)
+                ent_type = "Organization"
+
+            # Merge person name variants to canonical form
+            if ent_type == "Person":
+                canonical = normalize_person_name(name, ent_type)
+                if canonical != name:
+                    merged_aliases[name] = canonical
+                    logger.debug("memgraph.extract.person_merged",
+                                 original=name, canonical=canonical)
+                    name = canonical
+
             ent["name"] = name
-            ent["type"] = normalize_entity_type(ent.get("type", ""))
+            ent["type"] = ent_type
             entities.append(ent)
+
+        # Deduplicate entities after merging (same canonical name)
+        seen_names: set[str] = set()
+        deduped: list[dict] = []
+        for ent in entities:
+            if ent["name"] not in seen_names:
+                seen_names.add(ent["name"])
+                deduped.append(ent)
+        entities = deduped
 
         # Filter relationships to only include valid entity names
         valid_names = {e["name"] for e in entities}
@@ -148,6 +178,9 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         for rel in raw_relationships:
             src = (rel.get("source") or "").strip()
             tgt = (rel.get("target") or "").strip()
+            # Resolve merged aliases in relationships too
+            src = merged_aliases.get(src, src)
+            tgt = merged_aliases.get(tgt, tgt)
             if src in valid_names and tgt in valid_names:
                 rel["source"] = src
                 rel["target"] = tgt
@@ -155,8 +188,13 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
 
         logger.info("memgraph.extract.ok",
                      entities=len(entities), rels=len(relationships),
-                     filtered=len(raw_entities) - len(entities))
-        return {"entities": entities, "relationships": relationships}
+                     filtered=len(raw_entities) - len(entities),
+                     merged=len(merged_aliases))
+        return {
+            "entities": entities,
+            "relationships": relationships,
+            "merged_aliases": merged_aliases,
+        }
     except (json.JSONDecodeError, Exception) as exc:
         logger.error("memgraph.extract.parse_error", error=str(exc))
         return {"entities": [], "relationships": []}
@@ -179,6 +217,7 @@ def write_doc_graph_to_memgraph(
     graph = extract_graph_from_text(text)
     entities = graph["entities"]
     relationships = graph["relationships"]
+    merged_aliases: dict[str, str] = graph.get("merged_aliases", {})
     doc_id = doc_label
     edge_date = doc_date or upload_time
     logger.info("memgraph.write_doc", entities=len(entities), rels=len(relationships))
@@ -226,6 +265,15 @@ def write_doc_graph_to_memgraph(
                 {"src": rel.get("source"), "tgt": rel.get("target"),
                  "rt": rel.get("type"), "ws": workspace_id, "dl": doc_label,
                  "vf": edge_date},
+            )
+        # Write ALIAS relationships for merged person names
+        for alias_name, canonical_name in merged_aliases.items():
+            session.run(
+                "MERGE (a:Entity {name: $alias, workspace_id: $ws}) "
+                "MERGE (c:Entity {name: $canonical, workspace_id: $ws}) "
+                "MERGE (a)-[:ALIAS]->(c)",
+                {"alias": alias_name, "canonical": canonical_name,
+                 "ws": workspace_id},
             )
     logger.info("memgraph.write_doc.done", file_name=file_name, workspace_id=workspace_id)
 

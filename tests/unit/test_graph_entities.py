@@ -9,9 +9,13 @@ import pytest
 
 from metatron.storage.graph_entities import (
     ALLOWED_ENTITY_TYPES,
+    PERSON_MERGE_MAP,
     TYPE_ALIASES,
-    normalize_entity_type,
+    is_role_not_person,
     is_valid_entity_name,
+    normalize_entity_type,
+    normalize_person_name,
+    _looks_like_sentence,
 )
 
 
@@ -123,8 +127,8 @@ class TestIsValidEntityName:
         assert is_valid_entity_name(" ") is False
 
     def test_too_long(self) -> None:
-        assert is_valid_entity_name("x" * 81) is False
-        assert is_valid_entity_name("x" * 80) is True
+        assert is_valid_entity_name("x" * 51) is False
+        assert is_valid_entity_name("x" * 50) is True
 
     def test_url_rejected(self) -> None:
         assert is_valid_entity_name("https://example.com/page") is False
@@ -163,7 +167,7 @@ class TestExtractGraphNormalization:
                 {"name": "MTRNIX", "type": "epic"},
                 {"name": "https://example.com/long/path", "type": "URL"},
                 {"name": "x", "type": "unknown"},
-                {"name": "A" * 90, "type": "description"},
+                {"name": "A" * 55, "type": "description"},
             ],
             "relationships": [
                 {"source": "Kuzmin Konstantin", "target": "Qdrant", "type": "uses"},
@@ -189,7 +193,7 @@ class TestExtractGraphNormalization:
         # Invalid entities filtered
         assert "https://example.com/long/path" not in names
         assert "x" not in names
-        assert "A" * 90 not in names
+        assert "A" * 55 not in names
 
         # Relationships: only valid entity pairs survive
         rels = result["relationships"]
@@ -305,3 +309,171 @@ class TestConfluenceGraphSync:
 
         mock_jira_graph.assert_called_once()
         mock_doc_graph.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# is_role_not_person
+# ---------------------------------------------------------------------------
+
+class TestIsRoleNotPerson:
+    def test_detects_role_keywords(self) -> None:
+        for name in ("Admins", "Engineers", "Team Leads", "PMs", "Executives",
+                      "Analysts", "BI developers", "Directors", "Managers"):
+            assert is_role_not_person(name, "Person") is True, (
+                f"'{name}' should be detected as a role"
+            )
+
+    def test_passes_real_person_names(self) -> None:
+        for name in ("Kuzmin Konstantin", "John Doe", "Артём", "James",
+                      "Кирилл", "Alexander Fatin"):
+            assert is_role_not_person(name, "Person") is False, (
+                f"'{name}' should NOT be detected as a role"
+            )
+
+    def test_ignores_non_person_types(self) -> None:
+        assert is_role_not_person("Engineers", "Organization") is False
+        assert is_role_not_person("Admins", "Concept") is False
+
+
+# ---------------------------------------------------------------------------
+# _looks_like_sentence
+# ---------------------------------------------------------------------------
+
+class TestLooksLikeSentence:
+    def test_detects_long_phrases(self) -> None:
+        assert _looks_like_sentence(
+            "Implement graph extraction from Jira issues using LLM"
+        ) is True
+
+    def test_detects_russian_verb_prefix(self) -> None:
+        assert _looks_like_sentence("Написать тесты") is True
+        assert _looks_like_sentence("Создать новый модуль") is True
+        assert _looks_like_sentence("Автоматизировать деплой") is True
+
+    def test_passes_short_entity_names(self) -> None:
+        assert _looks_like_sentence("Qdrant") is False
+        assert _looks_like_sentence("Knowledge Graph") is False
+        assert _looks_like_sentence("MTRNIX-42") is False
+
+    def test_name_length_filter_at_50(self) -> None:
+        """Names over 50 chars are rejected by is_valid_entity_name."""
+        long_name = "x" * 51
+        assert is_valid_entity_name(long_name) is False
+        assert is_valid_entity_name("x" * 50) is True
+
+    def test_sentence_rejected_by_is_valid(self) -> None:
+        """Sentence-like names are rejected even if under 50 chars."""
+        assert is_valid_entity_name(
+            "Fix the search pipeline and add tests for it"
+        ) is False
+
+
+# ---------------------------------------------------------------------------
+# normalize_person_name + PERSON_MERGE_MAP
+# ---------------------------------------------------------------------------
+
+class TestNormalizePersonName:
+    def test_cyrillic_to_canonical(self) -> None:
+        assert normalize_person_name("Артём", "Person") == "Artem Tov Ben"
+        assert normalize_person_name("Константин", "Person") == "Kuzmin Konstantin"
+        assert normalize_person_name("Женя", "Person") == "Evgeny Shcherbinin"
+        assert normalize_person_name("Вова", "Person") == "Vladimir Belykh"
+        assert normalize_person_name("Миша", "Person") == "Michael"
+
+    def test_unknown_name_passes_through(self) -> None:
+        assert normalize_person_name("Кирилл", "Person") == "Кирилл"
+        assert normalize_person_name("Unknown Person", "Person") == "Unknown Person"
+
+    def test_non_person_type_unchanged(self) -> None:
+        assert normalize_person_name("Артём", "Organization") == "Артём"
+
+    def test_case_insensitive_lookup(self) -> None:
+        assert normalize_person_name("артём", "Person") == "Artem Tov Ben"
+        assert normalize_person_name("КОСТЯ", "Person") == "Kuzmin Konstantin"
+
+
+# ---------------------------------------------------------------------------
+# Integration: roles reclassified, persons merged in extraction
+# ---------------------------------------------------------------------------
+
+class TestRoleReclassificationIntegration:
+    @patch("metatron.storage.memgraph.chat_completion")
+    def test_roles_reclassified_to_organization(self, mock_llm: MagicMock) -> None:
+        """Role names typed as Person get reclassified to Organization."""
+        mock_llm.return_value = json.dumps({
+            "entities": [
+                {"name": "Engineers", "type": "Person"},
+                {"name": "John Doe", "type": "Person"},
+            ],
+            "relationships": [],
+        })
+
+        from metatron.storage.memgraph import extract_graph_from_text
+        result = extract_graph_from_text("Engineers and John Doe worked on it")
+
+        types = {e["name"]: e["type"] for e in result["entities"]}
+        assert types["Engineers"] == "Organization"
+        assert types["John Doe"] == "Person"
+
+    @patch("metatron.storage.memgraph.chat_completion")
+    def test_person_merge_in_extraction(self, mock_llm: MagicMock) -> None:
+        """Cyrillic person names are merged to canonical via PERSON_MERGE_MAP."""
+        mock_llm.return_value = json.dumps({
+            "entities": [
+                {"name": "Артём", "type": "Person"},
+                {"name": "Qdrant", "type": "Technology"},
+            ],
+            "relationships": [
+                {"source": "Артём", "target": "Qdrant", "type": "uses"},
+            ],
+        })
+
+        from metatron.storage.memgraph import extract_graph_from_text
+        result = extract_graph_from_text("Артём работает с Qdrant")
+
+        names = {e["name"] for e in result["entities"]}
+        assert "Artem Tov Ben" in names
+        assert "Артём" not in names
+        # Relationship source should also be resolved
+        assert result["relationships"][0]["source"] == "Artem Tov Ben"
+        # merged_aliases should record the mapping
+        assert result["merged_aliases"]["Артём"] == "Artem Tov Ben"
+
+
+class TestAliasRelationshipWrite:
+    @patch("metatron.storage.memgraph.get_memgraph_driver")
+    @patch("metatron.storage.memgraph.extract_graph_from_text")
+    def test_alias_relationships_created(
+        self, mock_extract: MagicMock, mock_driver: MagicMock,
+    ) -> None:
+        """ALIAS relationships written for merged person names."""
+        mock_extract.return_value = {
+            "entities": [
+                {"name": "Artem Tov Ben", "type": "Person"},
+            ],
+            "relationships": [],
+            "merged_aliases": {"Артём": "Artem Tov Ben"},
+        }
+
+        mock_session = MagicMock()
+        mock_driver.return_value.session.return_value.__enter__ = lambda s: mock_session
+        mock_driver.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from metatron.storage.memgraph import write_doc_graph_to_memgraph
+        write_doc_graph_to_memgraph(
+            text="Артём wrote code",
+            file_name="test.txt",
+            user_id="user1",
+            workspace_id="TEST",
+            doc_label="DOC-1",
+        )
+
+        # Find the ALIAS cypher call among all session.run calls
+        alias_calls = [
+            c for c in mock_session.run.call_args_list
+            if "ALIAS" in str(c)
+        ]
+        assert len(alias_calls) == 1
+        params = alias_calls[0][0][1]
+        assert params["alias"] == "Артём"
+        assert params["canonical"] == "Artem Tov Ben"
