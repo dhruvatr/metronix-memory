@@ -23,6 +23,22 @@ logger = structlog.get_logger()
 
 _MIN_SUBSTRING_LEN = 3
 
+# Russian case suffixes ordered longest-first for greedy stripping.
+_RU_CASE_SUFFIXES = (
+    "ами", "ями", "ом", "ем", "ём", "ой", "ей", "ах", "ях",
+    "ов", "ев", "ёв", "ам", "ям", "а", "я", "у", "ю", "е",
+    "ы", "и", "о",
+)
+
+
+def _strip_russian_case_ending(name: str) -> str | None:
+    """Strip Russian case suffix, return stem if result >= 3 chars."""
+    lower = name.lower()
+    for suffix in _RU_CASE_SUFFIXES:
+        if lower.endswith(suffix) and len(lower) - len(suffix) >= 3:
+            return lower[:-len(suffix)]
+    return None
+
 
 class AliasRegistry:
     """Builds and maintains person name mappings from Jira data.
@@ -125,6 +141,12 @@ class AliasRegistry:
             if len(q) >= _MIN_SUBSTRING_LEN and q in person["display_name"].lower():
                 results.append(person["display_name"])
                 continue
+
+        # 5. Try stem-stripped form for Russian case endings (one-level recursion)
+        if not results:
+            stem = _strip_russian_case_ending(q)
+            if stem and stem != q:
+                return self.resolve(stem)
 
         return results
 

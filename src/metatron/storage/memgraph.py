@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import atexit, json, re, time
 from datetime import datetime, UTC
+from functools import wraps
 from threading import Lock
 from typing import Optional
 
 import structlog
 from neo4j import GraphDatabase
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
 from metatron.llm import chat_completion  # wired up when metatron.llm.chat_completion is available
 
@@ -58,6 +60,43 @@ def close_memgraph_driver() -> None:
 
 
 atexit.register(close_memgraph_driver)
+
+
+def memgraph_retry(max_attempts: int = 3):
+    """Retry decorator for Memgraph operations on stale connections.
+
+    On connection error: resets the driver singleton so the next call
+    creates a fresh connection. Catches ServiceUnavailable, SessionExpired,
+    BrokenPipeError, ConnectionError, and generic errors with connection-
+    related messages.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error: Exception | None = None
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except (ServiceUnavailable, SessionExpired,
+                        BrokenPipeError, ConnectionError) as e:
+                    last_error = e
+                    if attempt < max_attempts - 1:
+                        logger.warning("memgraph.retry", func=func.__name__,
+                                       attempt=attempt + 1, error=str(e))
+                        close_memgraph_driver()
+                except Exception as e:
+                    if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
+                        last_error = e
+                        if attempt < max_attempts - 1:
+                            logger.warning("memgraph.retry", func=func.__name__,
+                                           attempt=attempt + 1, error=str(e))
+                            close_memgraph_driver()
+                            continue
+                    raise
+            if last_error:
+                raise last_error
+        return wrapper
+    return decorator
 
 
 def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
@@ -200,6 +239,7 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         return {"entities": [], "relationships": []}
 
 
+@memgraph_retry()
 def write_doc_graph_to_memgraph(
     text: str, file_name: str, user_id: str = "user",
     workspace_id: Optional[str] = None,
@@ -281,6 +321,7 @@ def write_doc_graph_to_memgraph(
     logger.info("memgraph.write_doc.done", file_name=file_name, workspace_id=workspace_id)
 
 
+@memgraph_retry()
 def delete_workspace_graph(workspace_id: str) -> None:
     """Delete all graph data for a specific workspace. WARNING: permanent."""
     driver = get_memgraph_driver()

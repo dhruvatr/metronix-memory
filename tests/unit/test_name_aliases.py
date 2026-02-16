@@ -45,6 +45,16 @@ class TestResolvePersonName:
             assert key == key.lower(), f"Key '{key}' is not lowercase"
 
 
+class TestRussianCaseNormalization:
+    """Test that Russian case endings resolve via stem stripping."""
+
+    def test_genitive_resolves_hardcoded(self) -> None:
+        assert resolve_person_name("вадима") == ["Pozdnyakov Vadim"]
+
+    def test_nominative_unchanged(self) -> None:
+        assert resolve_person_name("вадим") == ["Pozdnyakov Vadim"]
+
+
 class TestAliasIntegration:
     @patch("metatron.retrieval.search.get_hybrid_store")
     @patch("metatron.retrieval.search.expand_query", side_effect=lambda q: q)

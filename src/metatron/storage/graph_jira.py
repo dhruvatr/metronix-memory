@@ -16,6 +16,7 @@ import structlog
 from metatron.storage.memgraph import (
     get_memgraph_driver,
     extract_graph_from_text,
+    memgraph_retry,
     DEFAULT_WORKSPACE_ID,
 )
 
@@ -33,6 +34,7 @@ def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
     return workspace_id.strip()
 
 
+@memgraph_retry()
 def write_jira_graph_to_memgraph(
     jira_data: dict,
     markdown_text: str,
