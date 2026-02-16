@@ -12,9 +12,12 @@ import os
 from typing import Any
 
 import structlog
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 from qdrant_client import QdrantClient
 
 logger = structlog.get_logger()
+
+from metatron.storage.memgraph import memgraph_retry
 
 ALLOW_CLEANUP = os.getenv("ALLOW_CLEANUP", "false").lower() == "true"
 
@@ -90,6 +93,7 @@ def cleanup_qdrant_all() -> dict[str, Any]:
     }
 
 
+@memgraph_retry()
 def cleanup_memgraph_workspace(workspace_id: str) -> dict[str, Any]:
     """Delete all Memgraph nodes for a workspace."""
     from metatron.storage.memgraph import get_memgraph_driver
@@ -110,11 +114,14 @@ def cleanup_memgraph_workspace(workspace_id: str) -> dict[str, Any]:
             )
             logger.info("cleanup.memgraph.deleted", workspace_id=workspace_id, nodes=count)
             return {"status": "deleted", "workspace_id": workspace_id, "nodes_deleted": count}
+    except (ServiceUnavailable, SessionExpired, BrokenPipeError, ConnectionError):
+        raise  # let memgraph_retry handle these
     except Exception as e:
         logger.error("cleanup.memgraph.error", workspace_id=workspace_id, error=str(e))
         return {"status": "error", "workspace_id": workspace_id, "error": str(e)}
 
 
+@memgraph_retry()
 def cleanup_memgraph_all() -> dict[str, Any]:
     """Delete ALL nodes and relationships from Memgraph."""
     from metatron.storage.memgraph import get_memgraph_driver
@@ -133,6 +140,8 @@ def cleanup_memgraph_all() -> dict[str, Any]:
             session.run("MATCH (n) DETACH DELETE n")
             logger.info("cleanup.memgraph.all.deleted", nodes=node_count, rels=rel_count)
             return {"status": "deleted", "nodes_deleted": node_count, "relationships_deleted": rel_count}
+    except (ServiceUnavailable, SessionExpired, BrokenPipeError, ConnectionError):
+        raise  # let memgraph_retry handle these
     except Exception as e:
         return {"status": "error", "error": str(e)}
 

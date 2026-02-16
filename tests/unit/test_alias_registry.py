@@ -91,6 +91,39 @@ class TestResolve:
         assert registry.resolve("  ") == []
 
 
+class TestRussianCaseNormalization:
+    """Test that Russian case endings are stripped for alias resolution.
+
+    The registry stores English display names from Jira, so Russian aliases
+    must be added as custom aliases. Case stripping then resolves inflected
+    forms like "вадима" → stem "вадим" → custom alias → "Pozdnyakov Vadim".
+    """
+
+    @pytest.fixture(autouse=True)
+    def _register_vadim(self, registry: AliasRegistry) -> None:
+        registry.register_person("Pozdnyakov Vadim")
+        registry.add_custom_alias("вадим", "Pozdnyakov Vadim")
+
+    def test_genitive_vadima(self, registry: AliasRegistry) -> None:
+        assert registry.resolve("вадима") == ["Pozdnyakov Vadim"]
+
+    def test_instrumental_vadimom(self, registry: AliasRegistry) -> None:
+        assert registry.resolve("вадимом") == ["Pozdnyakov Vadim"]
+
+    def test_dative_vadimu(self, registry: AliasRegistry) -> None:
+        assert registry.resolve("вадиму") == ["Pozdnyakov Vadim"]
+
+    def test_prepositional_vadime(self, registry: AliasRegistry) -> None:
+        assert registry.resolve("вадиме") == ["Pozdnyakov Vadim"]
+
+    def test_nominative_unchanged(self, registry: AliasRegistry) -> None:
+        assert registry.resolve("вадим") == ["Pozdnyakov Vadim"]
+
+    def test_non_russian_unaffected(self, registry: AliasRegistry) -> None:
+        assert registry.resolve("vadim") == ["Pozdnyakov Vadim"]
+        assert registry.resolve("xyz_unknown") == []
+
+
 class TestPersistence:
     def test_save_and_reload(self, tmp_path) -> None:
         reg1 = AliasRegistry(state_dir=str(tmp_path))

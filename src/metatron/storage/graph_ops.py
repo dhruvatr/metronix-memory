@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 import structlog
 
-from metatron.storage.memgraph import get_memgraph_driver, DEFAULT_WORKSPACE_ID
+from metatron.storage.memgraph import get_memgraph_driver, memgraph_retry, DEFAULT_WORKSPACE_ID
 
 logger = structlog.get_logger()
 
@@ -19,6 +19,7 @@ def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
     return workspace_id.strip()
 
 
+@memgraph_retry()
 def get_graph_entities(texts: List[str], workspace_id: Optional[str] = None) -> List[Dict]:
     """Get entities mentioned in documents matching given texts."""
     workspace_id = _normalize_workspace_id(workspace_id)
@@ -50,6 +51,7 @@ def get_graph_entities(texts: List[str], workspace_id: Optional[str] = None) -> 
                  "aliases": [a for a in r["aliases"] if a]} for r in ent_res]
 
 
+@memgraph_retry()
 def get_entities_by_doc_labels(doc_labels: List[str],
                                workspace_id: Optional[str] = None) -> List[Dict]:
     """Get entities mentioned in documents by doc_label."""
@@ -86,6 +88,7 @@ def get_entities_by_doc_labels(doc_labels: List[str],
                  "aliases": [a for a in r["aliases"] if a]} for r in ent_res]
 
 
+@memgraph_retry()
 def get_all_workspace_entities(workspace_id: Optional[str] = None,
                                limit: int = 100) -> List[Dict]:
     """Get all entities in a workspace."""
@@ -108,6 +111,7 @@ def get_all_workspace_entities(workspace_id: Optional[str] = None,
         return [{"name": r["name"], "type": r["type"]} for r in res]
 
 
+@memgraph_retry()
 def get_graph_relationships(entity_names: List[str],
                             workspace_id: Optional[str] = None,
                             max_depth: int = 5,
@@ -153,6 +157,7 @@ def get_graph_relationships(entity_names: List[str],
                 for r in rel_res]
 
 
+@memgraph_retry()
 def get_relationships_at_date(entity_names: List[str],
                               target_date: str,
                               workspace_id: Optional[str] = None,
@@ -202,6 +207,7 @@ def get_relationships_at_date(entity_names: List[str],
                 for r in rel_res]
 
 
+@memgraph_retry()
 def get_doc_labels_by_entities(entity_names: List[str],
                                workspace_id: Optional[str] = None) -> List[Dict]:
     """Get document labels for documents linked to given entities."""
@@ -230,6 +236,7 @@ def get_doc_labels_by_entities(entity_names: List[str],
         return [{"doc_label": r["doc_label"], "title": r["title"]} for r in doc_res]
 
 
+@memgraph_retry()
 def delete_document_node(doc_label: str, workspace_id: Optional[str] = None) -> None:
     """Delete a document/issue node and its MENTIONS edges.
 
@@ -248,6 +255,7 @@ def delete_document_node(doc_label: str, workspace_id: Optional[str] = None) -> 
     logger.info("graph.delete_document_node", doc_label=doc_label, workspace_id=workspace_id)
 
 
+@memgraph_retry()
 def get_related_documents(texts: List[str],
                           workspace_id: Optional[str] = None) -> List[Dict]:
     """Get documents linked through shared entities."""

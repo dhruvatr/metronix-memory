@@ -20,6 +20,11 @@ from metatron.retrieval.prompts import (
 from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
 from metatron.retrieval.query_expansion import expand_query
+from metatron.retrieval.token_budget import (
+    MAX_GRAPH_TOKENS,
+    estimate_graph_tokens, select_fragments_within_budget,
+    truncate_graph_context,
+)
 from metatron.retrieval.routing import (
     _extract_json_object, is_jira_query,
     should_use_team_workflow_schema,
@@ -48,8 +53,18 @@ _ACTIVITY_KW = [
     "делает", "работает", "занимается", "текущ",
 ]
 
-_PERSON_RU = re.compile(r'(?:делает|занимается|работает)\s+(\w+)', re.IGNORECASE)
-_PERSON_EN = re.compile(r'what\s+is\s+(\w+)\s+doing|what\s+(\w+)\s+is\s+working', re.IGNORECASE)
+_JIRA_KEY_RE = re.compile(r'\b([A-Z]{2,}-\d+)\b', re.IGNORECASE)
+
+_PERSON_RU = re.compile(
+    r'(?:делает|занимается|работает|насчёт|насчет|про)\s+(\w+)',
+    re.IGNORECASE,
+)
+_PERSON_EN = re.compile(
+    r'what\s+is\s+(\w+)\s+doing'
+    r'|what\s+(\w+)\s+is\s+working'
+    r'|(?:what|how|tell\s+\w*)\s+about\s+(\w+)',
+    re.IGNORECASE,
+)
 
 _PROPER_NOUN_RE = re.compile(
     r'(?:[A-ZА-ЯЁ][a-zа-яё]+(?:\s+[A-ZА-ЯЁ][a-zа-яё]+)+)',
@@ -101,6 +116,23 @@ def _search_by_title(query: str, workspace_id: Optional[str], limit: int = 5) ->
         return results
     except Exception as e:
         logger.warning("search.title_injection_failed", error=str(e))
+        return []
+
+
+def _inject_jira_key_results(query: str, workspace_id: Optional[str]) -> list[dict]:
+    """Extract Jira keys from query and fetch exact matches via doc_label."""
+    keys = _JIRA_KEY_RE.findall(query)
+    if not keys:
+        return []
+    keys = list(dict.fromkeys(k.upper() for k in keys))  # dedup, preserve order
+    try:
+        store = get_hybrid_store(workspace_id)
+        results = store.search_by_doc_labels(keys)
+        if results:
+            logger.info("search.jira_key_injection", keys=keys, count=len(results))
+        return results
+    except Exception as e:
+        logger.warning("search.jira_key_injection_failed", error=str(e))
         return []
 
 
@@ -352,6 +384,9 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     # Translate expanded query for vector/BM25 search if it has Cyrillic
     sq = translate_query_to_english(eq) if _has_cyrillic(eq) else eq
 
+    # -- Jira key exact match: "MTRNIX-108" → direct lookup --
+    jira_key_results = _inject_jira_key_results(rq, workspace_id)
+
     # -- Inject status/person-filtered results for activity queries --
     # Person-specific takes priority: "Что делает Женя?" injects only
     # Evgeny's tasks, NOT all In Progress tasks from the whole team.
@@ -363,7 +398,7 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     person = None
     m = _PERSON_RU.search(rq_lower) or _PERSON_EN.search(rq)
     if m:
-        person = (m.group(1) or (m.group(2) if m.lastindex and m.lastindex >= 2 else None))
+        person = next((g for g in m.groups() if g), None)
 
     if person:
         # Person-specific: only their tasks, skip general In Progress
@@ -402,6 +437,8 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
         sq, user_id=user_id, k=pool, workspace_id=workspace_id,
         date_query=rq,  # original query for date extraction (not expanded)
     )
+    if jira_key_results:
+        raw = _merge_unique(jira_key_results, raw)
     if title_hits:
         raw = _merge_unique(title_hits, raw)
     if injected:
@@ -451,6 +488,20 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
                     frags.append(text); seen_h.add(th); total_c += len(text)
     except Exception:
         logger.warning("search.graph_enrichment_failed", exc_info=True)
+
+    # -- Token budget: cap graph context, then select fragments --
+    g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
+    if g_tokens > MAX_GRAPH_TOKENS:
+        g_ents, g_rels, g_docs = truncate_graph_context(
+            g_ents, g_rels, g_docs, MAX_GRAPH_TOKENS,
+        )
+        g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
+    frags = select_fragments_within_budget(
+        frags,
+        max_tokens=_s.llm_context_max_tokens,
+        answer_reserve_tokens=_s.llm_answer_reserve_tokens,
+        graph_tokens=g_tokens,
+    )
 
     # use_schema mode: use only current question (rq) to avoid history noise in structured output
     # regular mode: use full composite query to leverage conversation context for follow-ups
