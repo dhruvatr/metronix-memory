@@ -92,7 +92,7 @@ class TestOnMessage:
         channel = _make_channel(router)
 
         say = AsyncMock()
-        await channel._handle_message("What is our policy?", "U123", "C456", say)
+        await channel._handle_message("What is our policy?", "U123", say)
 
         router.route.assert_called_once()
         call_kwargs = router.route.call_args
@@ -106,7 +106,7 @@ class TestOnMessage:
         channel = _make_channel(router)
 
         say = AsyncMock()
-        await channel._handle_message("test query", "U123", "C456", say)
+        await channel._handle_message("test query", "U123", say)
 
         say.assert_called_once()
         sent_text = say.call_args[0][0]
@@ -120,7 +120,7 @@ class TestOnMessage:
         channel = _make_channel(router)
 
         say = AsyncMock()
-        await channel._handle_message("give me a long answer", "U123", "C456", say)
+        await channel._handle_message("give me a long answer", "U123", say)
 
         assert say.call_count > 1
 
@@ -154,7 +154,7 @@ class TestFileUpload:
             mock_client.__aexit__ = AsyncMock()
             mock_client_cls.return_value = mock_client
 
-            await channel._handle_files(files, "U123", "C456", say)
+            await channel._handle_files(files, "U123", say)
 
         router.handle_file_upload.assert_called_once()
         call_kwargs = router.handle_file_upload.call_args
@@ -184,7 +184,7 @@ class TestFileUpload:
             mock_client.__aexit__ = AsyncMock()
             mock_client_cls.return_value = mock_client
 
-            await channel._handle_files(files, "U123", "C456", say)
+            await channel._handle_files(files, "U123", say)
 
         sent_text = say.call_args[0][0]
         assert "Unsupported file type" in sent_text
@@ -208,7 +208,7 @@ class TestFileUpload:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            await channel._handle_files(files, "U123", "C456", say)
+            await channel._handle_files(files, "U123", say)
 
         sent_text = say.call_args[0][0]
         assert "Could not download" in sent_text
@@ -222,7 +222,7 @@ class TestFileUpload:
         say = AsyncMock()
         files = [{"name": "nourl.txt", "size": 100}]
 
-        await channel._handle_files(files, "U123", "C456", say)
+        await channel._handle_files(files, "U123", say)
 
         sent_text = say.call_args[0][0]
         assert "Could not get download URL" in sent_text
@@ -240,7 +240,7 @@ class TestCommands:
         channel = _make_channel(router)
 
         say = AsyncMock()
-        await channel._handle_message("/help", "U123", "C456", say)
+        await channel._handle_message("/help", "U123", say)
 
         router.route.assert_called_once()
         call_kwargs = router.route.call_args
@@ -254,7 +254,7 @@ class TestCommands:
         channel = _make_channel(router)
 
         say = AsyncMock()
-        await channel._handle_message("/sync confluence", "U123", "C456", say)
+        await channel._handle_message("/sync confluence", "U123", say)
 
         router.route.assert_called_once()
         call_kwargs = router.route.call_args
