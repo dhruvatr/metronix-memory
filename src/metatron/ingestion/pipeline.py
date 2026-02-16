@@ -166,7 +166,8 @@ def ingest_documents(
     for doc in documents:
         try:
             if not doc.content or not doc.content.strip():
-                logger.debug("ingest.skipped", title=doc.title, source_id=doc.source_id, reason="empty body")
+                logger.info("ingest.skipped", title=doc.title, source_id=doc.source_id,
+                            source_type=doc.source_type, reason="empty body")
                 skip_count += 1
                 continue
 
@@ -278,20 +279,35 @@ def _extract_graphs_parallel(
     error_count = 0
     skipped = 0
 
-    # Filter out short documents
+    # Filter out short documents; Jira short docs still get structured nodes
     eligible: list[tuple[Document, str]] = []
+    jira_struct_only: list[tuple[Document, str]] = []
     for doc, ws_id in graph_queue:
         content_len = len(doc.content or "")
         if content_len < min_chars:
-            skipped += 1
-            logger.debug("ingest.graph.skipped_short", source_id=doc.source_id,
-                         content_len=content_len, min_chars=min_chars)
+            if doc.source_type == "jira":
+                jira_struct_only.append((doc, ws_id))
+            else:
+                skipped += 1
+                logger.debug("ingest.graph.skipped_short", source_id=doc.source_id,
+                             content_len=content_len, min_chars=min_chars)
         else:
             eligible.append((doc, ws_id))
 
+    # Create JiraIssue nodes for short Jira docs (structured fields only, no LLM)
+    for doc, ws_id in jira_struct_only:
+        try:
+            _write_jira_to_graph(doc, ws_id, skip_llm_extraction=True)
+            ok_count += 1
+        except Exception as e:
+            error_count += 1
+            logger.warning("ingest.jira_struct.error",
+                           source_id=doc.source_id, error=str(e))
+
     if not eligible:
-        logger.info("ingest.graph_parallel.skip_all", skipped=skipped)
-        return {"ok": 0, "errors": 0, "skipped": skipped}
+        logger.info("ingest.graph_parallel.skip_all", skipped=skipped,
+                     jira_struct_only=len(jira_struct_only))
+        return {"ok": ok_count, "errors": error_count, "skipped": skipped}
 
     def _write_graph(doc: Document, ws_id: str) -> str:
         """Write one document to graph, return source_id on success."""
@@ -364,7 +380,8 @@ def _register_persons(doc: Document) -> None:
         logger.warning("ingest.alias_register.error", source_id=doc.source_id, error=str(e))
 
 
-def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:
+def _write_jira_to_graph(doc: Document, workspace_id: str,
+                         skip_llm_extraction: bool = False) -> None:
     """Write a Jira document to Memgraph knowledge graph."""
     try:
         from metatron.storage.graph_jira import write_jira_graph_to_memgraph
@@ -389,6 +406,7 @@ def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:
             jira_data, doc.content,
             workspace_id=workspace_id,
             doc_label=doc.source_id,
+            skip_llm_extraction=skip_llm_extraction,
         )
     except Exception as e:
         logger.warning("ingest.jira_graph.error", source_id=doc.source_id, error=str(e))

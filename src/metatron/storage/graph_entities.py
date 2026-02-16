@@ -124,6 +124,9 @@ ROLE_KEYWORDS: set[str] = {
     "admins", "engineers", "developers", "analysts", "managers", "directors",
     "executives", "leads", "owners", "consumers", "stewards", "users",
     "team leads", "pms", "c-level", "bi developers", "bi leads",
+    "knowledge consumers", "knowledge stewards", "knowledge steward",
+    "semantic owners", "ontology owners", "customer success engineer",
+    "mtrnix user", "metatron user", "data scientist",
 }
 
 PERSON_MERGE_MAP: dict[str, str] = {

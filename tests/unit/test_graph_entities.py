@@ -477,3 +477,89 @@ class TestAliasRelationshipWrite:
         params = alias_calls[0][0][1]
         assert params["alias"] == "Артём"
         assert params["canonical"] == "Artem Tov Ben"
+
+    @patch("metatron.storage.memgraph.get_memgraph_driver")
+    @patch("metatron.storage.memgraph.extract_graph_from_text")
+    def test_alias_sets_type_person(
+        self, mock_extract: MagicMock, mock_driver: MagicMock,
+    ) -> None:
+        """ALIAS entity node gets type='Person' set explicitly."""
+        mock_extract.return_value = {
+            "entities": [
+                {"name": "Artem Tov Ben", "type": "Person"},
+            ],
+            "relationships": [],
+            "merged_aliases": {"Артём": "Artem Tov Ben"},
+        }
+
+        mock_session = MagicMock()
+        mock_driver.return_value.session.return_value.__enter__ = lambda s: mock_session
+        mock_driver.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from metatron.storage.memgraph import write_doc_graph_to_memgraph
+        write_doc_graph_to_memgraph(
+            text="Артём wrote code",
+            file_name="test.txt",
+            user_id="user1",
+            workspace_id="TEST",
+            doc_label="DOC-1",
+        )
+
+        alias_calls = [
+            c for c in mock_session.run.call_args_list
+            if "ALIAS" in str(c)
+        ]
+        assert len(alias_calls) == 1
+        cypher = alias_calls[0][0][0]
+        assert "SET a.type = 'Person'" in cypher
+
+    @patch("metatron.storage.memgraph.get_memgraph_driver")
+    @patch("metatron.storage.memgraph.extract_graph_from_text")
+    def test_self_referencing_alias_skipped(
+        self, mock_extract: MagicMock, mock_driver: MagicMock,
+    ) -> None:
+        """Self-referencing aliases (alias == canonical) are skipped."""
+        mock_extract.return_value = {
+            "entities": [
+                {"name": "John Doe", "type": "Person"},
+            ],
+            "relationships": [],
+            "merged_aliases": {"John Doe": "John Doe"},
+        }
+
+        mock_session = MagicMock()
+        mock_driver.return_value.session.return_value.__enter__ = lambda s: mock_session
+        mock_driver.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        from metatron.storage.memgraph import write_doc_graph_to_memgraph
+        write_doc_graph_to_memgraph(
+            text="John Doe wrote code",
+            file_name="test.txt",
+            user_id="user1",
+            workspace_id="TEST",
+            doc_label="DOC-1",
+        )
+
+        alias_calls = [
+            c for c in mock_session.run.call_args_list
+            if "ALIAS" in str(c)
+        ]
+        assert len(alias_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# New role keywords
+# ---------------------------------------------------------------------------
+
+class TestNewRoleKeywords:
+    def test_new_role_keywords_reclassified(self) -> None:
+        """Newly added role keywords are detected as roles, not persons."""
+        new_roles = [
+            "Knowledge Consumers", "Knowledge Stewards", "Knowledge Steward",
+            "Semantic Owners", "Ontology Owners", "Customer Success Engineer",
+            "MTRNIX User", "Metatron User", "Data Scientist",
+        ]
+        for name in new_roles:
+            assert is_role_not_person(name, "Person") is True, (
+                f"'{name}' should be detected as a role"
+            )

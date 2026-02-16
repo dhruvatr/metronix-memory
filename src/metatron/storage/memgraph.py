@@ -268,8 +268,11 @@ def write_doc_graph_to_memgraph(
             )
         # Write ALIAS relationships for merged person names
         for alias_name, canonical_name in merged_aliases.items():
+            if alias_name.lower().strip() == canonical_name.lower().strip():
+                continue
             session.run(
                 "MERGE (a:Entity {name: $alias, workspace_id: $ws}) "
+                "SET a.type = 'Person' "
                 "MERGE (c:Entity {name: $canonical, workspace_id: $ws}) "
                 "MERGE (a)-[:ALIAS]->(c)",
                 {"alias": alias_name, "canonical": canonical_name,

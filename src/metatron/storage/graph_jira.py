@@ -40,11 +40,16 @@ def write_jira_graph_to_memgraph(
     workspace_id: Optional[str] = None,
     doc_label: Optional[str] = None,
     upload_time: Optional[str] = None,
+    skip_llm_extraction: bool = False,
 ) -> None:
     """Write Jira issue to Memgraph with workspace isolation.
 
     Creates a :JiraIssue node, links participants (assignee, reporter),
     and extracts entities/relationships from the issue text.
+
+    Args:
+        skip_llm_extraction: If True, create JiraIssue node and person
+            links but skip the LLM-based entity extraction (for short issues).
     """
     workspace_id = _normalize_workspace_id(workspace_id)
     issue_key = jira_data.get("key", "UNKNOWN")
@@ -98,16 +103,19 @@ def write_jira_graph_to_memgraph(
                      "REPORTED", workspace_id, user_id, doc_label,
                      valid_from=valid_from, valid_to=None)
 
-        # Extract entities from description + comments
-        text_for_graph = markdown_text[:6000]
-        if text_for_graph.strip():
-            try:
-                graph = extract_graph_from_text(text_for_graph)
-                _write_jira_entities(session, graph, issue_key,
-                                    workspace_id, user_id, doc_label,
-                                    valid_from=valid_from)
-            except Exception as e:
-                logger.warning("graph_jira.extract_failed", error=str(e))
+        # Extract entities from description + comments (LLM-based, slow)
+        if skip_llm_extraction:
+            logger.debug("graph_jira.llm_skipped", issue_key=issue_key)
+        else:
+            text_for_graph = markdown_text[:6000]
+            if text_for_graph.strip():
+                try:
+                    graph = extract_graph_from_text(text_for_graph)
+                    _write_jira_entities(session, graph, issue_key,
+                                        workspace_id, user_id, doc_label,
+                                        valid_from=valid_from)
+                except Exception as e:
+                    logger.warning("graph_jira.extract_failed", error=str(e))
 
     logger.info("graph_jira.written", issue_key=issue_key, workspace_id=workspace_id)
 
