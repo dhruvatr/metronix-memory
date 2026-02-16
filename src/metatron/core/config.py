@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     bm25_vocab_size: int = Field(30000, alias="BM25_VOCAB_SIZE")
     query_expansion_enabled: bool = Field(True, alias="QUERY_EXPANSION_ENABLED")
 
+    # --- LLM context budget ---
+    llm_context_max_tokens: int = Field(6000, alias="LLM_CONTEXT_MAX_TOKENS")
+    llm_answer_reserve_tokens: int = Field(1500, alias="LLM_ANSWER_RESERVE_TOKENS")
+
     # --- Graph extraction ---
     graph_extraction_enabled: bool = Field(True, alias="GRAPH_EXTRACTION_ENABLED")
     graph_extraction_workers: int = Field(4, alias="GRAPH_EXTRACTION_WORKERS")

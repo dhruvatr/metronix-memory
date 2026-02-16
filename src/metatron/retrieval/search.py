@@ -20,6 +20,9 @@ from metatron.retrieval.prompts import (
 from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
 from metatron.retrieval.query_expansion import expand_query
+from metatron.retrieval.token_budget import (
+    estimate_graph_tokens, select_fragments_within_budget,
+)
 from metatron.retrieval.routing import (
     _extract_json_object, is_jira_query,
     should_use_team_workflow_schema,
@@ -451,6 +454,15 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
                     frags.append(text); seen_h.add(th); total_c += len(text)
     except Exception:
         logger.warning("search.graph_enrichment_failed", exc_info=True)
+
+    # -- Token budget: select fragments that fit within LLM context window --
+    g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
+    frags = select_fragments_within_budget(
+        frags,
+        max_tokens=_s.llm_context_max_tokens,
+        answer_reserve_tokens=_s.llm_answer_reserve_tokens,
+        graph_tokens=g_tokens,
+    )
 
     # use_schema mode: use only current question (rq) to avoid history noise in structured output
     # regular mode: use full composite query to leverage conversation context for follow-ups
