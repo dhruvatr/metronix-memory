@@ -5,9 +5,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from metatron.retrieval.token_budget import (
+    MAX_GRAPH_TOKENS,
+    MIN_FRAGMENT_TOKENS,
     estimate_graph_tokens,
     estimate_tokens,
     select_fragments_within_budget,
+    truncate_graph_context,
 )
 
 
@@ -61,11 +64,11 @@ class TestSelectFragmentsWithinBudget:
         # Each fragment ~500 tokens (2000 chars / 4)
         frags = ["A" * 2000 for _ in range(10)]
         result = select_fragments_within_budget(
-            frags, max_tokens=2000, system_prompt_tokens=500,
+            frags, max_tokens=4000, system_prompt_tokens=500,
             answer_reserve_tokens=500,
         )
-        # Budget = 2000 - 500 - 500 = 1000 tokens → 2 fragments fit (500 each)
-        assert len(result) == 2
+        # Budget = 4000 - 500 - 500 = 3000 tokens (above MIN floor) → 6 fragments fit
+        assert len(result) == 6
 
     def test_single_huge_fragment_truncated(self) -> None:
         """A single fragment exceeding budget gets truncated."""
@@ -83,37 +86,40 @@ class TestSelectFragmentsWithinBudget:
 
     def test_respects_answer_reserve(self) -> None:
         """Higher answer reserve → fewer fragments fit."""
-        frag = "C" * 4000  # ~1000 tokens
-        # Low reserve: budget = 3000 - 500 - 500 = 2000 → fits
+        frag = "C" * 12000  # ~3000 tokens
+        # Low reserve: budget = 5000 - 500 - 500 = 4000 → fits (3000 < 4000)
         result_low = select_fragments_within_budget(
-            [frag], max_tokens=3000, system_prompt_tokens=500,
+            [frag], max_tokens=5000, system_prompt_tokens=500,
             answer_reserve_tokens=500,
         )
         assert len(result_low) == 1
+        assert result_low[0] == frag
 
-        # High reserve: budget = 3000 - 500 - 2000 = 500 → doesn't fit (truncated)
+        # High reserve: computed = 5000 - 500 - 4000 = 500, floored to 2000
+        # but 3000 > 2000 → truncated
         result_high = select_fragments_within_budget(
-            [frag], max_tokens=3000, system_prompt_tokens=500,
-            answer_reserve_tokens=2000,
+            [frag], max_tokens=5000, system_prompt_tokens=500,
+            answer_reserve_tokens=4000,
         )
         assert len(result_high) == 1
         assert len(result_high[0]) < len(frag)
 
     def test_graph_tokens_reduce_fragment_budget(self) -> None:
         """Graph context tokens reduce the space available for fragments."""
-        frag = "D" * 4000  # ~1000 tokens
-        # No graph: budget = 3000 - 500 - 500 = 2000 → fits
+        frag = "D" * 12000  # ~3000 tokens
+        # No graph: budget = 5000 - 500 - 500 = 4000 → fits (3000 < 4000)
         result_no_graph = select_fragments_within_budget(
-            [frag], max_tokens=3000, system_prompt_tokens=500,
+            [frag], max_tokens=5000, system_prompt_tokens=500,
             answer_reserve_tokens=500, graph_tokens=0,
         )
         assert len(result_no_graph) == 1
         assert result_no_graph[0] == frag
 
-        # With large graph: budget = 3000 - 500 - 500 - 1500 = 500 → truncated
+        # With large graph: computed = 5000 - 500 - 500 - 3000 = 1000,
+        # floored to 2000 but 3000 > 2000 → truncated
         result_with_graph = select_fragments_within_budget(
-            [frag], max_tokens=3000, system_prompt_tokens=500,
-            answer_reserve_tokens=500, graph_tokens=1500,
+            [frag], max_tokens=5000, system_prompt_tokens=500,
+            answer_reserve_tokens=500, graph_tokens=3000,
         )
         assert len(result_with_graph) == 1
         assert len(result_with_graph[0]) < len(frag)
@@ -136,6 +142,84 @@ class TestEstimateGraphTokens:
         docs = [{"doc_label": "DOC-1"}]
         tokens = estimate_graph_tokens(ents, rels, docs)
         assert tokens > 20
+
+
+# ---------------------------------------------------------------------------
+# Integration: search pipeline uses token budget
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# truncate_graph_context
+# ---------------------------------------------------------------------------
+
+class TestTruncateGraphContext:
+    def test_large_graph_gets_truncated(self) -> None:
+        """Graph exceeding MAX_GRAPH_TOKENS is truncated."""
+        # Build a graph that's clearly over 2000 tokens
+        g_ents = [{"name": f"Entity-{i}", "type": "Technology"} for i in range(200)]
+        g_rels = [{"source": f"Entity-{i}", "target": f"Entity-{i+1}", "type": "uses"}
+                  for i in range(199)]
+        g_docs = [{"doc_label": f"DOC-{i}"} for i in range(100)]
+
+        original_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
+        assert original_tokens > MAX_GRAPH_TOKENS
+
+        t_ents, t_rels, t_docs = truncate_graph_context(g_ents, g_rels, g_docs)
+        truncated_tokens = estimate_graph_tokens(t_ents, t_rels, t_docs)
+        assert truncated_tokens <= MAX_GRAPH_TOKENS
+        assert len(t_ents) < len(g_ents)
+
+    def test_person_entities_preserved(self) -> None:
+        """Person entities are kept with priority during truncation."""
+        persons = [{"name": f"Person-{i}", "type": "Person"} for i in range(5)]
+        others = [{"name": f"Tech-{i}", "type": "Technology"} for i in range(200)]
+        g_ents = persons + others
+        g_rels = []
+        g_docs = []
+
+        t_ents, _, _ = truncate_graph_context(g_ents, g_rels, g_docs, max_tokens=500)
+
+        kept_persons = [e for e in t_ents if e["type"] == "Person"]
+        assert len(kept_persons) == 5
+
+    def test_small_graph_unchanged(self) -> None:
+        """Graph under MAX_GRAPH_TOKENS passes through unchanged."""
+        g_ents = [{"name": "Qdrant", "type": "Technology"}]
+        g_rels = [{"source": "Alice", "target": "Qdrant", "type": "uses"}]
+        g_docs = [{"doc_label": "DOC-1"}]
+
+        assert estimate_graph_tokens(g_ents, g_rels, g_docs) < MAX_GRAPH_TOKENS
+        # truncate_graph_context still works but should keep everything
+        t_ents, t_rels, t_docs = truncate_graph_context(g_ents, g_rels, g_docs)
+        assert len(t_ents) == 1
+        assert len(t_rels) == 1
+        assert len(t_docs) == 1
+
+
+class TestMinFragmentBudget:
+    def test_fragments_get_minimum_even_with_huge_graph(self) -> None:
+        """Fragments always get MIN_FRAGMENT_TOKENS even if graph is large."""
+        # Fragment that needs ~1000 tokens (4000 chars)
+        frag = "F" * 4000
+        # Graph claims all budget: max=3000, prompt=500, reserve=500, graph=2500
+        # computed = 3000 - 500 - 500 - 2500 = -500 → but min floor = 2000
+        result = select_fragments_within_budget(
+            [frag], max_tokens=3000, system_prompt_tokens=500,
+            answer_reserve_tokens=500, graph_tokens=2500,
+        )
+        # Fragment fits within MIN_FRAGMENT_TOKENS (2000 > 1000)
+        assert len(result) == 1
+        assert result[0] == frag
+
+    def test_min_floor_value(self) -> None:
+        assert MIN_FRAGMENT_TOKENS == 2000
+
+
+class TestDefaultBudget:
+    def test_default_max_tokens_is_10000(self) -> None:
+        from metatron.core.config import Settings
+        s = Settings()
+        assert s.llm_context_max_tokens == 10000
 
 
 # ---------------------------------------------------------------------------

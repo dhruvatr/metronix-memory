@@ -21,7 +21,9 @@ from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
 from metatron.retrieval.query_expansion import expand_query
 from metatron.retrieval.token_budget import (
+    MAX_GRAPH_TOKENS,
     estimate_graph_tokens, select_fragments_within_budget,
+    truncate_graph_context,
 )
 from metatron.retrieval.routing import (
     _extract_json_object, is_jira_query,
@@ -455,8 +457,13 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     except Exception:
         logger.warning("search.graph_enrichment_failed", exc_info=True)
 
-    # -- Token budget: select fragments that fit within LLM context window --
+    # -- Token budget: cap graph context, then select fragments --
     g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
+    if g_tokens > MAX_GRAPH_TOKENS:
+        g_ents, g_rels, g_docs = truncate_graph_context(
+            g_ents, g_rels, g_docs, MAX_GRAPH_TOKENS,
+        )
+        g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
     frags = select_fragments_within_budget(
         frags,
         max_tokens=_s.llm_context_max_tokens,

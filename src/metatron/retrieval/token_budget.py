@@ -12,6 +12,9 @@ import structlog
 
 logger = structlog.get_logger()
 
+MAX_GRAPH_TOKENS: int = 2000
+MIN_FRAGMENT_TOKENS: int = 2000
+
 
 def estimate_tokens(text: str) -> int:
     """Estimate token count for mixed-language text.
@@ -39,16 +42,75 @@ def estimate_graph_tokens(
     return estimate_tokens(raw)
 
 
+def truncate_graph_context(
+    g_ents: list[dict],
+    g_rels: list[dict],
+    g_docs: list[dict],
+    max_tokens: int = MAX_GRAPH_TOKENS,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Truncate graph context to fit within max_tokens.
+
+    Priority: Person entities first, then other entities, then
+    relationships, then documents. Drops lowest-priority items first.
+    """
+    # Keep all Person entities, then fill with others
+    person_ents = [e for e in g_ents if (e.get("type") or "").lower() == "person"]
+    other_ents = [e for e in g_ents if (e.get("type") or "").lower() != "person"]
+
+    # Start with persons, greedily add others
+    kept_ents: list[dict] = list(person_ents)
+    kept_rels: list[dict] = []
+    kept_docs: list[dict] = []
+
+    def _current() -> int:
+        return estimate_graph_tokens(kept_ents, kept_rels, kept_docs)
+
+    # Add other entities while budget allows
+    for ent in other_ents:
+        kept_ents.append(ent)
+        if _current() > max_tokens:
+            kept_ents.pop()
+            break
+
+    # Add relationships referencing kept entity names
+    kept_names = {e.get("name") for e in kept_ents}
+    for rel in g_rels:
+        src = rel.get("source", "")
+        tgt = rel.get("target", "")
+        if src in kept_names or tgt in kept_names:
+            kept_rels.append(rel)
+            if _current() > max_tokens:
+                kept_rels.pop()
+                break
+
+    # Add documents if room remains
+    for doc in g_docs:
+        kept_docs.append(doc)
+        if _current() > max_tokens:
+            kept_docs.pop()
+            break
+
+    original_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
+    final_tokens = _current()
+    logger.warning("token_budget.graph_truncated",
+                    original_tokens=original_tokens,
+                    truncated_to=final_tokens,
+                    ents_kept=len(kept_ents), ents_original=len(g_ents),
+                    rels_kept=len(kept_rels), rels_original=len(g_rels))
+    return kept_ents, kept_rels, kept_docs
+
+
 def select_fragments_within_budget(
     fragments: list[str],
-    max_tokens: int = 6000,
+    max_tokens: int = 10000,
     system_prompt_tokens: int = 500,
     answer_reserve_tokens: int = 1500,
     graph_tokens: int = 0,
 ) -> list[str]:
     """Select as many fragments as fit within the token budget.
 
-    Budget = max_tokens - system_prompt - answer_reserve - graph_context.
+    Budget = max_tokens - system_prompt - answer_reserve - graph_context,
+    but never less than MIN_FRAGMENT_TOKENS.
     Fragments are already ranked by relevance (best first).
     Greedily adds fragments until the budget is exhausted.
 
@@ -62,11 +124,8 @@ def select_fragments_within_budget(
     Returns:
         List of fragments that fit within the budget.
     """
-    available = max_tokens - system_prompt_tokens - answer_reserve_tokens - graph_tokens
-    if available <= 0:
-        logger.warning("token_budget.no_room",
-                        max_tokens=max_tokens, graph_tokens=graph_tokens)
-        return []
+    computed = max_tokens - system_prompt_tokens - answer_reserve_tokens - graph_tokens
+    available = max(computed, MIN_FRAGMENT_TOKENS)
 
     selected: list[str] = []
     used = 0

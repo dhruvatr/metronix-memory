@@ -220,7 +220,7 @@ class QdrantVectorStore:
         if not title_substring or not title_substring.strip():
             return []
         filt = Filter(must=[
-            FieldCondition(key="title", match=MatchText(text=title_substring.lower())),
+            FieldCondition(key="title", match=MatchText(text=title_substring)),
         ])
         results, _ = self.client.scroll(
             collection_name=self.collection_name,

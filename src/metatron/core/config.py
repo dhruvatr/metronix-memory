@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     query_expansion_enabled: bool = Field(True, alias="QUERY_EXPANSION_ENABLED")
 
     # --- LLM context budget ---
-    llm_context_max_tokens: int = Field(6000, alias="LLM_CONTEXT_MAX_TOKENS")
+    llm_context_max_tokens: int = Field(10000, alias="LLM_CONTEXT_MAX_TOKENS")
     llm_answer_reserve_tokens: int = Field(1500, alias="LLM_ANSWER_RESERVE_TOKENS")
 
     # --- Graph extraction ---
