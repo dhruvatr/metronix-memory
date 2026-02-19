@@ -7,6 +7,7 @@ pipeline, and stores the results in vector + graph stores.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import structlog
@@ -148,6 +149,9 @@ def ingest_documents(
     """
     from metatron.storage.qdrant import get_hybrid_store
 
+    from metatron.core.config import Settings
+
+    _settings = Settings()
     t0 = time.time()
     store = get_hybrid_store(workspace_id)
     dedup_index = DeduplicationIndex()
@@ -156,11 +160,14 @@ def ingest_documents(
     skip_count = 0
     dedup_count = 0
     errors: list[str] = []
+    graph_queue: list[tuple[Document, str]] = []
 
+    # Phase 1: chunk, dedup, embed, store to Qdrant (sequential, fast)
     for doc in documents:
         try:
             if not doc.content or not doc.content.strip():
-                logger.debug("ingest.skipped", title=doc.title, source_id=doc.source_id, reason="empty body")
+                logger.info("ingest.skipped", title=doc.title, source_id=doc.source_id,
+                            source_type=doc.source_type, reason="empty body")
                 skip_count += 1
                 continue
 
@@ -212,9 +219,8 @@ def ingest_documents(
             # Register people from any source into alias registry
             _register_persons(doc)
 
-            # Jira: also write to knowledge graph
-            if doc.source_type == "jira":
-                _write_jira_to_graph(doc, workspace_id)
+            # Collect for Phase 2 graph extraction
+            graph_queue.append((doc, workspace_id))
 
             if (new_count + updated_count) % 50 == 0:
                 logger.info("ingest.progress", new=new_count, updated=updated_count,
@@ -224,6 +230,14 @@ def ingest_documents(
             logger.debug("ingest.skipped", title=doc.title, source_id=doc.source_id, reason=f"error: {e}")
             logger.warning("ingest.document.error", source_id=doc.source_id, error=str(e))
             errors.append(f"{doc.source_id}: {e}")
+
+    # Phase 2: parallel graph extraction (slow LLM calls)
+    if _settings.graph_extraction_enabled and graph_queue:
+        _extract_graphs_parallel(
+            graph_queue,
+            max_workers=_settings.graph_extraction_workers,
+            min_chars=_settings.graph_extraction_min_chars,
+        )
 
     duration_ms = (time.time() - t0) * 1000
     logger.info("ingest.done", new=new_count, updated=updated_count,
@@ -240,6 +254,90 @@ def ingest_documents(
         errors=errors,
         duration_ms=duration_ms,
     )
+
+
+def _extract_graphs_parallel(
+    graph_queue: list[tuple[Document, str]],
+    max_workers: int = 4,
+    min_chars: int = 100,
+) -> dict[str, int]:
+    """Run graph extraction for queued documents in parallel.
+
+    Uses ThreadPoolExecutor to run LLM-based graph extraction concurrently.
+    Each graph writer is self-contained with its own Memgraph session.
+
+    Args:
+        graph_queue: List of (document, workspace_id) tuples.
+        max_workers: Maximum number of concurrent extraction threads.
+        min_chars: Minimum content length to attempt graph extraction.
+
+    Returns:
+        Dict with counts: {"ok": N, "errors": N, "skipped": N}.
+    """
+    t0 = time.time()
+    ok_count = 0
+    error_count = 0
+    skipped = 0
+
+    # Filter out short documents; Jira short docs still get structured nodes
+    eligible: list[tuple[Document, str]] = []
+    jira_struct_only: list[tuple[Document, str]] = []
+    for doc, ws_id in graph_queue:
+        content_len = len(doc.content or "")
+        if content_len < min_chars:
+            if doc.source_type == "jira":
+                jira_struct_only.append((doc, ws_id))
+            else:
+                skipped += 1
+                logger.debug("ingest.graph.skipped_short", source_id=doc.source_id,
+                             content_len=content_len, min_chars=min_chars)
+        else:
+            eligible.append((doc, ws_id))
+
+    # Create JiraIssue nodes for short Jira docs (structured fields only, no LLM)
+    for doc, ws_id in jira_struct_only:
+        try:
+            _write_jira_to_graph(doc, ws_id, skip_llm_extraction=True)
+            ok_count += 1
+        except Exception as e:
+            error_count += 1
+            logger.warning("ingest.jira_struct.error",
+                           source_id=doc.source_id, error=str(e))
+
+    if not eligible:
+        logger.info("ingest.graph_parallel.skip_all", skipped=skipped,
+                     jira_struct_only=len(jira_struct_only))
+        return {"ok": ok_count, "errors": error_count, "skipped": skipped}
+
+    def _write_graph(doc: Document, ws_id: str) -> str:
+        """Write one document to graph, return source_id on success."""
+        if doc.source_type == "jira":
+            _write_jira_to_graph(doc, ws_id)
+        else:
+            _write_doc_to_graph(doc, ws_id)
+        return doc.source_id
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_write_graph, doc, ws_id): doc.source_id
+            for doc, ws_id in eligible
+        }
+        for future in as_completed(futures):
+            src_id = futures[future]
+            try:
+                future.result()
+                ok_count += 1
+            except Exception as e:
+                error_count += 1
+                logger.warning("ingest.graph_parallel.error",
+                               source_id=src_id, error=str(e))
+
+    duration_s = time.time() - t0
+    logger.info("ingest.graph_parallel.done",
+                ok=ok_count, errors=error_count, skipped=skipped,
+                total=len(graph_queue), duration_s=round(duration_s, 1),
+                workers=max_workers)
+    return {"ok": ok_count, "errors": error_count, "skipped": skipped}
 
 
 def _delete_graph_node(doc_label: str, workspace_id: str) -> None:
@@ -282,7 +380,8 @@ def _register_persons(doc: Document) -> None:
         logger.warning("ingest.alias_register.error", source_id=doc.source_id, error=str(e))
 
 
-def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:
+def _write_jira_to_graph(doc: Document, workspace_id: str,
+                         skip_llm_extraction: bool = False) -> None:
     """Write a Jira document to Memgraph knowledge graph."""
     try:
         from metatron.storage.graph_jira import write_jira_graph_to_memgraph
@@ -297,11 +396,36 @@ def _write_jira_to_graph(doc: Document, workspace_id: str) -> None:
             "issuetype": doc.metadata.get("issuetype"),
             "priority": doc.metadata.get("priority"),
             "description": doc.content[:2000],
+            "created": doc.metadata.get("created_at_str") or (
+                doc.created_at.isoformat() if doc.created_at else None),
+            "updated": doc.metadata.get("updated_at_str") or (
+                doc.updated_at.isoformat() if doc.updated_at else None),
+            "resolved_at": doc.metadata.get("resolved_at_str") or None,
         }
         write_jira_graph_to_memgraph(
             jira_data, doc.content,
             workspace_id=workspace_id,
             doc_label=doc.source_id,
+            skip_llm_extraction=skip_llm_extraction,
         )
     except Exception as e:
         logger.warning("ingest.jira_graph.error", source_id=doc.source_id, error=str(e))
+
+
+def _write_doc_to_graph(doc: Document, workspace_id: str) -> None:
+    """Write a non-Jira document (Confluence, upload, etc.) to Memgraph."""
+    try:
+        from metatron.storage.memgraph import write_doc_graph_to_memgraph
+
+        doc_date = (doc.updated_at.isoformat() if doc.updated_at
+                    else doc.created_at.isoformat() if doc.created_at else None)
+        write_doc_graph_to_memgraph(
+            text=doc.content[:8000],
+            file_name=doc.title or doc.source_id or "untitled",
+            user_id=doc.author or "system",
+            workspace_id=workspace_id,
+            doc_label=doc.source_id,
+            doc_date=doc_date,
+        )
+    except Exception as e:
+        logger.warning("ingest.doc_graph.error", source_id=doc.source_id, error=str(e))

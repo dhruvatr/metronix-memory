@@ -4,6 +4,8 @@ Uses Pydantic BaseSettings for validation and .env file support.
 Every setting has a sensible default for local development.
 """
 
+from __future__ import annotations
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,9 +21,11 @@ class Settings(BaseSettings):
 
     # --- Application ---
     env: str = Field("development", alias="METATRON_ENV")
+    host: str = Field("0.0.0.0", alias="METATRON_HOST")
     port: int = Field(8000, alias="METATRON_PORT")
     log_level: str = Field("INFO", alias="METATRON_LOG_LEVEL")
     secret_key: str = Field("change-me-in-production", alias="METATRON_SECRET_KEY")
+    cors_origins: str = Field("*", alias="CORS_ORIGINS")
 
     # --- PostgreSQL ---
     postgres_host: str = Field("localhost", alias="POSTGRES_HOST")
@@ -89,8 +93,12 @@ class Settings(BaseSettings):
     jira_api_token: str = Field("", alias="JIRA_API_TOKEN")
     jira_project_key: str = Field("", alias="JIRA_PROJECT_KEY")
 
+    # --- Notion ---
+    notion_api_token: str = Field("", alias="NOTION_API_TOKEN")
+
     # --- Channels ---
     telegram_bot_token: str = Field("", alias="TELEGRAM_BOT_TOKEN")
+    discord_bot_token: str = Field("", alias="DISCORD_BOT_TOKEN")
     slack_bot_token: str = Field("", alias="SLACK_BOT_TOKEN")
     slack_app_token: str = Field("", alias="SLACK_APP_TOKEN")
     slack_signing_secret: str = Field("", alias="SLACK_SIGNING_SECRET")
@@ -108,6 +116,15 @@ class Settings(BaseSettings):
     bm25_vocab_size: int = Field(30000, alias="BM25_VOCAB_SIZE")
     query_expansion_enabled: bool = Field(True, alias="QUERY_EXPANSION_ENABLED")
 
+    # --- LLM context budget ---
+    llm_context_max_tokens: int = Field(10000, alias="LLM_CONTEXT_MAX_TOKENS")
+    llm_answer_reserve_tokens: int = Field(1500, alias="LLM_ANSWER_RESERVE_TOKENS")
+
+    # --- Graph extraction ---
+    graph_extraction_enabled: bool = Field(True, alias="GRAPH_EXTRACTION_ENABLED")
+    graph_extraction_workers: int = Field(4, alias="GRAPH_EXTRACTION_WORKERS")
+    graph_extraction_min_chars: int = Field(100, alias="GRAPH_EXTRACTION_MIN_CHARS")
+
     # --- Embedding cache ---
     embedding_cache_ttl: int = Field(3600, alias="EMBEDDING_CACHE_TTL")
     embedding_cache_maxsize: int = Field(2048, alias="EMBEDDING_CACHE_MAXSIZE")
@@ -120,6 +137,11 @@ class Settings(BaseSettings):
     tag_weight: float = 0.20
     graph_weight: float = 0.15
     recency_weight: float = 0.10
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS_ORIGINS comma-separated string into a list."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def postgres_dsn(self) -> str:
@@ -164,3 +186,16 @@ class Settings(BaseSettings):
             msg = f"env must be one of {allowed}, got '{v}'"
             raise ValueError(msg)
         return v
+
+
+# --- Cached singleton ---------------------------------------------------
+
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    """Return a cached Settings instance (created once from env)."""
+    global _settings  # noqa: PLW0603
+    if _settings is None:
+        _settings = Settings()
+    return _settings

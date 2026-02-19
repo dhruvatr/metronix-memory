@@ -50,6 +50,30 @@ _SMALLTALK_PATTERNS = frozenset({
 })
 
 
+_ACTION_KEYWORDS_EN = frozenset({
+    "create", "make", "file", "open", "send", "post",
+    "update", "add comment", "write", "submit", "publish",
+})
+
+_ACTION_KEYWORDS_RU = frozenset({
+    "создай", "создать", "заведи", "завести", "добавь", "добавить",
+    "отправь", "отправить", "напиши", "написать", "обнови", "обновить",
+    "прокомментируй", "опубликуй", "опубликовать",
+})
+
+_CONFIRMATION_YES = frozenset({
+    "да", "yes", "y", "д", "ок", "ok", "подтверждаю", "confirm",
+})
+_CONFIRMATION_NO = frozenset({
+    "нет", "no", "n", "отмена", "cancel", "отменить",
+})
+
+_CONTEXT_KEYWORDS = frozenset({
+    "итоги", "summary", "отчёт", "отчет", "report",
+    "результаты", "results", "обзор", "overview",
+})
+
+
 class Intent(StrEnum):
     """Classified intent for an incoming message."""
 
@@ -57,6 +81,7 @@ class Intent(StrEnum):
     GREETING = "greeting"
     SMALLTALK = "smalltalk"
     COMMAND = "command"
+    ACTION = "action"
 
 
 class AgentRouter:
@@ -101,6 +126,11 @@ class AgentRouter:
         if not text:
             return "Please send a message or type /help for available commands."
 
+        # Check for pending action confirmation before classifying
+        confirmation_result = self._check_confirmation(text, user_id, ws)
+        if confirmation_result is not None:
+            return confirmation_result
+
         logger.info("router.route", user_id=user_id, workspace_id=ws, text_len=len(text))
 
         intent = self._classify(text)
@@ -113,6 +143,8 @@ class AgentRouter:
                 return self._handle_greeting(user_id, ws)
             if intent == Intent.SMALLTALK:
                 return self._handle_smalltalk(text, user_id, ws)
+            if intent == Intent.ACTION:
+                return self._handle_action(text, user_id, ws)
             return self._handle_search(text, user_id, ws)
         except LLMError as e:
             logger.error("router.error.llm", intent=intent, error=str(e), exc_info=True)
@@ -132,7 +164,7 @@ class AgentRouter:
         """Classify the intent of a message."""
         lower = text.lower().strip()
 
-        if lower.startswith("/"):
+        if lower.startswith("/") or lower.startswith("!"):
             return Intent.COMMAND
 
         if lower in _GREETING_WORDS or lower.rstrip("!") in _GREETING_WORDS:
@@ -141,6 +173,14 @@ class AgentRouter:
         for pattern in _SMALLTALK_PATTERNS:
             if lower.startswith(pattern):
                 return Intent.SMALLTALK
+
+        # Detect action intent (create/update/send requests)
+        for kw in _ACTION_KEYWORDS_RU:
+            if kw in lower:
+                return Intent.ACTION
+        for kw in _ACTION_KEYWORDS_EN:
+            if kw in lower:
+                return Intent.ACTION
 
         return Intent.SEARCH
 
@@ -168,6 +208,94 @@ class AgentRouter:
         self._sessions.add_turn(user_id, workspace_id, "assistant", answer)
 
         return answer
+
+    def _check_confirmation(
+        self, text: str, user_id: str, workspace_id: str,
+    ) -> str | None:
+        """Check if user is confirming/cancelling a pending action.
+
+        Returns response string if handled, None to continue normal routing.
+        """
+        from metatron.mcp.action_store import get_action_store
+
+        store = get_action_store()
+        pending = store.get_for_user(user_id)
+        if not pending:
+            return None
+
+        text_lower = text.lower().strip()
+
+        if text_lower in _CONFIRMATION_YES:
+            from metatron.mcp.action_executor import ActionExecutor
+            executor = ActionExecutor()
+            result = executor.execute(pending)
+            store.remove(pending.action_id)
+            if result["success"]:
+                return f"Done: {pending.description}\n\n{result['result']}"
+            return f"Error: {result['error']}"
+
+        if text_lower in _CONFIRMATION_NO:
+            store.remove(pending.action_id)
+            return "Action cancelled."
+
+        # Not a confirmation — fall through to normal routing
+        # (remove stale pending so it doesn't block future messages)
+        return None
+
+    def _handle_action(self, text: str, user_id: str, workspace_id: str) -> str:
+        """Handle an action request — plan via LLM, store for confirmation."""
+        from metatron.mcp.action_planner import ActionPlanner, ActionPolicy
+        from metatron.mcp.action_store import PendingAction, get_action_store
+
+        planner = ActionPlanner()
+        write_tools = planner.discover_write_tools(workspace_id)
+
+        if not write_tools:
+            # No write tools available — fall through to search
+            logger.info("router.action.no_tools", text_preview=text[:80])
+            return self._handle_search(text, user_id, workspace_id)
+
+        # Check if action needs knowledge base context
+        context = ""
+        lower = text.lower()
+        if any(kw in lower for kw in _CONTEXT_KEYWORDS):
+            try:
+                context = hybrid_search_and_answer(
+                    query=text, user_id=user_id, workspace_id=workspace_id,
+                    intent_query=text,
+                )
+            except Exception as e:
+                logger.warning("router.action.context_error", error=str(e))
+
+        plan = planner.plan(text, write_tools, context=context)
+
+        if "error" in plan:
+            suggestion = plan.get("suggestion", "")
+            return f"{plan['error']}\n{suggestion}".strip()
+
+        # Check policy
+        if not ActionPolicy.is_allowed(user_id, plan.get("tool", "")):
+            return "You don't have permission to perform this action."
+
+        # Store pending action for confirmation
+        action = PendingAction(
+            user_id=user_id,
+            server_name=plan.get("server", ""),
+            tool_name=plan.get("tool", ""),
+            arguments=plan.get("arguments", {}),
+            description=plan.get("description", "Action"),
+            preview=plan.get("preview", ""),
+        )
+        store = get_action_store()
+        store.add(action)
+
+        # Return confirmation prompt
+        preview = action.preview or "(no preview)"
+        return (
+            f"**{action.description}**\n\n"
+            f"{preview}\n\n"
+            f"Confirm? (Yes/No)"
+        )
 
     # -- Supported upload formats --
     SUPPORTED_UPLOAD_EXTENSIONS: frozenset[str] = frozenset({
@@ -314,8 +442,13 @@ class AgentRouter:
             return "I'm Metatron, your team's knowledge assistant. How can I help?"
 
     def _handle_command(self, text: str, user_id: str, workspace_id: str) -> str:
-        """Handle slash commands."""
-        parts = text.strip().split(maxsplit=1)
+        """Handle slash/bang commands (e.g. /help or !help)."""
+        # Normalize: !command → /command
+        normalized = text.strip()
+        if normalized.startswith("!"):
+            normalized = "/" + normalized[1:]
+
+        parts = normalized.split(maxsplit=1)
         command = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
 
@@ -336,6 +469,8 @@ class AgentRouter:
             return self._handle_greeting(user_id, workspace_id)
         if command == "/rebuild-aliases":
             return self._cmd_rebuild_aliases(workspace_id)
+        if command == "/mcp":
+            return self._cmd_mcp(arg, workspace_id)
 
         return f"Unknown command: {command}. Type /help for available commands."
 
@@ -344,14 +479,187 @@ class AgentRouter:
         return (
             "**Available commands:**\n"
             "/search <query> — Search the knowledge base\n"
-            "/sync confluence|jira — Incremental sync (only changes)\n"
-            "/sync confluence|jira full — Full re-sync from scratch\n"
+            "/sync confluence|jira|notion — Incremental sync (only changes)\n"
+            "/sync confluence|jira|notion full — Full re-sync from scratch\n"
+            "/mcp list — List configured MCP servers\n"
+            "/mcp add <name> <command> [args...] — Add MCP server\n"
+            "/mcp remove <name> — Remove MCP server\n"
+            "/mcp sync <name> [full] — Sync one MCP server\n"
+            "/mcp sync-all [full] — Sync all MCP servers\n"
+            "/mcp tools <name> — List tools from MCP server\n"
             "/status — Show workspace status\n"
             "/clear — Clear conversation history\n"
             "/rebuild-aliases — Rebuild person name registry from stored data\n"
             "/help — Show this help message\n\n"
-            "Or just type your question and I'll search for the answer."
+            "You can also use ! instead of / (e.g. !help, !sync).\n\n"
+            "Or just type your question and I'll search for the answer.\n"
+            "To perform actions (create issues, pages, etc.), just describe what you want."
         )
+
+    def _cmd_mcp(self, arg: str, workspace_id: str) -> str:
+        """Handle /mcp subcommands: list, add, remove, sync, sync-all, tools."""
+        from metatron.mcp.config import MCPServerConfig
+        from metatron.mcp.registry import MCPServerRegistry
+
+        parts = arg.split() if arg else []
+        subcmd = parts[0].lower() if parts else "list"
+        rest = parts[1:]
+
+        registry = MCPServerRegistry()
+
+        if subcmd == "list":
+            servers = registry.list_servers(workspace_id)
+            if not servers:
+                return "No MCP servers configured. Use /mcp add <name> <command> [args...]"
+            lines = ["**MCP servers:**"]
+            for s in servers:
+                status = "enabled" if s.enabled else "disabled"
+                cmd = f"{s.command} {' '.join(s.args)}".strip()
+                lines.append(f"- **{s.name}** ({status}): `{cmd}`")
+                if s.description:
+                    lines.append(f"  {s.description}")
+            return "\n".join(lines)
+
+        if subcmd == "add":
+            if len(rest) < 2:
+                return "Usage: /mcp add <name> <command> [args...]"
+            name = rest[0]
+            command = rest[1]
+            args = rest[2:]
+            config = MCPServerConfig(
+                name=name,
+                command=command,
+                args=args,
+                workspace_id=workspace_id,
+            )
+            registry.add(config)
+            return f"MCP server **{name}** added: `{command} {' '.join(args)}`"
+
+        if subcmd == "remove":
+            if not rest:
+                return "Usage: /mcp remove <name>"
+            name = rest[0]
+            if registry.remove(name):
+                return f"MCP server **{name}** removed."
+            return f"MCP server **{name}** not found."
+
+        if subcmd == "sync":
+            if not rest:
+                return "Usage: /mcp sync <server_name> [full]"
+            name = rest[0]
+            force_full = "full" in rest[1:]
+            config = registry.get(name)
+            if not config:
+                return f"MCP server **{name}** not found. Use /mcp list to see available."
+            return self._run_mcp_sync(config, workspace_id, force_full)
+
+        if subcmd == "sync-all":
+            force_full = "full" in rest
+            return self._run_mcp_sync_all(workspace_id, force_full, registry)
+
+        if subcmd == "tools":
+            if not rest:
+                return "Usage: /mcp tools <server_name>"
+            name = rest[0]
+            config = registry.get(name)
+            if not config:
+                return f"MCP server **{name}** not found."
+            return self._run_mcp_list_tools(config)
+
+        return f"Unknown /mcp subcommand: {subcmd}. Try /mcp list"
+
+    def _run_mcp_sync(
+        self, config: MCPServerConfig, workspace_id: str, force_full: bool,
+    ) -> str:
+        """Run sync for a single MCP server (sync wrapper)."""
+        from metatron.mcp.sync import MCPSyncManager
+
+        manager = MCPSyncManager()
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                manager.sync_server(config, workspace_id, force_full)
+            )
+        except Exception as e:
+            logger.error("router.mcp_sync.error", server=config.name, error=str(e), exc_info=True)
+            return f"MCP sync error for **{config.name}**: {e}"
+        finally:
+            loop.close()
+
+        parts_msg = []
+        if result.documents_new:
+            parts_msg.append(f"{result.documents_new} new")
+        if result.documents_updated:
+            parts_msg.append(f"{result.documents_updated} updated")
+        if result.documents_skipped:
+            parts_msg.append(f"{result.documents_skipped} unchanged")
+        if result.errors:
+            parts_msg.append(f"{len(result.errors)} errors")
+        mode = "full" if force_full else "incremental"
+        return f"**{config.name}** ({mode}): {', '.join(parts_msg) or 'no documents'}"
+
+    def _run_mcp_sync_all(
+        self, workspace_id: str, force_full: bool, registry: MCPServerRegistry,
+    ) -> str:
+        """Run sync for all enabled MCP servers (sync wrapper)."""
+        from metatron.mcp.sync import MCPSyncManager
+
+        manager = MCPSyncManager(registry)
+        loop = asyncio.new_event_loop()
+        try:
+            results = loop.run_until_complete(
+                manager.sync_all(workspace_id, force_full)
+            )
+        except Exception as e:
+            logger.error("router.mcp_sync_all.error", error=str(e), exc_info=True)
+            return f"MCP sync-all error: {e}"
+        finally:
+            loop.close()
+
+        if not results:
+            return "No enabled MCP servers found."
+
+        lines = ["**MCP sync complete:**"]
+        for name, result in results:
+            parts_msg = []
+            if result.documents_new:
+                parts_msg.append(f"{result.documents_new} new")
+            if result.documents_updated:
+                parts_msg.append(f"{result.documents_updated} updated")
+            if result.documents_skipped:
+                parts_msg.append(f"{result.documents_skipped} unchanged")
+            if result.errors:
+                parts_msg.append(f"{len(result.errors)} errors")
+            lines.append(f"- **{name}**: {', '.join(parts_msg) or 'no documents'}")
+        return "\n".join(lines)
+
+    def _run_mcp_list_tools(self, config: MCPServerConfig) -> str:
+        """List tools from an MCP server (sync wrapper)."""
+        from metatron.mcp.adapter import classify_tool
+        from metatron.mcp.client import MCPClient
+
+        loop = asyncio.new_event_loop()
+        try:
+            async def _list() -> list[dict]:
+                async with MCPClient(config) as client:
+                    return await client.list_tools()
+
+            tools = loop.run_until_complete(_list())
+        except Exception as e:
+            logger.error("router.mcp_tools.error", server=config.name, error=str(e), exc_info=True)
+            return f"Cannot connect to **{config.name}**: {e}"
+        finally:
+            loop.close()
+
+        if not tools:
+            return f"**{config.name}**: no tools available."
+
+        lines = [f"**{config.name}** — {len(tools)} tools:"]
+        for t in tools:
+            kind = classify_tool(t["name"], t.get("description", ""))
+            desc = t.get("description", "")[:80]
+            lines.append(f"- `{t['name']}` [{kind}] — {desc}")
+        return "\n".join(lines)
 
     def _cmd_sync(self, arg: str | None, workspace_id: str) -> str:
         """Trigger a connector sync. Supports incremental (default) and full.
@@ -394,8 +702,10 @@ class AgentRouter:
                 types_to_sync.append("confluence")
             if settings.jira_url:
                 types_to_sync.append("jira")
+            if settings.notion_api_token:
+                types_to_sync.append("notion")
             if not types_to_sync:
-                return "No connectors configured. Set CONFLUENCE_URL or JIRA_URL in your environment."
+                return "No connectors configured. Set CONFLUENCE_URL, JIRA_URL, or NOTION_API_TOKEN in your environment."
 
         results = []
         for ct in types_to_sync:
@@ -483,6 +793,8 @@ class AgentRouter:
             configured.append("confluence")
         if self._settings.jira_url:
             configured.append("jira")
+        if self._settings.notion_api_token:
+            configured.append("notion")
         lines.append(f"**Connectors configured:** {', '.join(configured) or 'none'}")
 
         # LLM provider
@@ -535,5 +847,11 @@ def _config_from_env(connector_type: str, settings: Settings) -> dict[str, str]:
             "username": settings.jira_username,
             "api_token": settings.jira_api_token,
             "project_key": settings.jira_project_key,
+        }
+    if connector_type == "notion":
+        if not settings.notion_api_token:
+            return {}
+        return {
+            "api_token": settings.notion_api_token,
         }
     return {}

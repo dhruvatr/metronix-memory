@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 
 import structlog
 
-from metatron.storage.memgraph import get_memgraph_driver, DEFAULT_WORKSPACE_ID
+from metatron.storage.memgraph import get_memgraph_driver, memgraph_retry, DEFAULT_WORKSPACE_ID
 
 logger = structlog.get_logger()
 
@@ -19,6 +19,7 @@ def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
     return workspace_id.strip()
 
 
+@memgraph_retry()
 def get_graph_entities(texts: List[str], workspace_id: Optional[str] = None) -> List[Dict]:
     """Get entities mentioned in documents matching given texts."""
     workspace_id = _normalize_workspace_id(workspace_id)
@@ -50,6 +51,7 @@ def get_graph_entities(texts: List[str], workspace_id: Optional[str] = None) -> 
                  "aliases": [a for a in r["aliases"] if a]} for r in ent_res]
 
 
+@memgraph_retry()
 def get_entities_by_doc_labels(doc_labels: List[str],
                                workspace_id: Optional[str] = None) -> List[Dict]:
     """Get entities mentioned in documents by doc_label."""
@@ -86,6 +88,7 @@ def get_entities_by_doc_labels(doc_labels: List[str],
                  "aliases": [a for a in r["aliases"] if a]} for r in ent_res]
 
 
+@memgraph_retry()
 def get_all_workspace_entities(workspace_id: Optional[str] = None,
                                limit: int = 100) -> List[Dict]:
     """Get all entities in a workspace."""
@@ -108,12 +111,20 @@ def get_all_workspace_entities(workspace_id: Optional[str] = None,
         return [{"name": r["name"], "type": r["type"]} for r in res]
 
 
+@memgraph_retry()
 def get_graph_relationships(entity_names: List[str],
                             workspace_id: Optional[str] = None,
-                            max_depth: int = 5) -> List[Dict]:
-    """Get relationships for entities (variable depth traversal)."""
+                            max_depth: int = 5,
+                            active_only: bool = False) -> List[Dict]:
+    """Get relationships for entities (variable depth traversal).
+
+    Args:
+        active_only: When True, only return relationships where valid_to IS NULL
+                     (i.e. currently active / not closed).
+    """
     workspace_id = _normalize_workspace_id(workspace_id)
     depth = max(1, min(max_depth, 5))
+    active_filter = "AND r.valid_to IS NULL " if active_only else ""
     driver = get_memgraph_driver()
     with driver.session() as s:
         if workspace_id == DEFAULT_WORKSPACE_ID:
@@ -122,8 +133,9 @@ def get_graph_relationships(entity_names: List[str],
                 "WHERE e.name IN $names "
                 "UNWIND range(0, size(rels)-1) AS idx "
                 "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
-                "WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL "
-                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type "
+                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {active_filter}"
+                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
+                "r.valid_from AS valid_from, r.valid_to AS valid_to "
                 "LIMIT 200",
                 {"names": entity_names},
             )
@@ -133,15 +145,69 @@ def get_graph_relationships(entity_names: List[str],
                 "WHERE e.name IN $names AND e.workspace_id = $ws AND e2.workspace_id = $ws "
                 "UNWIND range(0, size(rels)-1) AS idx "
                 "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
-                "WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL "
-                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type "
+                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {active_filter}"
+                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
+                "r.valid_from AS valid_from, r.valid_to AS valid_to "
                 "LIMIT 200",
                 {"names": entity_names, "ws": workspace_id},
             )
         return [{"source": r["source"], "target": r["target"],
-                 "type": r["rel_type"]} for r in rel_res]
+                 "type": r["rel_type"],
+                 "valid_from": r["valid_from"], "valid_to": r["valid_to"]}
+                for r in rel_res]
 
 
+@memgraph_retry()
+def get_relationships_at_date(entity_names: List[str],
+                              target_date: str,
+                              workspace_id: Optional[str] = None,
+                              max_depth: int = 5) -> List[Dict]:
+    """Get relationships valid at a specific date (ISO format YYYY-MM-DD).
+
+    Returns relationships where:
+    - valid_from is NULL or <= target_date
+    - valid_to is NULL or >= target_date
+    """
+    workspace_id = _normalize_workspace_id(workspace_id)
+    depth = max(1, min(max_depth, 5))
+    date_filter = (
+        "AND (r.valid_from IS NULL OR r.valid_from <= $target_date) "
+        "AND (r.valid_to IS NULL OR r.valid_to >= $target_date) "
+    )
+    driver = get_memgraph_driver()
+    with driver.session() as s:
+        if workspace_id == DEFAULT_WORKSPACE_ID:
+            rel_res = s.run(
+                f"MATCH p = (e:Entity)-[rels:RELATION*1..{depth}]-(e2:Entity) "
+                "WHERE e.name IN $names "
+                "UNWIND range(0, size(rels)-1) AS idx "
+                "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
+                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {date_filter}"
+                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
+                "r.valid_from AS valid_from, r.valid_to AS valid_to "
+                "LIMIT 200",
+                {"names": entity_names, "target_date": target_date},
+            )
+        else:
+            rel_res = s.run(
+                f"MATCH p = (e:Entity)-[rels:RELATION*1..{depth}]-(e2:Entity) "
+                "WHERE e.name IN $names AND e.workspace_id = $ws AND e2.workspace_id = $ws "
+                "UNWIND range(0, size(rels)-1) AS idx "
+                "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
+                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {date_filter}"
+                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
+                "r.valid_from AS valid_from, r.valid_to AS valid_to "
+                "LIMIT 200",
+                {"names": entity_names, "ws": workspace_id,
+                 "target_date": target_date},
+            )
+        return [{"source": r["source"], "target": r["target"],
+                 "type": r["rel_type"],
+                 "valid_from": r["valid_from"], "valid_to": r["valid_to"]}
+                for r in rel_res]
+
+
+@memgraph_retry()
 def get_doc_labels_by_entities(entity_names: List[str],
                                workspace_id: Optional[str] = None) -> List[Dict]:
     """Get document labels for documents linked to given entities."""
@@ -170,6 +236,7 @@ def get_doc_labels_by_entities(entity_names: List[str],
         return [{"doc_label": r["doc_label"], "title": r["title"]} for r in doc_res]
 
 
+@memgraph_retry()
 def delete_document_node(doc_label: str, workspace_id: Optional[str] = None) -> None:
     """Delete a document/issue node and its MENTIONS edges.
 
@@ -188,6 +255,7 @@ def delete_document_node(doc_label: str, workspace_id: Optional[str] = None) -> 
     logger.info("graph.delete_document_node", doc_label=doc_label, workspace_id=workspace_id)
 
 
+@memgraph_retry()
 def get_related_documents(texts: List[str],
                           workspace_id: Optional[str] = None) -> List[Dict]:
     """Get documents linked through shared entities."""

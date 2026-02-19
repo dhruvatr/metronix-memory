@@ -72,9 +72,15 @@ def resolve_person_name(extracted: str) -> List[str]:
         returns the original name capitalized as a single-element list
         so the caller can still attempt an exact-match search.
     """
+    from metatron.retrieval.alias_registry import _strip_russian_case_ending
+
     key = extracted.strip().lower()
     if key in NAME_ALIASES:
         return NAME_ALIASES[key]
+    # Try stem-stripped form for Russian case endings
+    stem = _strip_russian_case_ending(key)
+    if stem and stem in NAME_ALIASES:
+        return NAME_ALIASES[stem]
     # No alias — return original capitalized as fallback
     return [extracted.strip().capitalize()]
 

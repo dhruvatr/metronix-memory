@@ -6,7 +6,7 @@ This guide will help you set up and run Metatron Core on your local machine.
 
 Before you begin, ensure you have the following installed:
 
-- **Python 3.12** or higher
+- **Python 3.12 or 3.13**
 - **Docker** and **Docker Compose**
 - **Git**
 - **Make** (usually pre-installed on macOS and Linux)
@@ -36,6 +36,11 @@ Open `.env` in your editor and configure the following key variables:
 - **OLLAMA_URL**: Ollama API endpoint (default: `http://localhost:11434`)
 - **ENCRYPTION_KEY**: Generate a secure key for encrypting connection credentials
 - **SECRET_KEY**: Secret key for API authentication
+- **NOTION_API_TOKEN**: Notion integration token (if using Notion connector)
+- **TELEGRAM_BOT_TOKEN**: Telegram bot token from @BotFather (if using Telegram)
+- **DISCORD_BOT_TOKEN**: Discord bot token from Developer Portal (if using Discord)
+- **SLACK_BOT_TOKEN**: Slack bot OAuth token — xoxb-... (if using Slack)
+- **SLACK_APP_TOKEN**: Slack app-level token — xapp-... (if using Slack Socket Mode)
 - **ENVIRONMENT**: Set to `development` for local dev, `production` for production
 
 ### 3. Start Infrastructure Services
@@ -90,13 +95,16 @@ Initialize the database schema:
 make migrate
 ```
 
-### 7. Start the Development Server
+### 7. Start the Application
 
-Launch the FastAPI development server:
+Launch the unified server (API + Telegram/Discord/Slack bots):
 
 ```bash
 make dev
 ```
+
+This starts the API server and any configured bots (Telegram, Discord, Slack) in a single process.
+Bots are only started if their tokens are set in `.env`.
 
 The API will be available at `http://localhost:8000`.
 
@@ -106,47 +114,48 @@ API documentation will be available at:
 
 ## First Steps
 
-Once the server is running, try these basic operations:
+Once the server is running, there are two ways to interact with Metatron:
 
-### 1. Create a Workspace
+### Option A: Via Bot (Telegram, Discord, or Slack)
+
+If you configured a bot token, open the bot and run:
+
+```
+/sync confluence          — Sync Confluence pages
+/sync jira                — Sync Jira issues
+/sync notion              — Sync Notion pages
+```
+
+Then ask any question — the bot searches your knowledge base.
+
+To add an MCP-compatible external tool:
+
+```
+/mcp add github npx @modelcontextprotocol/server-github
+/mcp sync github
+```
+
+### Option B: Via REST API
 
 ```bash
+# Create a workspace
 curl -X POST http://localhost:8000/api/v1/workspaces \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "My First Workspace",
-    "description": "Testing Metatron Core"
-  }'
-```
+  -d '{"name": "My Workspace", "description": "Testing"}'
 
-Save the workspace `id` from the response.
+# Sync a connector (e.g., confluence)
+curl -X POST http://localhost:8000/api/v1/connections/sync/confluence
 
-### 2. Create a Connection
-
-```bash
-curl -X POST http://localhost:8000/api/v1/connections \
+# Ask a question
+curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{
-    "workspace_id": "YOUR_WORKSPACE_ID",
-    "source_type": "slack",
-    "config": {
-      "token": "xoxb-your-slack-token",
-      "channels": ["general"]
-    }
-  }'
+  -d '{"message": "What is our architecture?"}'
+
+# Or stream the answer via SSE
+curl -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is our architecture?"}'
 ```
-
-Save the connection `id` from the response.
-
-### 3. Trigger a Sync
-
-```bash
-curl -X POST http://localhost:8000/api/v1/connections/YOUR_CONNECTION_ID/sync
-```
-
-### 4. Query Your Data
-
-Use the query API endpoint or integrate with a messenger bot to interact with your synced data.
 
 ## Troubleshooting
 
@@ -224,16 +233,12 @@ If services fail to start:
 
 ### Running Tests
 
-Run the test suite:
+Run the test suite (751 tests):
 
 ```bash
 make test
-```
-
-Run tests with coverage:
-
-```bash
-make test-coverage
+# or directly:
+.venv/bin/pytest tests/ -v --tb=short
 ```
 
 ### Code Quality
