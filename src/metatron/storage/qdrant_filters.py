@@ -95,33 +95,11 @@ def get_collection_info(store: QdrantVectorStore) -> Dict:
 
 
 def get_stats(store: QdrantVectorStore) -> Dict:
-    """Get detailed statistics: chunk count and unique file count."""
-    try:
-        info = store.client.get_collection(store.collection_name)
-        chunk_count = info.points_count
-        file_count = 0
+    """Get detailed statistics: chunk count and unique file count.
 
-        if chunk_count and chunk_count > 0:
-            titles: set[str] = set()
-            offset = None
-            while True:
-                results, offset = store.client.scroll(
-                    collection_name=store.collection_name,
-                    limit=100, offset=offset, with_payload=["title"],
-                )
-                for point in results:
-                    title = point.payload.get("title")
-                    if title:
-                        titles.add(title)
-                if offset is None:
-                    break
-            file_count = len(titles)
-
-        return {"chunk_count": chunk_count, "file_count": file_count}
-    except Exception as e:
-        logger.error("qdrant.stats.error",
-                     workspace_id=store.workspace_id, error=str(e))
-        return {"chunk_count": 0, "file_count": 0}
+    Delegates to the instance method ``QdrantVectorStore.get_stats()``.
+    """
+    return store.get_stats()
 
 
 # Re-export from main module for backward compatibility

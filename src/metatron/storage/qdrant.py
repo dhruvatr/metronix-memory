@@ -261,6 +261,42 @@ class QdrantVectorStore:
             logger.error("qdrant.delete_by_doc_labels.error", error=str(e))
             return 0
 
+    def get_stats(self) -> Dict:
+        """Get workspace statistics: chunk count and unique file count.
+
+        # TODO: Read file_count/chunk_count from PostgreSQL instead of scanning Qdrant.
+        # Current implementation scrolls all points on every /stats call — acceptable for MVP
+        # but must be replaced with cached counters in PostgreSQL once persistence is implemented.
+        # Counters should be updated during ingest_documents() and delete operations.
+        """
+        try:
+            info = self.client.get_collection(self.collection_name)
+            chunk_count = info.points_count or 0
+            file_count = 0
+
+            if chunk_count > 0:
+                labels: set[str] = set()
+                offset = None
+                while True:
+                    results, offset = self.client.scroll(
+                        collection_name=self.collection_name,
+                        limit=100, offset=offset,
+                        with_payload=["doc_label"], with_vectors=False,
+                    )
+                    for point in results:
+                        label = point.payload.get("doc_label")
+                        if label:
+                            labels.add(label)
+                    if offset is None:
+                        break
+                file_count = len(labels)
+
+            return {"chunk_count": chunk_count, "file_count": file_count}
+        except Exception as e:
+            logger.error("qdrant.stats.error",
+                         workspace_id=self.workspace_id, error=str(e))
+            return {"chunk_count": 0, "file_count": 0}
+
     def delete(self) -> None:
         """Delete the collection permanently."""
         try:
