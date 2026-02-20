@@ -1,0 +1,66 @@
+=============================================================================
+Metatron Core — Local Development Environment
+=============================================================================
+--- Application ---
+METATRON_ENV=development
+METATRON_PORT=8000
+METATRON_LOG_LEVEL=DEBUG
+METATRON_SECRET_KEY=dev-secret-key-change-in-prod
+
+--- PostgreSQL ---
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=metatron
+POSTGRES_USER=metatron
+POSTGRES_PASSWORD=metatron_dev
+
+--- Qdrant (vector store) ---
+QDRANT_HOST=localhost
+QDRANT_HTTP_PORT=6333
+QDRANT_GRPC_PORT=6334
+
+--- Memgraph (knowledge graph) ---
+MEMGRAPH_HOST=localhost
+MEMGRAPH_PORT=7687
+MEMGRAPH_USER=
+MEMGRAPH_PASSWORD=
+
+--- LLM provider ---
+LLM_PROVIDER=deepseek
+LLM_FALLBACK_PROVIDER=
+DEEPSEEK_API_KEY=sk-79e82614397c4a3ca9cb1c39ce4480ff
+DEEPSEEK_MODEL=deepseek-chat
+OPENROUTER_API_KEY=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
+OPENROUTER_MODEL=mistralai/devstral-2512:free
+
+--- Ollama (embeddings + fallback LLM) ---
+OLLAMA_HOST=http://localhost:11434/
+OLLAMA_CHAT_MODEL=llama3.1:8b
+OLLAMA_EMBED_MODEL=nomic-embed-text
+
+--- Workspace ---
+DEFAULT_WORKSPACE_ID=MTRNIX
+DEFAULT_WORKSPACE_NAME=MTRNIX Workspace
+WORKSPACE_PERSISTENCE=memgraph
+
+--- Encryption ---
+FERNET_KEY=
+
+--- Semantic matching ---
+ENABLE_SEMANTIC_MATCHING=true
+
+--- File storage ---
+FILE_STORE_PATH=./data/files
+--- Connector ---
+CONFLUENCE_URL=https://aisec-team.atlassian.net/
+CONFLUENCE_USERNAME=k.kuzmin@ximilab.ru
+CONFLUENCE_API_TOKEN=ATATT3xFfGF0pKgZUu9SwOoGzunQkSGaXr16pGESctWIvFJu5_7UAhgpmDHamkxwZ0WLypyxSP_fQY349Ek3fgznnbMmxdQmWrH5YIO8nF38m-lQOIsngbB6g6zEL-j-JSzaOsA08gq4A9lbjQgaDa80f1A4kd6rZvFa4-XkzdK6_kb03gF845U=259635EF
+CONFLUENCE_SPACE_KEY=MTRNIX
+
+JIRA_URL=https://aisec-team.atlassian.net/
+JIRA_USERNAME=k.kuzmin@ximilab.ru
+JIRA_API_TOKEN=ATATT3xFfGF0pKgZUu9SwOoGzunQkSGaXr16pGESctWIvFJu5_7UAhgpmDHamkxwZ0WLypyxSP_fQY349Ek3fgznnbMmxdQmWrH5YIO8nF38m-lQOIsngbB6g6zEL-j-JSzaOsA08gq4A9lbjQgaDa80f1A4kd6rZvFa4-XkzdK6_kb03gF845U=259635EF
+JIRA_PROJECT_KEY=MTRNIX
+
+--- Optional connectors ---
+TELEGRAM_BOT_TOKEN=8263933903:AAHqA1J6baRK3X9pNTNCNt5tBvukOCI05CA
