@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     secret_key: str = Field("change-me-in-production", alias="METATRON_SECRET_KEY")
     cors_origins: str = Field("*", alias="CORS_ORIGINS")
 
+    # --- Auth ---
+    auth_enabled: bool = Field(default=False, alias="AUTH_ENABLED")
+    auth_password: str = Field(default="metatron", alias="AUTH_PASSWORD")
+
     # --- PostgreSQL ---
     postgres_host: str = Field("localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(5432, alias="POSTGRES_PORT")

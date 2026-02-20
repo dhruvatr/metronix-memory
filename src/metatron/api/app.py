@@ -15,8 +15,10 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from metatron.api.middleware import OptionalAuthMiddleware
 from metatron.api.routes import (
     admin,
+    auth,
     benchmarker,
     chat,
     connections,
@@ -93,8 +95,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Auth middleware (checked after CORS)
+    app.add_middleware(OptionalAuthMiddleware)
+
     # Register route modules
     app.include_router(health.router)
+    app.include_router(auth.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(admin.router, prefix="/api/v1")
     app.include_router(skills.router, prefix="/api/v1")
