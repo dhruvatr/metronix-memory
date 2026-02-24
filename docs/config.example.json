@@ -1,0 +1,277 @@
+// OpenClaw Configuration Examples for Metatron MCP Server
+// 
+// This file contains two complete, copy-paste-ready configuration examples:
+// 1. HTTP Transport (Recommended for production)
+// 2. Stdio Transport (For local development)
+//
+// Choose the example that matches your deployment, copy it into your OpenClaw
+// mcp.servers[] configuration, and customize the marked fields (API key, host, port).
+//
+// For detailed explanation of each field, see docs/OPENCLAW_CONFIG.md
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXAMPLE 1: HTTP TRANSPORT (Production Recommended)
+// ═══════════════════════════════════════════════════════════════════════════
+// Use this when Metatron runs on a separate server or different machine.
+//
+// To use:
+//   1. Copy this entire object (lines until end of object)
+//   2. Paste into your OpenClaw configuration under mcp.servers[]
+//   3. Replace "your-api-key-here" with your actual Metatron API key
+//   4. Update the URL if Metatron is not on localhost:8000
+//   5. Set METATRON_API_KEY environment variable before starting OpenClaw
+//
+
+{
+  "name": "metatron",
+  // ─ Server name in OpenClaw. Keep as "metatron" for consistency.
+  // ─ Visible in OpenClaw UI and in `/mcp list` output.
+
+  "type": "stdio",
+  // ─ Server type in OpenClaw's config format.
+  // ─ Possible values depend on your OpenClaw version; commonly "stdio" or "http".
+  // ─ Check your OpenClaw documentation for the correct value.
+
+  "description": "Metatron knowledge management system - HTTP transport",
+  // ─ Human-readable description. Optional but recommended for clarity.
+
+  "transport": {
+    "type": "http",
+    // ─ REQUIRED: Set to "http" for HTTP transport
+    // ─ Alternative: "stdio" (see Example 2)
+
+    "url": "http://localhost:8000/mcp",
+    // ─ REQUIRED: URL where Metatron MCP endpoint is running
+    // ─ DEFAULT: http://localhost:8000/mcp (if Metatron on same machine, local)
+    // ─ CHANGE TO YOUR SETUP:
+    // ─   - Remote server: http://metatron-server.example.com:8000/mcp
+    // ─   - Different port: http://localhost:9000/mcp
+    // ─   - HTTPS (production): https://metatron-server.example.com/mcp
+    // ─     (HTTPS requires valid SSL certificate on Metatron)
+    // ─ NOTE: Must be HTTPS in production (HTTP only OK for localhost)
+  },
+
+  "auth": {
+    "type": "bearer",
+    // ─ REQUIRED: Authentication type. Set to "bearer" for Metatron API keys.
+    // ─ Metatron uses Bearer tokens in the Authorization header.
+
+    "token_env": "METATRON_API_KEY"
+    // ─ REQUIRED: Environment variable containing your API key.
+    // ─ IMPORTANT: Set this variable before starting OpenClaw:
+    // ─   export METATRON_API_KEY="your-actual-api-key-here"
+    // ─ Get your API key from Metatron:
+    // ─   1. Open http://localhost:8000 in your browser
+    // ─   2. Log in with your workspace credentials
+    // ─   3. Settings → API Keys
+    // ─   4. Copy the active API key (starts with "mtk_")
+    // ─ DO NOT paste the key directly here (security risk).
+    // ─ Use environment variable instead.
+    
+    // ─ ALTERNATIVE (NOT RECOMMENDED): Inline token
+    // ─ If you must use inline (not recommended):
+    // ─   "token": "your-api-key-here"
+    // ─ This exposes secrets in your config file. Use token_env instead.
+  },
+
+  "timeout_seconds": 30,
+  // ─ OPTIONAL: How long to wait for responses from Metatron (seconds)
+  // ─ DEFAULT: 30 seconds
+  // ─ ADJUST: Increase for slow networks, decrease for faster timeouts
+  // ─ RANGE: 5-300 seconds (recommended 10-60)
+
+  "max_retries": 3,
+  // ─ OPTIONAL: Number of automatic retries on transient errors
+  // ─ DEFAULT: 3
+  // ─ How it works: If request fails with timeout/network error, retry up to N times
+  // ─ ADJUST: Increase for unreliable networks, decrease for fast-fail behavior
+
+  "retry_delay_ms": 1000,
+  // ─ OPTIONAL: Milliseconds to wait between retries (exponential backoff)
+  // ─ DEFAULT: 1000 ms (1 second)
+  // ─ How it works: 1st retry after 1s, 2nd after 2s, 3rd after 4s, etc.
+  // ─ ADJUST: Increase for congested networks, decrease for responsive servers
+
+  "debug": false
+  // ─ OPTIONAL: Enable detailed logging (boolean)
+  // ─ DEFAULT: false
+  // ─ When true: See detailed HTTP requests, responses, auth flow in OpenClaw logs
+  // ─ Set to true when troubleshooting connection issues
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// END EXAMPLE 1: HTTP TRANSPORT
+// ─────────────────────────────────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXAMPLE 2: STDIO TRANSPORT (Development & Local)
+// ═══════════════════════════════════════════════════════════════════════════
+// Use this when OpenClaw and Metatron run on the SAME MACHINE (local development).
+//
+// Stdio starts Metatron as a subprocess and communicates via stdin/stdout.
+// Simpler setup (no network needed) but slower startup (~2 seconds per request).
+//
+// To use:
+//   1. Copy this entire object (lines until end of object)
+//   2. Paste into your OpenClaw configuration under mcp.servers[]
+//   3. Replace "dev-key-12345" with your actual Metatron API key
+//   4. Ensure Python 3.12+ is installed: python3 --version
+//   5. No environment variable needed (key is in config)
+//
+
+{
+  "name": "metatron",
+  // ─ Server name in OpenClaw. Keep as "metatron" for consistency.
+  // ─ Visible in OpenClaw UI and in `/mcp list` output.
+
+  "type": "stdio",
+  // ─ Server type in OpenClaw's config format.
+  // ─ Standard type for local subprocess servers.
+
+  "description": "Metatron local MCP server - stdio transport (development)",
+  // ─ Human-readable description indicating this is for development.
+
+  "transport": {
+    "type": "stdio",
+    // ─ REQUIRED: Set to "stdio" to start Metatron as subprocess.
+    // ─ Alternative: "http" (see Example 1)
+
+    "command": "python",
+    // ─ REQUIRED: Command to run. Use "python" or "python3" or full path.
+    // ─ CHANGE TO YOUR SETUP:
+    // ─   - If python3 is preferred: "python3"
+    // ─   - If full path needed: "/usr/local/bin/python3.12"
+    // ─ Verify available: which python; which python3; which python3.12
+
+    "args": [
+      "-m",
+      "metatron.mcp"
+    ]
+    // ─ REQUIRED: Arguments passed to the command.
+    // ─ This tells Python to run Metatron as a module: python -m metatron.mcp
+    // ─ Do not modify this unless you know what you're doing.
+  },
+
+  "env": {
+    "METATRON_API_KEY": "dev-key-12345",
+    // ─ REQUIRED: Your Metatron API key for authentication.
+    // ─ Get from: Metatron Web UI → Settings → API Keys
+    // ─ CHANGE TO: your actual key (example: mtk_prod_abc123def456...)
+    // ─ WARNING: This value is visible in your OpenClaw config. Keep it private.
+    // ─ For production: Use environment variables from OpenClaw's .env instead.
+
+    "METATRON_LOG_LEVEL": "INFO",
+    // ─ OPTIONAL: Logging verbosity for Metatron subprocess.
+    // ─ DEFAULT: "INFO"
+    // ─ OPTIONS: "DEBUG" (verbose), "INFO" (normal), "WARN", "ERROR"
+    // ─ Set to "DEBUG" when troubleshooting connection issues.
+
+    "METATRON_WORKSPACE": "default"
+    // ─ OPTIONAL: Which workspace to query (if multi-tenant setup).
+    // ─ DEFAULT: "default"
+    // ─ If you have multiple workspaces, specify which one to use here.
+    // ─ Find your workspace name in Metatron → Settings → Workspaces.
+  },
+
+  "timeout_seconds": 10
+  // ─ OPTIONAL: How long to wait for stdio subprocess response (seconds)
+  // ─ DEFAULT: 10 seconds
+  // ─ Stdio subprocess startup overhead ~2 seconds, so minimum 5 recommended.
+  // ─ Increase if requests are slow or frequently timing out.
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// END EXAMPLE 2: STDIO TRANSPORT
+// ─────────────────────────────────────────────────────────────────────────
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENVIRONMENT VARIABLES REFERENCE
+// ═══════════════════════════════════════════════════════════════════════════
+// These environment variables control Metatron behavior.
+// Set them in your OpenClaw startup environment or .env file.
+//
+// METATRON_API_KEY (REQUIRED)
+//   Your Metatron API key for authentication.
+//   Get from: Metatron Web UI → Settings → API Keys
+//   Example: METATRON_API_KEY="mtk_prod_abc123def456..."
+//   Scope: HTTP auth, stdio subprocess auth
+//
+// METATRON_WORKSPACE (OPTIONAL)
+//   Which workspace to query if you have multiple.
+//   Default: "default"
+//   Example: METATRON_WORKSPACE="engineering"
+//   Scope: Stdio transport only (HTTP uses URL for multi-tenant)
+//
+// METATRON_LOG_LEVEL (OPTIONAL)
+//   Logging verbosity.
+//   Default: "INFO"
+//   Options: "DEBUG", "INFO", "WARN", "ERROR"
+//   Example: METATRON_LOG_LEVEL="DEBUG"
+//   Scope: Stdio subprocess logging
+//
+// METATRON_HOST (OPTIONAL)
+//   Metatron server hostname/IP (for custom deployments)
+//   Default: "localhost"
+//   Example: METATRON_HOST="metatron-server.example.com"
+//   Scope: HTTP transport (already in URL in this example)
+//
+// METATRON_PORT (OPTIONAL)
+//   Metatron server port (for custom deployments)
+//   Default: 8000
+//   Example: METATRON_PORT="9000"
+//   Scope: HTTP transport (already in URL in this example)
+//
+// ═════════════════════════════════════════════════════════════════════════════
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CUSTOMIZATION GUIDE
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Q: Should I use HTTP or stdio?
+// A: 
+//   - HTTP: Production, remote servers, multiple concurrent clients → Use this
+//   - stdio: Local development, same machine, single process → Use this
+//
+// Q: How do I find my Metatron server URL?
+// A:
+//   - Local/Docker: http://localhost:8000/mcp
+//   - Remote: http://your-server.com:8000/mcp (adjust host/port as needed)
+//   - Verify by visiting http://your-server:8000/health in browser
+//
+// Q: How do I get an API key?
+// A:
+//   1. Open Metatron Web UI: http://localhost:8000 (or your server URL)
+//   2. Log in with workspace credentials
+//   3. Go to Settings → API Keys
+//   4. Click "Generate New" or copy existing active key
+//   5. Copy the value (looks like: mtk_prod_abc123...)
+//
+// Q: Is it safe to put my API key in the config?
+// A:
+//   - Best practice: Use environment variable (token_env field)
+//   - Acceptable: Set in OpenClaw's .env file (not committed to git)
+//   - Avoid: Hardcoding in config files that may be shared/committed
+//   - Production: Use secrets management (K8s secrets, Vault, etc.)
+//
+// Q: What if I have multiple workspaces?
+// A:
+//   - HTTP: URL-based selection (each workspace gets its own config)
+//   - stdio: METATRON_WORKSPACE environment variable
+//   - Example: Create separate "metatron-eng" and "metatron-ops" configs
+//
+// Q: How do I test the connection?
+// A:
+//   1. Restart OpenClaw: openclaw restart (or equivalent)
+//   2. Check logs: openclaw logs | grep metatron
+//   3. List tools: /mcp tools metatron (in OpenClaw)
+//   4. Or use curl (HTTP only):
+//      curl -H "Authorization: Bearer $METATRON_API_KEY" \\
+//        http://localhost:8000/health
+//
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Need more help? See docs/OPENCLAW_CONFIG.md for detailed configuration guide.
