@@ -22,6 +22,7 @@ from metatron.api.routes import (
     benchmarker,
     chat,
     connections,
+    documents,
     files,
     health,
     skills,
@@ -32,6 +33,11 @@ from metatron.core.config import Settings
 from metatron.core.logging import configure_logging
 
 logger = structlog.get_logger()
+
+
+# MCP server instance — imported to register tools
+from metatron.mcp.server import mcp as mcp_server
+import metatron.mcp.tools  # noqa: F401 — registers @mcp.tool() decorators
 
 
 @asynccontextmanager
@@ -105,10 +111,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin.router, prefix="/api/v1")
     app.include_router(skills.router, prefix="/api/v1")
     app.include_router(connections.router, prefix="/api/v1")
+    app.include_router(documents.router, prefix="/api/v1")
     app.include_router(workspaces.router, prefix="/api/v1")
     app.include_router(sync.router, prefix="/api/v1")
     app.include_router(benchmarker.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
+
+    # Mount MCP server at /mcp
+    # Using streamable-http transport with shared lifespan
+    mcp_app = mcp_server.streamable_http_app()
+
+    # Mount with shared lifespan
+    app.mount("/mcp", mcp_app)
+
+    # Add MCP health check endpoint
+    @app.get("/mcp")
+    async def mcp_health():
+        """MCP server health check."""
+        return {
+            "status": "ok",
+            "server": "MetatronMCP",
+            "path": "/mcp",
+            "transport": "streamable-http",
+        }
 
     return app
 
