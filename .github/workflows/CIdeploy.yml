@@ -1,0 +1,114 @@
+name: SSH Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup SSH key
+      run: |
+        cat > /tmp/ssh_key << 'KEY'
+        -----BEGIN OPENSSH PRIVATE KEY-----
+        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
+        -----END OPENSSH PRIVATE KEY-----
+        KEY
+        
+        chmod 600 /tmp/ssh_key
+        
+        echo "SSH key created at /tmp/ssh_key"
+        
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: coda123
+        password: dckr_pat_-74tgub07sIMhJaat2wVu5J7Vys    
+
+#    - name: Copy env file to server
+#      run: |
+#        scp -o StrictHostKeyChecking=no \
+#            -i /tmp/ssh_key \
+#            .github/workflows/env \
+#            username@metatroncore.ximi.group:/tmp/env
+#        
+#        ssh -o StrictHostKeyChecking=no \
+#            -i /tmp/ssh_key \
+#            username@metatroncore.ximi.group \
+#            "sudo mv /tmp/env /usr/local/bin/env && \
+#             sudo chown root:root /usr/local/bin/env && \
+#             sudo chmod 644 /usr/local/bin/env && \
+#             echo '✅ Env file deployed to /usr/local/bin/env'"    
+        
+    - name: Test SSH connection
+      run: |
+        ssh -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
+            -i /tmp/ssh_key \
+            username@metatroncore.ximi.group \
+            "echo '✅ SSH test successful'; whoami; pwd"
+            
+    - name: Test sudo access
+      run: |
+        ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            username@metatroncore.ximi.group \
+            "sudo whoami && echo '✅ Sudo works' || echo '❌ Sudo failed'"
+            
+    - name: Deploy application
+      run: |
+        ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            username@metatroncore.ximi.group \
+            "/usr/local/bin/deploy-app"
+            
+    - name: Cleanup
+      run: |
+        rm -f /tmp/ssh_key
+        echo "Test completed"
