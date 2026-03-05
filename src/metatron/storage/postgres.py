@@ -170,21 +170,42 @@ class PostgresStore:
     # --- Observability ---
 
     async def store_query_trace(
-        self, workspace_id: str, trace_data: dict[str, object]
+        self, workspace_id: str, query: str, trace: dict[str, Any], total_ms: float
     ) -> str:
-        """Store a query trace (JSONB) and return its ID.
+        """Store a query trace and return its ID.
 
         Args:
             workspace_id: Workspace this query belongs to.
-            trace_data: Full trace dict from QueryTrace.to_dict().
+            query: The user query text.
+            trace: Trace data (timing, results, etc.) as dict.
+            total_ms: Total query execution time in milliseconds.
 
         Returns:
             ID of the stored trace.
         """
         logger.info("postgres.trace.store", workspace_id=workspace_id)
-        # TODO: implement
-        # INSERT INTO query_traces (id, workspace_id, trace, created_at)
-        raise NotImplementedError("Trace storage not yet implemented")
+        
+        trace_id = uuid4().hex
+        now = datetime.now(UTC)
+        
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                text("""
+                    INSERT INTO query_traces
+                    (id, workspace_id, query, trace, total_ms, created_at)
+                    VALUES (:id, :workspace_id, :query, :trace, :total_ms, :created_at)
+                """),
+                {
+                    "id": trace_id,
+                    "workspace_id": workspace_id,
+                    "query": query,
+                    "trace": trace,  # SQLAlchemy handles JSONB serialization
+                    "total_ms": total_ms,
+                    "created_at": now,
+                },
+            )
+        
+        return trace_id
 
     async def store_sync_log(
         self, workspace_id: str, connection_id: str, log_data: dict[str, object]
