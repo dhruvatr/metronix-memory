@@ -168,16 +168,19 @@ def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) ->
     import asyncio
     import time
     import uuid
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from metatron.ingestion.pipeline import ingest_documents
     from metatron.storage.pg_connection import get_session
     from metatron.storage.pg_models import SyncLogRow
 
     sync_id = f"sync_{uuid.uuid4().hex[:12]}"
-    start_time = time.time()
+    start_time = time.perf_counter()
     status = "failed"
     documents_fetched = 0
+    documents_new = 0
+    documents_updated = 0
+    documents_skipped = 0
     qdrant_chunks = 0
     errors_list: list[str] = []
 
@@ -203,6 +206,9 @@ def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) ->
 
         if documents:
             result = ingest_documents(documents, workspace_id, connector_type)
+            documents_new = result.documents_new
+            documents_updated = result.documents_updated
+            documents_skipped = result.documents_skipped
             qdrant_chunks = result.documents_new + result.documents_updated
             
             if result.errors:
@@ -229,7 +235,7 @@ def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) ->
     
     finally:
         # Log sync result to database
-        duration_ms = (time.time() - start_time) * 1000
+        duration_ms = (time.perf_counter() - start_time) * 1000
         try:
             with get_session() as session:
                 sync_log = SyncLogRow(
@@ -239,17 +245,17 @@ def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) ->
                     connector_type=connector_type,
                     status=status,
                     documents_fetched=documents_fetched,
-                    documents_new=0,  # TODO: track separately if needed
-                    documents_updated=0,
-                    documents_skipped=0,
+                    documents_new=documents_new,
+                    documents_updated=documents_updated,
+                    documents_skipped=documents_skipped,
                     errors=errors_list,
                     duration_ms=duration_ms,
                     source_title=f"{connector_type.capitalize()} Sync",
                     qdrant_chunks=qdrant_chunks,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(UTC),
                 )
                 session.add(sync_log)
-                session.commit()
+                # Context manager auto-commits on exit
                 logger.info("sync.logged", sync_id=sync_id, status=status, duration_ms=duration_ms)
         except Exception as e:
             logger.warning("sync.log_failed", sync_id=sync_id, error=str(e))

@@ -190,7 +190,7 @@ class SyncLogRow(Base):  # type: ignore[misc]
     duration_ms = Column(Float, nullable=False, server_default="0")
     source_title = Column(String(255), nullable=True)
     qdrant_chunks = Column(Integer, nullable=False, server_default="0")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_sync_logs_workspace", "workspace_id"),
@@ -226,7 +226,7 @@ class QueryTraceRow(Base):  # type: ignore[misc]
     query = Column(Text, nullable=False)
     trace = Column(JSONB, nullable=False)
     total_ms = Column(Float, nullable=False, server_default="0")
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_query_traces_workspace", "workspace_id"),

@@ -183,6 +183,8 @@ class PostgresStore:
         Returns:
             ID of the stored trace.
         """
+        import json
+        
         logger.info("postgres.trace.store", workspace_id=workspace_id)
         
         trace_id = uuid4().hex
@@ -193,13 +195,13 @@ class PostgresStore:
                 text("""
                     INSERT INTO query_traces
                     (id, workspace_id, query, trace, total_ms, created_at)
-                    VALUES (:id, :workspace_id, :query, :trace, :total_ms, :created_at)
+                    VALUES (:id, :workspace_id, :query, :trace::jsonb, :total_ms, :created_at)
                 """),
                 {
                     "id": trace_id,
                     "workspace_id": workspace_id,
                     "query": query,
-                    "trace": trace,  # SQLAlchemy handles JSONB serialization
+                    "trace": json.dumps(trace),  # Explicit serialization for raw SQL
                     "total_ms": total_ms,
                     "created_at": now,
                 },

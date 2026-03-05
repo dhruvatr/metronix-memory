@@ -2,56 +2,55 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from metatron.api.app import create_app
+from metatron.api.routes.dashboard.overview import get_valid_workspace
 from metatron.workspaces.models import Workspace, WorkspaceStats
 
 
 @pytest.fixture
-def client():
-    """Create test client."""
+def mock_workspace():
+    """Create mock workspace."""
+    return Workspace(workspace_id="test-ws", name="Test Workspace")
+
+
+@pytest.fixture
+def client(mock_workspace):
+    """Create test client with mocked workspace dependency."""
+    app = create_app()
+    
+    # Override workspace dependency for all tests
+    app.dependency_overrides[get_valid_workspace] = lambda: mock_workspace
+    
+    yield TestClient(app)
+    
+    # Clean up
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_no_override():
+    """Create test client without workspace override for testing 404/422 cases."""
     app = create_app()
     return TestClient(app)
 
 
 def test_overview_kpi_success(client):
     """Test successful overview KPI retrieval."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._count_active_connectors") as mock_count, \
-         patch("metatron.storage.qdrant.get_hybrid_store") as mock_qdrant, \
-         patch("metatron.storage.memgraph.get_memgraph_driver") as mock_memgraph:
+    with patch("metatron.storage.dashboard_queries.get_overview_stats") as mock_stats:
         
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_stats = WorkspaceStats(
-            last_upload_time="2026-03-02T09:12:00Z",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
-        mock_mgr.return_value.get_workspace_stats.return_value = mock_stats
-        
-        # Mock Qdrant stats
-        mock_store = MagicMock()
-        mock_store.get_stats.return_value = {"file_count": 12483}
-        mock_qdrant.return_value = mock_store
-        
-        # Mock Memgraph jira count
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.single.return_value = {"cnt": 841}
-        mock_session.run.return_value = mock_result
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__enter__.return_value = mock_session
-        mock_memgraph.return_value = mock_driver
-        
-        # Mock active connectors count
-        mock_count.return_value = 3
+        # Mock overview stats
+        mock_stats.return_value = {
+            "documents": 12483,
+            "jira_issues": 841,
+            "active_connectors": 3,
+            "last_upload": datetime(2026, 3, 2, 9, 12, 0, tzinfo=UTC),
+        }
         
         response = client.get("/api/v1/dashboard/overview?workspace_id=test-ws")
         
@@ -63,12 +62,12 @@ def test_overview_kpi_success(client):
         assert data["last_upload"] == "2026-03-02T09:12:00Z"
 
 
-def test_overview_kpi_workspace_not_found(client):
+def test_overview_kpi_workspace_not_found(client_no_override):
     """Test 404 when workspace doesn't exist."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
+    with patch("metatron.workspaces.get_workspace_manager") as mock_mgr:
         mock_mgr.return_value.get_workspace.return_value = None
         
-        response = client.get("/api/v1/dashboard/overview?workspace_id=nonexistent")
+        response = client_no_override.get("/api/v1/dashboard/overview?workspace_id=nonexistent")
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -76,38 +75,15 @@ def test_overview_kpi_workspace_not_found(client):
 
 def test_overview_kpi_postgres_error_graceful_degradation(client):
     """Test graceful degradation when PostgreSQL fails."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._count_active_connectors") as mock_count, \
-         patch("metatron.storage.qdrant.get_hybrid_store") as mock_qdrant, \
-         patch("metatron.storage.memgraph.get_memgraph_driver") as mock_memgraph:
+    with patch("metatron.storage.dashboard_queries.get_overview_stats") as mock_stats:
         
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_stats = WorkspaceStats(
-            last_upload_time="2026-03-02T09:12:00Z",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
-        mock_mgr.return_value.get_workspace_stats.return_value = mock_stats
-        
-        # Mock Qdrant stats
-        mock_store = MagicMock()
-        mock_store.get_stats.return_value = {"file_count": 100}
-        mock_qdrant.return_value = mock_store
-        
-        # Mock Memgraph jira count
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.single.return_value = {"cnt": 10}
-        mock_session.run.return_value = mock_result
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__enter__.return_value = mock_session
-        mock_memgraph.return_value = mock_driver
-        
-        # Mock PostgreSQL error - function returns 0
-        mock_count.return_value = 0
+        # Mock overview stats with graceful degradation (0 for failed connectors)
+        mock_stats.return_value = {
+            "documents": 100,
+            "jira_issues": 10,
+            "active_connectors": 0,  # Graceful degradation
+            "last_upload": datetime(2026, 3, 2, 9, 12, 0, tzinfo=UTC),
+        }
         
         response = client.get("/api/v1/dashboard/overview?workspace_id=test-ws")
         
@@ -121,37 +97,15 @@ def test_overview_kpi_postgres_error_graceful_degradation(client):
 
 def test_overview_kpi_null_last_upload(client):
     """Test handling of null last_upload_time."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._count_active_connectors") as mock_count, \
-         patch("metatron.storage.qdrant.get_hybrid_store") as mock_qdrant, \
-         patch("metatron.storage.memgraph.get_memgraph_driver") as mock_memgraph:
+    with patch("metatron.storage.dashboard_queries.get_overview_stats") as mock_stats:
         
-        # Mock workspace manager with null last_upload_time
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_stats = WorkspaceStats(
-            last_upload_time=None,  # No uploads yet
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
-        mock_mgr.return_value.get_workspace_stats.return_value = mock_stats
-        
-        # Mock Qdrant stats
-        mock_store = MagicMock()
-        mock_store.get_stats.return_value = {"file_count": 0}
-        mock_qdrant.return_value = mock_store
-        
-        # Mock Memgraph jira count
-        mock_session = MagicMock()
-        mock_result = MagicMock()
-        mock_result.single.return_value = {"cnt": 0}
-        mock_session.run.return_value = mock_result
-        mock_driver = MagicMock()
-        mock_driver.session.return_value.__enter__.return_value = mock_session
-        mock_memgraph.return_value = mock_driver
-        
-        mock_count.return_value = 0
+        # Mock overview stats with null last_upload
+        mock_stats.return_value = {
+            "documents": 0,
+            "jira_issues": 0,
+            "active_connectors": 0,
+            "last_upload": None,  # No uploads yet
+        }
         
         response = client.get("/api/v1/dashboard/overview?workspace_id=test-ws")
         
@@ -163,9 +117,9 @@ def test_overview_kpi_null_last_upload(client):
         assert data["last_upload"] is None
 
 
-def test_overview_kpi_missing_workspace_id(client):
+def test_overview_kpi_missing_workspace_id(client_no_override):
     """Test 422 when workspace_id parameter is missing."""
-    response = client.get("/api/v1/dashboard/overview")
+    response = client_no_override.get("/api/v1/dashboard/overview")
     
     assert response.status_code == 422  # FastAPI validation error
 
@@ -173,24 +127,16 @@ def test_overview_kpi_missing_workspace_id(client):
 
 def test_sync_history_success(client):
     """Test successful sync history retrieval."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_sync_history") as mock_history:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_sync_history_data") as mock_history:
         
         # Mock sync history
-        from metatron.api.routes.dashboard import SyncHistoryItem
+        from metatron.api.routes.dashboard.sync import SyncHistoryItem
         mock_history.return_value = [
             SyncHistoryItem(
                 id="sync_1",
                 source="confluence",
                 title="Confluence Sync",
-                started="2026-03-02T08:45:12Z",
+                started=datetime(2026, 3, 2, 8, 45, 12, tzinfo=UTC),
                 duration_ms=1240.5,
                 records=18,
                 status="success",
@@ -199,7 +145,7 @@ def test_sync_history_success(client):
                 id="sync_2",
                 source="jira",
                 title="Jira Sync",
-                started="2026-03-02T07:30:00Z",
+                started=datetime(2026, 3, 2, 7, 30, 0, tzinfo=UTC),
                 duration_ms=890.2,
                 records=12,
                 status="partial",
@@ -219,12 +165,12 @@ def test_sync_history_success(client):
         assert data["items"][0]["status"] == "success"
 
 
-def test_sync_history_workspace_not_found(client):
+def test_sync_history_workspace_not_found(client_no_override):
     """Test 404 when workspace doesn't exist."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
+    with patch("metatron.workspaces.get_workspace_manager") as mock_mgr:
         mock_mgr.return_value.get_workspace.return_value = None
         
-        response = client.get("/api/v1/dashboard/sync-history?workspace_id=nonexistent")
+        response = client_no_override.get("/api/v1/dashboard/sync-history?workspace_id=nonexistent")
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -232,15 +178,7 @@ def test_sync_history_workspace_not_found(client):
 
 def test_sync_history_empty_result(client):
     """Test empty sync history."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_sync_history") as mock_history:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_sync_history_data") as mock_history:
         
         # Mock empty history
         mock_history.return_value = []
@@ -254,24 +192,16 @@ def test_sync_history_empty_result(client):
 
 def test_sync_history_custom_limit(client):
     """Test sync history with custom limit."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_sync_history") as mock_history:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_sync_history_data") as mock_history:
         
         # Mock sync history
-        from metatron.api.routes.dashboard import SyncHistoryItem
+        from metatron.api.routes.dashboard.sync import SyncHistoryItem
         mock_history.return_value = [
             SyncHistoryItem(
                 id=f"sync_{i}",
                 source="confluence",
                 title=f"Sync {i}",
-                started="2026-03-02T08:00:00Z",
+                started=datetime(2026, 3, 2, 8, 0, 0, tzinfo=UTC),
                 duration_ms=1000.0,
                 records=10,
                 status="success",
@@ -290,36 +220,21 @@ def test_sync_history_custom_limit(client):
 
 def test_sync_history_limit_validation(client):
     """Test limit parameter validation."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
-        
-        # Test limit too large
-        response = client.get("/api/v1/dashboard/sync-history?workspace_id=test-ws&limit=101")
-        assert response.status_code == 422
-        
-        # Test limit too small
-        response = client.get("/api/v1/dashboard/sync-history?workspace_id=test-ws&limit=0")
-        assert response.status_code == 422
+    # Test limit too large
+    response = client.get("/api/v1/dashboard/sync-history?workspace_id=test-ws&limit=101")
+    assert response.status_code == 422
+    
+    # Test limit too small
+    response = client.get("/api/v1/dashboard/sync-history?workspace_id=test-ws&limit=0")
+    assert response.status_code == 422
 
 
 def test_ingestion_errors_success(client):
     """Test successful ingestion errors retrieval."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_ingestion_errors") as mock_errors:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_ingestion_errors_data") as mock_errors:
         
         # Mock ingestion errors
-        from metatron.api.routes.dashboard import IngestionErrorItem
+        from metatron.api.routes.dashboard.sync import IngestionErrorItem
         mock_errors.return_value = (
             14,  # total count
             [
@@ -327,14 +242,14 @@ def test_ingestion_errors_success(client):
                     source="confluence",
                     record="page_id:12345 — Migration Guide",
                     error="Qdrant timeout after 30s",
-                    time="2026-03-02T07:30:00Z",
+                    time=datetime(2026, 3, 2, 7, 30, 0, tzinfo=UTC),
                     severity="warning",
                 ),
                 IngestionErrorItem(
                     source="jira",
                     record="Jira Sync",
                     error="Connection refused",
-                    time="2026-03-02T06:15:00Z",
+                    time=datetime(2026, 3, 2, 6, 15, 0, tzinfo=UTC),
                     severity="critical",
                 ),
             ],
@@ -353,12 +268,12 @@ def test_ingestion_errors_success(client):
         assert data["items"][1]["severity"] == "critical"
 
 
-def test_ingestion_errors_workspace_not_found(client):
+def test_ingestion_errors_workspace_not_found(client_no_override):
     """Test 404 when workspace doesn't exist."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
+    with patch("metatron.workspaces.get_workspace_manager") as mock_mgr:
         mock_mgr.return_value.get_workspace.return_value = None
         
-        response = client.get("/api/v1/dashboard/ingestion-errors?workspace_id=nonexistent")
+        response = client_no_override.get("/api/v1/dashboard/ingestion-errors?workspace_id=nonexistent")
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -366,15 +281,7 @@ def test_ingestion_errors_workspace_not_found(client):
 
 def test_ingestion_errors_empty_result(client):
     """Test empty ingestion errors (no failures)."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_ingestion_errors") as mock_errors:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_ingestion_errors_data") as mock_errors:
         
         # Mock empty errors
         mock_errors.return_value = (0, [])
@@ -389,18 +296,10 @@ def test_ingestion_errors_empty_result(client):
 
 def test_ingestion_errors_custom_limit(client):
     """Test ingestion errors with custom limit."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_ingestion_errors") as mock_errors:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_ingestion_errors_data") as mock_errors:
         
         # Mock ingestion errors
-        from metatron.api.routes.dashboard import IngestionErrorItem
+        from metatron.api.routes.dashboard.sync import IngestionErrorItem
         mock_errors.return_value = (
             50,  # total count
             [
@@ -408,7 +307,7 @@ def test_ingestion_errors_custom_limit(client):
                     source="confluence",
                     record=f"Error {i}",
                     error="Test error",
-                    time="2026-03-02T08:00:00Z",
+                    time=datetime(2026, 3, 2, 8, 0, 0, tzinfo=UTC),
                     severity="warning",
                 )
                 for i in range(10)
@@ -427,33 +326,18 @@ def test_ingestion_errors_custom_limit(client):
 
 def test_ingestion_errors_limit_validation(client):
     """Test limit parameter validation."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
-        
-        # Test limit too large
-        response = client.get("/api/v1/dashboard/ingestion-errors?workspace_id=test-ws&limit=101")
-        assert response.status_code == 422
-        
-        # Test limit too small
-        response = client.get("/api/v1/dashboard/ingestion-errors?workspace_id=test-ws&limit=0")
-        assert response.status_code == 422
+    # Test limit too large
+    response = client.get("/api/v1/dashboard/ingestion-errors?workspace_id=test-ws&limit=101")
+    assert response.status_code == 422
+    
+    # Test limit too small
+    response = client.get("/api/v1/dashboard/ingestion-errors?workspace_id=test-ws&limit=0")
+    assert response.status_code == 422
 
 
 def test_ingestion_errors_graceful_degradation(client):
     """Test graceful degradation when PostgreSQL fails."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_ingestion_errors") as mock_errors:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_ingestion_errors_data") as mock_errors:
         
         # Mock PostgreSQL error - function returns empty result
         mock_errors.return_value = (0, [])
@@ -468,15 +352,7 @@ def test_ingestion_errors_graceful_degradation(client):
 
 def test_query_trend_success(client):
     """Test successful query trend retrieval."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_query_trend") as mock_trend:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_query_trend_data") as mock_trend:
         
         # Mock query trend data
         mock_trend.return_value = (
@@ -492,12 +368,12 @@ def test_query_trend_success(client):
         assert data["values"] == [124, 98, 156]
 
 
-def test_query_trend_workspace_not_found(client):
+def test_query_trend_workspace_not_found(client_no_override):
     """Test 404 when workspace doesn't exist."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
+    with patch("metatron.workspaces.get_workspace_manager") as mock_mgr:
         mock_mgr.return_value.get_workspace.return_value = None
         
-        response = client.get("/api/v1/dashboard/query-trend?workspace_id=nonexistent")
+        response = client_no_override.get("/api/v1/dashboard/query-trend?workspace_id=nonexistent")
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -505,15 +381,7 @@ def test_query_trend_workspace_not_found(client):
 
 def test_query_trend_empty_result(client):
     """Test empty query trend (no queries yet)."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_query_trend") as mock_trend:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_query_trend_data") as mock_trend:
         
         # Mock empty trend (all zeros)
         mock_trend.return_value = (
@@ -531,15 +399,7 @@ def test_query_trend_empty_result(client):
 
 def test_query_trend_custom_days(client):
     """Test query trend with custom days parameter."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_query_trend") as mock_trend:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_query_trend_data") as mock_trend:
         
         # Mock trend data for 7 days
         mock_trend.return_value = (
@@ -559,15 +419,7 @@ def test_query_trend_custom_days(client):
 
 def test_query_trend_default_days(client):
     """Test query trend with default days parameter (30)."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_query_trend") as mock_trend:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_query_trend_data") as mock_trend:
         
         # Mock trend data
         mock_trend.return_value = ([], [])
@@ -581,33 +433,18 @@ def test_query_trend_default_days(client):
 
 def test_query_trend_days_validation(client):
     """Test days parameter validation."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
-        
-        # Test days too large
-        response = client.get("/api/v1/dashboard/query-trend?workspace_id=test-ws&days=366")
-        assert response.status_code == 422
-        
-        # Test days too small
-        response = client.get("/api/v1/dashboard/query-trend?workspace_id=test-ws&days=0")
-        assert response.status_code == 422
+    # Test days too large
+    response = client.get("/api/v1/dashboard/query-trend?workspace_id=test-ws&days=366")
+    assert response.status_code == 422
+    
+    # Test days too small
+    response = client.get("/api/v1/dashboard/query-trend?workspace_id=test-ws&days=0")
+    assert response.status_code == 422
 
 
 def test_query_trend_graceful_degradation(client):
     """Test graceful degradation when PostgreSQL fails."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_query_trend") as mock_trend:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_query_trend_data") as mock_trend:
         
         # Mock PostgreSQL error - function returns empty arrays
         mock_trend.return_value = ([], [])
@@ -622,15 +459,7 @@ def test_query_trend_graceful_degradation(client):
 
 def test_graph_stats_success(client):
     """Test successful graph stats retrieval."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_graph_stats") as mock_stats:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_graph_stats_data") as mock_stats:
         
         # Mock graph stats
         mock_stats.return_value = {
@@ -661,12 +490,12 @@ def test_graph_stats_success(client):
         assert data["lineage"]["graph_nodes"] == 89200
 
 
-def test_graph_stats_workspace_not_found(client):
+def test_graph_stats_workspace_not_found(client_no_override):
     """Test 404 when workspace doesn't exist."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr:
+    with patch("metatron.workspaces.get_workspace_manager") as mock_mgr:
         mock_mgr.return_value.get_workspace.return_value = None
         
-        response = client.get("/api/v1/dashboard/graph-stats?workspace_id=nonexistent")
+        response = client_no_override.get("/api/v1/dashboard/graph-stats?workspace_id=nonexistent")
         
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -674,15 +503,7 @@ def test_graph_stats_workspace_not_found(client):
 
 def test_graph_stats_empty_graph(client):
     """Test graph stats with empty graph."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_graph_stats") as mock_stats:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_graph_stats_data") as mock_stats:
         
         # Mock empty graph
         mock_stats.return_value = {
@@ -709,15 +530,7 @@ def test_graph_stats_empty_graph(client):
 
 def test_graph_stats_no_orphans(client):
     """Test graph stats with no orphan nodes."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_graph_stats") as mock_stats:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_graph_stats_data") as mock_stats:
         
         # Mock graph with no orphans
         mock_stats.return_value = {
@@ -741,15 +554,7 @@ def test_graph_stats_no_orphans(client):
 
 def test_graph_stats_graceful_degradation(client):
     """Test graceful degradation when Memgraph/Qdrant fails."""
-    with patch("metatron.api.routes.dashboard.get_workspace_manager") as mock_mgr, \
-         patch("metatron.api.routes.dashboard._get_graph_stats") as mock_stats:
-        
-        # Mock workspace manager
-        mock_ws = Workspace(
-            workspace_id="test-ws",
-            name="Test Workspace",
-        )
-        mock_mgr.return_value.get_workspace.return_value = mock_ws
+    with patch("metatron.storage.dashboard_queries.get_graph_stats_data") as mock_stats:
         
         # Mock error - function returns zeros
         mock_stats.return_value = {
