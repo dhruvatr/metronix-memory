@@ -20,7 +20,7 @@ jobs:
       uses: docker/build-push-action@v3
       with:
         context: ./embedding_proxy
-        file: .Dockerfile
+        file: ./embedding_proxy/Dockerfile
         push: true
         tags: |
           ${{ secrets.DOCKER_USERNAME }}/unix:embedding-proxy
