@@ -1,4 +1,4 @@
-name: SSH Deploy
+name: clean SSH Deploy
 
 on:
   workflow_dispatch:
