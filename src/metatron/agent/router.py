@@ -299,7 +299,7 @@ class AgentRouter:
 
     # -- Supported upload formats --
     SUPPORTED_UPLOAD_EXTENSIONS: frozenset[str] = frozenset({
-        ".txt", ".md", ".html", ".htm", ".csv", ".xlsx", ".xls",
+        ".txt", ".md", ".html", ".htm", ".csv", ".xlsx", ".xls", ".pdf",
     })
     _MAX_UPLOAD_BYTES: int = 20 * 1024 * 1024  # 20 MB
 
@@ -381,6 +381,10 @@ class AgentRouter:
 
     def _parse_upload(self, content: bytes, filename: str, ext: str) -> str:
         """Parse uploaded file bytes into text based on extension."""
+        if ext == ".pdf":
+            from metatron.ingestion.processors.pdf import extract_text_from_pdf
+            return extract_text_from_pdf(content, filename)
+
         if ext in (".txt", ".md"):
             try:
                 return content.decode("utf-8")
