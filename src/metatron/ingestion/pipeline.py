@@ -18,7 +18,7 @@ from metatron.core.interfaces import (
     VectorStoreInterface,
 )
 from metatron.core.models import Document, SyncResult
-from metatron.ingestion.chunking import chunk_text
+from metatron.ingestion.chunking import chunk_text, simple_chunk
 from metatron.ingestion.dedup import DeduplicationIndex, simhash
 from metatron.ingestion.processors.dates import extract_date_from_text
 
@@ -180,7 +180,12 @@ def ingest_documents(
                     dedup_index.remove_doc(doc.source_id)
                     _delete_graph_node(doc.source_id, workspace_id)
 
-            chunks = chunk_text(doc.content)
+            chunk_objs = simple_chunk(
+                doc.content,
+                document_id=doc.source_id or "",
+                workspace_id=workspace_id,
+            )
+            chunks = [c.content for c in chunk_objs]
 
             doc_date = extract_document_date(
                 title=doc.title or "",

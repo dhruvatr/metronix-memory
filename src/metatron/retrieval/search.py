@@ -29,6 +29,7 @@ from metatron.retrieval.routing import (
     _extract_json_object, is_jira_query,
     should_use_team_workflow_schema,
 )
+from qdrant_client.models import Filter, FieldCondition, MatchText
 from metatron.storage.qdrant import get_hybrid_store  # TODO: async migration
 from metatron.storage.graph_ops import (  # TODO: async migration
     get_graph_entities, get_doc_labels_by_entities, get_related_documents,
@@ -70,6 +71,13 @@ _PROPER_NOUN_RE = re.compile(
     r'(?:[A-ZА-ЯЁ][a-zа-яё]+(?:\s+[A-ZА-ЯЁ][a-zа-яё]+)+)',
 )
 
+# Matches uppercase tokens like "3M", "AMD", "AES", "COCACOLA", "IBM"
+# and multi-word company names like "Activision Blizzard", "Best Buy"
+_COMPANY_TOKEN_RE = re.compile(r'\b([A-Z0-9]{2,})\b')
+_COMPANY_MULTI_RE = re.compile(
+    r'\b((?:[A-Z][a-z]+\s+){1,3}[A-Z][a-z]+)\b',
+)
+
 
 def extract_proper_nouns(query: str) -> list[str]:
     """Extract multi-word capitalized phrases (proper nouns) from query.
@@ -80,43 +88,139 @@ def extract_proper_nouns(query: str) -> list[str]:
     return _PROPER_NOUN_RE.findall(query)
 
 
-def _boost_title_matches(query: str, results: list[dict]) -> list[dict]:
-    """Boost results whose title contains a proper noun from the query."""
-    proper_nouns = extract_proper_nouns(query)
-    if not proper_nouns:
+def extract_title_entities(query: str) -> list[str]:
+    """Extract entity names that may appear in document titles.
+
+    Handles:
+    - Short uppercase tokens: "3M", "AMD", "AES", "IBM"
+    - Multi-word names: "Activision Blizzard", "Best Buy", "American Express"
+    - Proper nouns: "Marina Volkov"
+
+    Filters out common English words (FY, USD, Q2, etc.).
+    """
+    stop = {
+        "FY", "USD", "FY2017", "FY2018", "FY2019", "FY2020", "FY2021",
+        "FY2022", "FY2023", "FY2024", "YOY", "PP", "Q1", "Q2", "Q3", "Q4",
+        "CEO", "CFO", "CTO", "SEC", "US", "UK", "EU", "IT", "AI", "ML",
+        "OR", "IF", "IS", "AS", "AT", "BY", "TO", "OF", "IN", "ON", "AN",
+        "AND", "THE", "FOR", "NOT", "GDP", "IPO", "ROE", "ROA", "PE",
+        "GAAP", "NON", "EBITDA", "CAPEX", "OPEX",
+    }
+    entities: list[str] = []
+
+    # Multi-word names first (higher priority)
+    for m in _COMPANY_MULTI_RE.finditer(query):
+        name = m.group(1)
+        if len(name) > 3:
+            entities.append(name)
+
+    # Short uppercase tokens
+    for m in _COMPANY_TOKEN_RE.finditer(query):
+        token = m.group(1)
+        if token not in stop and not token.isdigit():
+            entities.append(token)
+
+    # Proper nouns (Cyrillic too)
+    entities.extend(extract_proper_nouns(query))
+
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    result: list[str] = []
+    for e in entities:
+        key = e.upper()
+        if key not in seen:
+            seen.add(key)
+            result.append(e)
+    return result
+
+
+def _build_title_filter(entities: list[str]) -> Optional[Filter]:
+    """Build a Qdrant Filter that matches titles containing any of the entities.
+
+    Handles both spaced ("Activision Blizzard") and concatenated
+    ("ACTIVISIONBLIZZARD") title patterns. Generates multiple MatchText
+    variants (original, UPPER, collapsed, collapsed UPPER) since Qdrant
+    MatchText is case-sensitive on non-indexed fields.
+    """
+    if not entities:
+        return None
+    conditions: list[FieldCondition] = []
+    seen: set[str] = set()
+
+    def _add(text: str) -> None:
+        if text and text not in seen:
+            seen.add(text)
+            conditions.append(FieldCondition(key="title", match=MatchText(text=text)))
+
+    for e in entities:
+        _add(e)
+        _add(e.upper())
+        _add(e.lower())
+        # Collapsed: "Activision Blizzard" → "ActivisionBlizzard"
+        collapsed = e.replace(" ", "")
+        if collapsed != e:
+            _add(collapsed)
+            _add(collapsed.upper())
+            _add(collapsed.lower())
+
+    if not conditions:
+        return None
+    if len(conditions) == 1:
+        return Filter(must=conditions)
+    return Filter(should=conditions)
+
+
+def _boost_title_matches(query: str, results: list[dict],
+                         entities: list[str] | None = None) -> list[dict]:
+    """Boost results whose title contains an entity from the query."""
+    if entities is None:
+        entities = extract_title_entities(query)
+    if not entities:
         return results
+
+    entities_lower = [e.lower() for e in entities]
 
     boosted: list[dict] = []
     rest: list[dict] = []
     for r in results:
         title = (r.get("title") or (r.get("payload") or {}).get("title") or "").lower()
-        if any(noun.lower() in title for noun in proper_nouns):
+        if any(e in title for e in entities_lower):
             boosted.append(r)
         else:
             rest.append(r)
 
     if boosted:
-        logger.info("search.title_boost", nouns=proper_nouns, boosted=len(boosted))
+        logger.info("search.title_boost", entities=entities, boosted=len(boosted))
     return boosted + rest
 
 
 def _search_by_title(query: str, workspace_id: Optional[str], limit: int = 5) -> list[dict]:
-    """Search for documents where title matches proper nouns in query."""
-    proper_nouns = extract_proper_nouns(query)
-    if not proper_nouns:
+    """Search for documents where title matches entities in query."""
+    entities = extract_title_entities(query)
+    if not entities:
         return []
     try:
         store = get_hybrid_store(workspace_id)
         results: list[dict] = []
-        for noun in proper_nouns:
-            matches = store.scroll_by_title(noun, limit=limit)
-            results = _merge_unique(results, matches)
+        for entity in entities:
+            for variant in _title_variants(entity):
+                matches = store.scroll_by_title(variant, limit=limit)
+                results = _merge_unique(results, matches)
         if results:
-            logger.info("search.title_injection", nouns=proper_nouns, count=len(results))
+            logger.info("search.title_injection", entities=entities, count=len(results))
         return results
     except Exception as e:
         logger.warning("search.title_injection_failed", error=str(e))
         return []
+
+
+def _title_variants(entity: str) -> list[str]:
+    """Generate case/spacing variants for title matching."""
+    variants = [entity, entity.upper(), entity.lower()]
+    collapsed = entity.replace(" ", "")
+    if collapsed != entity:
+        variants.extend([collapsed, collapsed.upper(), collapsed.lower()])
+    return list(dict.fromkeys(variants))  # dedup, preserve order
 
 
 def _inject_jira_key_results(query: str, workspace_id: Optional[str]) -> list[dict]:
@@ -253,15 +357,17 @@ def _merge_unique(base: list, extra: list) -> list:
 
 @timed("search")
 def search_with_date_filter(  # TODO: async migration
-    query: str, user_id: str = "user", k: int = 5,
+    query: str, user_id: str = "user", k: int = 25,
     workspace_id: Optional[str] = None,
     date_query: Optional[str] = None,
+    title_filter: Optional[Filter] = None,
 ) -> list:
     """Hybrid search with date filtering (workspace-aware).
 
     Args:
         query: Search query (may be expanded/translated for BM25+vector).
         date_query: Original query for date extraction (if different from query).
+        title_filter: Optional Qdrant filter to pre-filter by document title.
     """
     store = get_hybrid_store(workspace_id)
     date_range = extract_date_range(date_query or query)
@@ -270,8 +376,6 @@ def search_with_date_filter(  # TODO: async migration
         logger.info("search.date_filter", start=date_range[0], end=date_range[1],
                      num_dates=len(dates))
         dd = store.search_by_date(dates, limit=k * _DATE_MUL)
-        # Always widen by ±7 days so nearby activity (e.g. Jira updated
-        # a few days before "this week") is included alongside exact matches.
         start = datetime.strptime(date_range[0], "%Y-%m-%d")
         end = datetime.strptime(date_range[1], "%Y-%m-%d")
         wider_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -280,7 +384,8 @@ def search_with_date_filter(  # TODO: async migration
         wider = store.search_by_date(wider_dates, limit=k * _DATE_MUL)
         if dd or wider:
             merged = _merge_unique(dd or [], wider or [])
-            merged = _merge_unique(merged, store.hybrid_search(query, limit=k))
+            merged = _merge_unique(merged, store.hybrid_search(query, limit=k,
+                                                               filter_conditions=title_filter))
             if wider and not dd:
                 logger.info("search.date_widened", original=date_range,
                             wider=(wider_start, wider_end), results=len(wider))
@@ -291,12 +396,26 @@ def search_with_date_filter(  # TODO: async migration
         dd = store.search_by_date([td], limit=k)
         if dd:
             if len(dd) < k:
-                _merge_unique(dd, store.hybrid_search(query, limit=k))
+                _merge_unique(dd, store.hybrid_search(query, limit=k,
+                                                      filter_conditions=title_filter))
             return dd[:k]
     if is_jira_query(query):
         jd = store.search_by_type("jira", limit=k * _JIRA_MUL)
         if jd:
-            return _merge_unique(jd, store.hybrid_search(query, limit=k))[: k * _JIRA_MUL]
+            return _merge_unique(jd, store.hybrid_search(query, limit=k,
+                                                         filter_conditions=title_filter))[: k * _JIRA_MUL]
+
+    # Entity-filtered search: try filtered first, fallback to unfiltered
+    if title_filter:
+        filtered = store.hybrid_search(query, limit=k, filter_conditions=title_filter)
+        if len(filtered) >= max(3, k // 2):
+            logger.info("search.entity_filtered", count=len(filtered))
+            return filtered
+        # Not enough results with filter — merge with unfiltered
+        logger.info("search.entity_filter_sparse", filtered=len(filtered))
+        unfiltered = store.hybrid_search(query, limit=k)
+        return _merge_unique(filtered, unfiltered)[:k]
+
     return store.hybrid_search(query, limit=k)
 
 
@@ -371,9 +490,10 @@ def _build_ctx(q, lang, frags, g_ents, g_rels, g_docs):
 
 @timed("hybrid_search_and_answer")
 def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
-    query: str, user_id: str = "user", k: int = 5,
+    query: str, user_id: str = "user", k: int = 25,
     workspace_id: Optional[str] = None, intent_query: Optional[str] = None,
     return_trace: bool = False,
+    title_filter: Optional[Filter] = None,
 ) -> str | dict:
     """End-to-end hybrid search and answer generation."""
     rq = (intent_query or query or "").strip()
@@ -430,6 +550,13 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
         except Exception as e:
             logger.warning("search.in_progress_injection_failed", error=str(e))
 
+    # -- Entity extraction for title filtering --
+    entities = extract_title_entities(rq)
+    if title_filter is None:
+        title_filter = _build_title_filter(entities)
+    if entities:
+        logger.info("search.entities_extracted", entities=entities)
+
     # -- Title-match injection: find docs by title before hybrid search --
     title_hits = _search_by_title(rq, workspace_id)
 
@@ -437,6 +564,7 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     raw = search_with_date_filter(
         sq, user_id=user_id, k=pool, workspace_id=workspace_id,
         date_query=rq,  # original query for date extraction (not expanded)
+        title_filter=title_filter,
     )
     if jira_key_results:
         raw = _merge_unique(jira_key_results, raw)
@@ -445,7 +573,12 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     if injected:
         raw = _merge_unique(injected, raw)
     base = diversify_results(raw, k=max(k * 2, 10))
-    base = _boost_title_matches(rq, base)
+    base = _boost_title_matches(rq, base, entities=entities)
+
+    if _s.reranker_enabled:
+        from metatron.retrieval.reranker import rerank
+        base = rerank(query=rq, results=base, top_k=k)
+
     frags, seen_h, total_c = _collect_frags(base, set(), 0)
 
     # -- Graph enrichment (graceful degradation: continue without graph if unavailable) --

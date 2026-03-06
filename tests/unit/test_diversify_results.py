@@ -361,7 +361,9 @@ class TestSearchByTitle:
         results = _search_by_title("What is Project Aurora?", workspace_id=None)
         assert len(results) == 1
         assert results[0]["title"] == "Project Aurora Overview"
-        store.scroll_by_title.assert_called_once_with("Project Aurora", limit=5)
+        # Entity extraction generates case variants (original, UPPER, lower,
+        # collapsed, collapsed UPPER, collapsed lower) for robust matching.
+        assert store.scroll_by_title.call_count == 6
 
     @patch("metatron.retrieval.search.get_hybrid_store")
     def test_no_proper_nouns_returns_empty(self, mock_get_store) -> None:

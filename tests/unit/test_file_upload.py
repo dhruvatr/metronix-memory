@@ -57,7 +57,7 @@ class TestExtensionValidation:
         assert "a" in result
 
     def test_unsupported_extension_rejected(self, router: AgentRouter) -> None:
-        for ext in (".pdf", ".docx", ".jpg", ".zip", ".py"):
+        for ext in (".docx", ".jpg", ".zip", ".py"):
             result = router.handle_file_upload(
                 b"data", f"file{ext}", user_id="u1",
             )

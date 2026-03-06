@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     search_pool_min: int = Field(15, alias="SEARCH_POOL_MIN")
     bm25_vocab_size: int = Field(30000, alias="BM25_VOCAB_SIZE")
     query_expansion_enabled: bool = Field(True, alias="QUERY_EXPANSION_ENABLED")
+    reranker_enabled: bool = Field(True, alias="RERANKER_ENABLED")
 
     # --- LLM context budget ---
     llm_context_max_tokens: int = Field(10000, alias="LLM_CONTEXT_MAX_TOKENS")
