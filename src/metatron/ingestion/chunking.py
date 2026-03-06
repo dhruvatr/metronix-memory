@@ -20,8 +20,8 @@ from metatron.core.models import Chunk, ChunkType
 # good enough for MVP.
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
-DEFAULT_CHUNK_SIZE = 512
-DEFAULT_OVERLAP = 64
+DEFAULT_CHUNK_SIZE = 1500
+DEFAULT_OVERLAP = 200
 ROOT_CHUNK_SIZE = 256
 
 

@@ -29,7 +29,7 @@ class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1)
     workspace_id: Optional[str] = None
     user_id: str = "user"
-    top_k: int = Field(5, ge=1, le=20)
+    top_k: int = Field(25, ge=1, le=50)
     history_turns: int = Field(6, ge=0, le=20)
 
 
@@ -234,7 +234,10 @@ async def upload_file(
         from metatron.ingestion.processors.html import process_html
         from metatron.ingestion.processors.titles import extract_title_from_markdown
 
-        if is_tabular_file(file_name):
+        if file_name.lower().endswith(".pdf"):
+            from metatron.ingestion.processors.pdf import extract_text_from_pdf
+            text = extract_text_from_pdf(raw_bytes, file_name)
+        elif is_tabular_file(file_name):
             text, _meta = process_tabular_file(raw_bytes, file_name)
         elif file_name.lower().endswith((".html", ".htm")):
             text = raw_bytes.decode("utf-8", errors="replace")
@@ -293,7 +296,6 @@ def _ingest_text(
 
     from metatron.storage.qdrant import get_hybrid_store
     store = get_hybrid_store(workspace_id)
-    chunks = chunk_text(text, max_chars=2500, overlap=200)
 
     doc_date = extract_date_from_text(file_name) or extract_date_from_text(text[:500])
     doc_label, upload_time = build_doc_label(
@@ -310,6 +312,7 @@ def _ingest_text(
     if doc_date:
         metadata["date"] = doc_date
 
+    chunks = chunk_text(text, max_chars=2500, overlap=200)
     for chunk in chunks:
         store.add_document(text=chunk, metadata=metadata, doc_id=doc_label)
 
