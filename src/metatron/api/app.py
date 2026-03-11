@@ -32,6 +32,7 @@ from metatron.api.routes import (
 )
 from metatron.core.config import Settings
 from metatron.core.logging import configure_logging
+from metatron.core.plugin import PluginManager, discover_plugins
 
 logger = structlog.get_logger()
 
@@ -95,6 +96,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
+    # --- Plugin discovery (must happen before middleware/routes) ---
+    plugin_manager = PluginManager()
+    discover_plugins(plugin_manager)
+    app.state.plugin_manager = plugin_manager
+
     # CORS — credentials are only safe with explicit origins, not wildcard
     origins = settings.cors_origins_list
     app.add_middleware(
@@ -108,7 +114,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Auth middleware (checked after CORS)
     app.add_middleware(OptionalAuthMiddleware)
 
-    # Register route modules
+    # Plugin middlewares — applied after core middlewares
+    for middleware_class, kwargs in plugin_manager.get_middlewares():
+        app.add_middleware(middleware_class, **kwargs)
+        logger.info("plugin.middleware.applied", middleware=middleware_class.__name__)
+
+    # Register core route modules
     app.include_router(health.router)
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
@@ -132,6 +143,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Benchmarker module not available (missing optional dependencies): %s",
             e,
         )
+
+    # Plugin routes — included after all core routes
+    for router, prefix in plugin_manager.get_routes():
+        app.include_router(router, prefix=prefix)
+        logger.info("plugin.routes.applied", prefix=prefix or "(no prefix)")
 
     # Mount MCP server at /mcp
     # streamable_http_app() creates session_manager (initialized in lifespan).
