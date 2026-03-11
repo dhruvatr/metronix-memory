@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any, Protocol, runtime_checkable
 
 from metatron.core.models import (
     Chunk,
@@ -311,3 +312,60 @@ class RetrieverInterface(ABC):
         Returns:
             Ranked list of Chunks with assembled context.
         """
+
+
+# ---------------------------------------------------------------------------
+# Plugin system protocols
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class EventHandler(Protocol):
+    """Async handler for a named event emitted by core.
+
+    Register via ``PluginManager.register_event_handler(event_name, handler)``.
+    Handlers must be resilient — unhandled exceptions are caught by EventBus.
+
+    Example::
+
+        async def on_query_executed(event_name: str, payload: dict[str, Any]) -> None:
+            log_to_audit_trail(payload["query"], payload["workspace_id"])
+    """
+
+    async def __call__(self, event_name: str, payload: dict[str, Any]) -> None:
+        """Handle an event.
+
+        Args:
+            event_name: Name of the emitted event (e.g. "query_executed").
+            payload: Event-specific data dict.
+        """
+        ...
+
+
+@runtime_checkable
+class PipelineHook(Protocol):
+    """Callable hook injected into the search or ingestion pipeline.
+
+    A hook receives a context dict, may enrich or modify it, and must
+    return it. Hooks are chained — each hook's output is the next hook's input.
+
+    Register via ``PluginManager.register_pipeline_hook(hook_name, hook)``.
+
+    Example::
+
+        class AuditHook:
+            async def __call__(self, context: dict[str, Any]) -> dict[str, Any]:
+                context["audit_timestamp"] = datetime.utcnow().isoformat()
+                return context
+    """
+
+    async def __call__(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Process the pipeline context.
+
+        Args:
+            context: Mutable pipeline context dict. Contents depend on hook_name.
+
+        Returns:
+            The (possibly modified) context dict. Must not return None.
+        """
+        ...
