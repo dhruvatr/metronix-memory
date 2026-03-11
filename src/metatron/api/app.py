@@ -111,13 +111,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Auth middleware (checked after CORS)
-    app.add_middleware(OptionalAuthMiddleware)
-
-    # Plugin middlewares — applied after core middlewares
+    # Plugin middlewares — added before OptionalAuth so they become inner layers.
+    # Starlette prepends each add_middleware call, so the last-added runs first.
+    # Order: OptionalAuthMiddleware (outermost) → plugin middlewares → CORS → routes.
+    # This ensures core JWT auth always sets request.state.user before RBAC checks it.
     for middleware_class, kwargs in plugin_manager.get_middlewares():
         app.add_middleware(middleware_class, **kwargs)
         logger.info("plugin.middleware.applied", middleware=middleware_class.__name__)
+
+    # Auth middleware — added last, becomes outermost, runs first on every request
+    app.add_middleware(OptionalAuthMiddleware)
 
     # Register core route modules
     app.include_router(health.router)
