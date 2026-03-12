@@ -5,6 +5,21 @@ L3 — data-source connectors. Each connector fetches `Document` objects from an
 system and passes them to the ingestion pipeline. All implement `ConnectorInterface` (L0).
 Currently all synchronous (TODO: async migration on most).
 
+## Implementation Status
+
+| Connector | Status | Notes |
+|-----------|--------|-------|
+| `confluence` | ✅ Working | Full CQL-based sync + incremental via `lastModified` |
+| `jira` | ✅ Working | Full JQL sync + incremental, ADF extraction, changelog |
+| `notion` | ✅ Working | Async, recursive block fetch, incremental via `last_edited_time` |
+| `github` | 🚧 Scaffold | `configure()` is a no-op (TODO), `fetch()` raises `NotImplementedError` |
+| `gdrive` | 🚧 Scaffold | `configure()` is a no-op (TODO), `fetch()` raises `NotImplementedError` |
+| `slack_history` | 🚧 Scaffold | `fetch()` raises `NotImplementedError` |
+| `files` | 🚧 Scaffold | `fetch()` raises `NotImplementedError` — upload flow uses ingestion pipeline directly |
+
+**3 of 7 connectors are fully working.** GitHub, GDrive, Slack history, and Files are registered
+in the registry and accepted via the API, but will fail at sync time.
+
 ## Files
 
 ### `registry.py`
@@ -59,42 +74,49 @@ Rate limit delay: `_RATE_LIMIT_DELAY = 4` seconds between page fetches.
 `get_page_title(page) -> str` — extracts title from page properties.
 
 ### `github.py`
-`GitHubConnector` — fetches README, issues, PRs, wiki pages.
-Uses `PyGithub`. Config: `token`, `org`, `repos` (comma-separated or `"*"` for all).
-Creates separate `Document` per: README, each open/closed issue, each PR discussion.
+🚧 `GitHubConnector` — scaffold only.
+`configure()` is a no-op (TODO comment). `fetch()` raises `NotImplementedError`.
+Intended design: fetch README, issues, PRs, wiki pages via `PyGithub`.
+Config keys: `token`, `org`, `repos` (comma-separated or `"*"` for all).
 
 ### `gdrive.py`
-`GDriveConnector` — Google Drive via service account or OAuth.
-Config: `credentials_json` (path to service account JSON), `folder_id` (optional), `shared_drive_id` (optional).
-Exports Google Docs as plain text, Sheets as CSV, other files by MIME type.
-Uses `google-api-python-client`.
+🚧 `GDriveConnector` — scaffold only.
+`configure()` is a no-op (TODO comment). `fetch()` raises `NotImplementedError`.
+Intended design: export Google Docs as plain text, Sheets as CSV via `google-api-python-client`.
+Config keys: `credentials_json`, `folder_id` (optional), `shared_drive_id` (optional).
 
 ### `slack_history.py`
-`SlackHistoryConnector` — Slack channel message history.
-Config: `bot_token` (xoxb-), `channels` (comma-separated names/IDs or `"*"`).
-Uses Slack Web API (`conversations.history`, `conversations.list`).
-Groups thread replies under parent message. One `Document` per channel per day.
+🚧 `SlackHistoryConnector` — scaffold only.
+`fetch()` raises `NotImplementedError`.
+Intended design: index channel message history via Slack Web API (`conversations.history`).
+Config keys: `bot_token` (xoxb-), `channels` (comma-separated names/IDs or `"*"`).
 
 ### `files.py`
-`FilesConnector` — indexes already-uploaded local files.
-Config: `file_store_path` (from Settings).
-Reads from `FileStore`, passes through appropriate `ProcessorInterface` per file type.
-Used when user uploads via `POST /api/v1/upload` or `POST /api/v1/files/`.
+🚧 `FilesConnector` — scaffold only.
+`fetch()` raises `NotImplementedError`.
+Note: the upload flow (`POST /api/v1/upload`, `POST /api/v1/files/`) bypasses this connector
+entirely — it passes bytes directly to the ingestion pipeline.
+Config keys: `file_store_path` (from Settings).
 
 ### `sync_state.py`
-`SyncState` — persists last sync timestamp per `(connection_id, connector_type)`.
-Stored in PostgreSQL `config` table as JSON.
-`get_last_sync(connection_id) -> datetime | None`
-`set_last_sync(connection_id, timestamp)`
-Used by all connectors for incremental sync (`since` parameter).
+`SyncState` — **file-based** persistence for last sync timestamps.
+Stored in `.metatron/sync_state.json` (not PostgreSQL).
+Key format: `"{workspace_id}:{source_type}"` → ISO timestamp string.
+
+`get_last_sync(workspace_id, source_type) -> datetime | None`
+`set_last_sync(workspace_id, source_type, ts=None)` — defaults to `datetime.now(UTC)`
+`clear(workspace_id, source_type)` — forces full sync on next run
+
+State file is created automatically (`mkdir parents=True`). Load errors return empty dict (warn + continue).
 
 ## Key Patterns
 - **`ConnectorInterface` lifecycle** — `configure(connection, decrypted_config)` → `fetch(workspace_id, since)` → documents to ingestion pipeline
 - **Incremental sync** — all connectors accept `since: datetime | None`; `None` = full sync
 - **Config encryption** — `Connection.config_encrypted` is decrypted by connections API before passing to `configure()`
 - **Registry pattern** — `register_builtins()` is called once at app startup; enterprise connectors add via `registry.register()`
-- **Sync vs async** — Confluence, Jira, GitHub, GDrive, Slack are sync (TODO: async); Notion is async (uses `asyncio.run()` wrapper in fetch)
+- **Sync vs async** — Confluence and Jira are sync (TODO: async migration); Notion is natively async (`AsyncClient`)
+- **Scaffold connectors fail silently at registration** — GitHub, GDrive, Slack history, Files are registered in the registry and accepted by the connections API, but raise `NotImplementedError` when sync is triggered
 
 ## Dependencies
-- **Depends on**: `core.interfaces` (ConnectorInterface), `core.models` (Connection, Document), `ingestion.processors` (html, tabular, pdf etc.), `storage.file_store` (FilesConnector), `storage.postgres` (sync_state)
+- **Depends on**: `core.interfaces` (ConnectorInterface), `core.models` (Connection, Document), `ingestion.processors` (html, tabular, pdf etc.), `storage.file_store` (FilesConnector). `SyncState` has no DB dependency — uses `.metatron/sync_state.json`
 - **Depended on by**: `api.routes.connections` (CRUD + sync trigger), `ingestion.pipeline` (receives documents)
