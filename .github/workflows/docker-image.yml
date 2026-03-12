@@ -5,29 +5,23 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest-8-cores
+    runs-on: ubuntu-latest 
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Quick cleanup
+    - name: Fast cleanup
       run: |
-        sudo docker system prune -a -f
-        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+        sudo docker system prune -f
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
+        df -h
     
-    - name: Setup RAM disk
-      run: |
-        sudo mkdir -p /mnt/ramdisk
-        sudo mount -t tmpfs -o size=8G tmpfs /mnt/ramdisk
-        sudo chmod 777 /mnt/ramdisk
-        echo "DOCKER_TMPDIR=/mnt/ramdisk" >> $GITHUB_ENV
-    
-    - name: Set up Docker Buildx
+    - name: Set up Docker Buildx with optimizations
       uses: docker/setup-buildx-action@v3
       with:
         driver-opts: |
-          image=moby/buildkit:latest
-          network=host
+          env.BUILDKIT_STEP_LOG_MAX_SIZE=50000000
+        buildkitd-flags: --debug
     
     - name: Login to DockerHub
       uses: docker/login-action@v3
@@ -39,12 +33,12 @@ jobs:
       id: branch
       run: |
         BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-        DOCKER_TAG="$BRANCH_NAME"
-        echo "tag=$DOCKER_TAG" >> $GITHUB_OUTPUT
+        echo "tag=$BRANCH_NAME" >> $GITHUB_OUTPUT
     
-    - name: Pre-pull cache images
+    - name: Pre-pull for cache
       run: |
         docker pull ${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-${{ steps.branch.outputs.tag }} || true
+        docker pull ${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-cache || true
     
     - name: Build and push
       uses: docker/build-push-action@v5
@@ -55,8 +49,8 @@ jobs:
         tags: |
           ${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-${{ steps.branch.outputs.tag }}
         cache-from: |
+          type=registry,ref=${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-cache
           type=gha
-          type=registry,ref=${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-${{ steps.branch.outputs.tag }}-buildcache
-        cache-to: type=gha,mode=max
+        cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-cache,mode=max
         provenance: false
         sbom: false
