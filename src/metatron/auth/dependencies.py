@@ -2,12 +2,19 @@
 
 Provides Depends() functions for extracting and validating
 the current user from JWT bearer tokens in HTTP requests.
+
+Auth resolution order:
+1. If a plugin has registered an AuthBackendInterface via PluginManager,
+   delegate to provider.authenticate(token).
+2. Otherwise, fall back to the built-in JWT verification (jwt.py).
+
+This allows enterprise to swap in SAML/OIDC without touching core code.
 """
 
 from __future__ import annotations
 
 import structlog
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from metatron.auth.jwt import verify_token
@@ -22,10 +29,14 @@ _bearer_scheme = HTTPBearer()
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
     settings: Settings = Depends(),
 ) -> User:
-    """Extract and validate user from JWT bearer token.
+    """Extract and validate user from the bearer token.
+
+    Checks for a plugin-registered auth provider first; falls back to
+    the built-in JWT verification if none is registered.
 
     Use as a FastAPI dependency:
         @router.get("/protected")
@@ -34,8 +45,33 @@ async def get_current_user(
     Raises:
         HTTPException 401: If token is missing, invalid, or expired.
     """
+    token = credentials.credentials
+
+    # --- Plugin auth provider (e.g. SAML, OIDC) ---
+    plugin_manager = getattr(request.app.state, "plugin_manager", None)
+    if plugin_manager is not None:
+        provider = plugin_manager.get_auth_provider()
+        if provider is not None:
+            try:
+                user = await provider.authenticate(token)
+            except Exception as exc:
+                logger.warning("auth.plugin_provider.failed", error=str(exc))
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication failed",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid or expired token",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return user
+
+    # --- Default: built-in JWT ---
     try:
-        payload = verify_token(credentials.credentials, settings.secret_key)
+        payload = verify_token(token, settings.secret_key)
     except AuthenticationError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -21,6 +21,9 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         settings: Settings = request.app.state.settings
 
+        # Always initialise so downstream middleware never gets AttributeError.
+        request.state.user = {}
+
         if not settings.auth_enabled:
             return await call_next(request)
 
@@ -41,12 +44,18 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
 
         token = auth_header[7:]
         try:
-            verify_token(token, settings.secret_key)
+            payload = verify_token(token, settings.secret_key)
         except Exception:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or expired token"},
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        request.state.user = {
+            "user_id": payload["sub"],
+            "role": payload.get("role", "viewer"),
+            "workspace_ids": payload.get("workspace_ids", []),
+        }
 
         return await call_next(request)

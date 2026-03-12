@@ -25,6 +25,7 @@ from metatron.api.routes import (
     dashboard,
     documents,
     files,
+    graph,
     health,
     skills,
     sync,
@@ -32,6 +33,7 @@ from metatron.api.routes import (
 )
 from metatron.core.config import Settings
 from metatron.core.logging import configure_logging
+from metatron.core.plugin import PluginManager, discover_plugins
 
 logger = structlog.get_logger()
 
@@ -54,6 +56,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         json_output=settings.env != "development",
     )
     logger.info("app.startup", env=settings.env, port=settings.port)
+
+    # Apply pending database migrations before serving traffic.
+    # Advisory lock ensures only one replica runs migrations when several
+    # instances start simultaneously. Failures are non-fatal — the app
+    # continues if the schema is already up to date.
+    try:
+        import asyncio
+        from metatron.storage.migrations import run_migrations_sync
+        await asyncio.to_thread(
+            run_migrations_sync, settings.postgres_sync_dsn, settings.postgres_dsn
+        )
+    except Exception as exc:
+        logger.error("migrations.failed", error=str(exc))
 
     # TODO: initialize stores and services
     # app.state.postgres = PostgresStore(settings.postgres_dsn)
@@ -95,6 +110,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
+    # --- Plugin discovery (must happen before middleware/routes) ---
+    plugin_manager = PluginManager()
+    discover_plugins(plugin_manager)
+    app.state.plugin_manager = plugin_manager
+
     # CORS — credentials are only safe with explicit origins, not wildcard
     origins = settings.cors_origins_list
     app.add_middleware(
@@ -105,10 +125,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Auth middleware (checked after CORS)
+    # Plugin middlewares — added before OptionalAuth so they become inner layers.
+    # Starlette prepends each add_middleware call, so the last-added runs first.
+    # Order: OptionalAuthMiddleware (outermost) → plugin middlewares → CORS → routes.
+    # This ensures core JWT auth always sets request.state.user before RBAC checks it.
+    for middleware_class, kwargs in plugin_manager.get_middlewares():
+        app.add_middleware(middleware_class, **kwargs)
+        logger.info("plugin.middleware.applied", middleware=middleware_class.__name__)
+
+    # Auth middleware — added last, becomes outermost, runs first on every request
     app.add_middleware(OptionalAuthMiddleware)
 
-    # Register route modules
+    # Register core route modules
     app.include_router(health.router)
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
@@ -121,6 +149,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(benchmarker.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
+    app.include_router(graph.router, prefix="/api/v1")
+
+    from metatron.api.routes.finops import router as finops_router
+    app.include_router(finops_router, prefix="/api/v1")
 
     # Lazy import benchmarker module router (optional dependency)
     try:
@@ -132,6 +164,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Benchmarker module not available (missing optional dependencies): %s",
             e,
         )
+
+    # Plugin routes — included after all core routes
+    for router, prefix in plugin_manager.get_routes():
+        app.include_router(router, prefix=prefix)
+        logger.info("plugin.routes.applied", prefix=prefix or "(no prefix)")
 
     # Mount MCP server at /mcp
     # streamable_http_app() creates session_manager (initialized in lifespan).
