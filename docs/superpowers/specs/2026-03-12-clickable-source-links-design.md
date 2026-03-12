@@ -175,6 +175,7 @@ return {
 | `src/metatron/api/routes/chat.py` | Fix type bug, persist file via FileStore, pass file_id, set URL |
 | `src/metatron/api/routes/files.py` | Add GET `/{file_id}/download` endpoint |
 | Tests | Update `_append_sources` tests, add file download test |
+| `docs/` | Review and update project docs (API.md, ARCHITECTURE.md, CONNECTORS.md, etc.) to reflect new source URL flow, file download endpoint, and updated source citation format |
 
 ## Architectural Notes
 
