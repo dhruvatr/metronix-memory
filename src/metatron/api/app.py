@@ -56,6 +56,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("app.startup", env=settings.env, port=settings.port)
 
+    # Apply pending database migrations before serving traffic.
+    # Advisory lock ensures only one replica runs migrations when several
+    # instances start simultaneously. Failures are non-fatal — the app
+    # continues if the schema is already up to date.
+    try:
+        import asyncio
+        from metatron.storage.migrations import run_migrations_sync
+        await asyncio.to_thread(
+            run_migrations_sync, settings.postgres_sync_dsn, settings.postgres_dsn
+        )
+    except Exception as exc:
+        logger.error("migrations.failed", error=str(exc))
+
     # TODO: initialize stores and services
     # app.state.postgres = PostgresStore(settings.postgres_dsn)
     # app.state.qdrant = QdrantVectorStore(...)
