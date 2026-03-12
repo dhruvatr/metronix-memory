@@ -136,6 +136,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
 
+    from metatron.api.routes.finops import router as finops_router
+    app.include_router(finops_router, prefix="/api/v1")
+
     # Lazy import benchmarker module router (optional dependency)
     try:
         from metatron.benchmarker.api import router as benchmarker_module_router

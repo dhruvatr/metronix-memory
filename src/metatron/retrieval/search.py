@@ -681,6 +681,9 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     if workspace_id:
         try:
             total_ms = (time.time() - start_time) * 1000
+            # Count total words in source fragments sent to LLM context.
+            # Used by FinOps time-savings calculation: manual_reading_time = (words / 150 WPM) * 1.5
+            source_word_count = sum(len(frag.split()) for frag in frags) if frags else 0
             trace_data = {
                 "query": rq,
                 "user_id": user_id,
@@ -691,6 +694,7 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
                 "num_relations": len(g_rels),
                 "use_schema": use_schema,
                 "language": lang,
+                "source_word_count": source_word_count,
             }
             
             from metatron.storage.pg_connection import store_query_trace_sync
