@@ -25,6 +25,7 @@ from metatron.api.routes import (
     dashboard,
     documents,
     files,
+    graph,
     health,
     skills,
     sync,
@@ -135,6 +136,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(benchmarker.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
+    app.include_router(graph.router, prefix="/api/v1")
 
     # Lazy import benchmarker module router (optional dependency)
     try:
