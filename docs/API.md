@@ -836,6 +836,30 @@ Verify file integrity by checking its checksum.
 curl http://localhost:8000/api/v1/files/990e8400-e29b-41d4-a716-446655440004/verify
 ```
 
+### GET /api/v1/files/{id}/download
+
+Download an uploaded file by its ID.
+
+**Query Parameters:**
+
+- `workspace_id` (required): Workspace the file belongs to
+
+**Response:** Raw file content with appropriate `Content-Type` header.
+
+**Headers:**
+
+- `Content-Disposition: inline; filename="original_name.pdf"`
+
+**Error Responses:**
+
+- `404 Not Found` — File or workspace not found
+
+**Example:**
+
+```bash
+curl "http://localhost:8000/api/v1/files/990e8400-e29b-41d4-a716-446655440004/download?workspace_id=550e8400-e29b-41d4-a716-446655440000"
+```
+
 ## Sync
 
 ### GET /api/v1/sync/status
