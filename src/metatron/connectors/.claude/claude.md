@@ -109,6 +109,51 @@ Key format: `"{workspace_id}:{source_type}"` → ISO timestamp string.
 
 State file is created automatically (`mkdir parents=True`). Load errors return empty dict (warn + continue).
 
+### `schemas.py`
+`ConnectorSchema` + `ConfigField` — dataclass-based schema definitions for all connector types.
+Defines required/optional fields, field types (`string`, `url`, `secret`, `number`, `boolean`),
+and categories (`connector` vs `channel`).
+
+`CONNECTOR_SCHEMAS` — dict mapping connector_type string to `ConnectorSchema`.
+Covers: confluence, jira, notion, github, gdrive, slack_history, telegram, discord, slack.
+
+Key functions:
+- `get_schema(connector_type) -> ConnectorSchema | None`
+- `validate_config(connector_type, config) -> list[str]` — returns error messages (empty = valid)
+- `mask_secrets(connector_type, config) -> dict` — replaces secret fields with `"***"`
+- `merge_config(connector_type, old_config, new_config) -> dict` — preserves old secret values when new value is `"***"`
+
+Used by `storage/postgres.py` connection CRUD (create, list, update) and will be used by
+API routes for form generation and request validation.
+
+## DB-Based Connection Config
+Connections are stored in the `connections` table (PostgreSQL) with encrypted config:
+
+**Table columns**: id, workspace_id, connector_type, name, config_encrypted (Fernet),
+status, enabled, error_message, last_synced_at, created_at, updated_at.
+
+**CRUD in `storage/postgres.py`**:
+- `create_connection(workspace_id, connector_type, name, config, fernet_key)` — validates, encrypts, inserts
+- `list_connections(workspace_id, fernet_key)` — returns all with masked secrets
+- `get_connection(connection_id, fernet_key)` — single connection, masked secrets
+- `get_connection_decrypted(connection_id, fernet_key)` — plaintext config (internal use only)
+- `update_connection(connection_id, updates, fernet_key)` — handles secret merging via `merge_config()`
+- `delete_connection(connection_id)` — hard delete
+- `update_connection_status(connection_id, status, error_message, last_synced_at)` — status tracking
+
+**Security**: secrets are never logged or returned in plaintext via list/get endpoints.
+`mask_secrets()` replaces secret fields with `"***"`. `merge_config()` preserves old secrets
+when update payload contains `"***"`.
+
+## Configuration Model
+**All connector credentials are stored in the database** (encrypted with Fernet), not in env vars.
+The `config.py` Settings class no longer contains connector-specific env vars (confluence_url, jira_url, etc.).
+
+- Connectors receive config via `configure(connection, decrypted_config)` — the decrypted_config dict
+  comes from `PostgresStore.get_connection_decrypted()`.
+- The `/sync` chat command is deprecated — sync is triggered via `POST /api/v1/connections/{id}/sync`.
+- Channel tokens (telegram, discord, slack) remain in env vars since they are used at bot startup.
+
 ## Key Patterns
 - **`ConnectorInterface` lifecycle** — `configure(connection, decrypted_config)` → `fetch(workspace_id, since)` → documents to ingestion pipeline
 - **Incremental sync** — all connectors accept `since: datetime | None`; `None` = full sync
@@ -118,5 +163,5 @@ State file is created automatically (`mkdir parents=True`). Load errors return e
 - **Scaffold connectors fail silently at registration** — GitHub, GDrive, Slack history, Files are registered in the registry and accepted by the connections API, but raise `NotImplementedError` when sync is triggered
 
 ## Dependencies
-- **Depends on**: `core.interfaces` (ConnectorInterface), `core.models` (Connection, Document), `ingestion.processors` (html, tabular, pdf etc.), `storage.file_store` (FilesConnector). `SyncState` has no DB dependency — uses `.metatron/sync_state.json`
-- **Depended on by**: `api.routes.connections` (CRUD + sync trigger), `ingestion.pipeline` (receives documents)
+- **Depends on**: `core.interfaces` (ConnectorInterface), `core.models` (Connection, Document), `ingestion.processors` (html, tabular, pdf etc.), `storage.file_store` (FilesConnector), `storage.encryption` (Fernet encrypt/decrypt). `SyncState` has no DB dependency — uses `.metatron/sync_state.json`
+- **Depended on by**: `api.routes.connections` (CRUD + sync trigger), `ingestion.pipeline` (receives documents), `storage.postgres` (imports schemas for validation/masking)

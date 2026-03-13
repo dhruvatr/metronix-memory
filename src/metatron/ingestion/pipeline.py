@@ -213,6 +213,7 @@ def ingest_documents(
                     "date": doc_date,
                     "simhash": chunk_hash,
                     **(doc.metadata or {}),
+                    "url": doc.url,  # after spread so doc.url takes precedence
                 }
                 store.add_document(chunk, metadata=metadata, doc_id=doc.source_id)
 

@@ -82,6 +82,7 @@ class QdrantVectorStore:
         return {
             "id": str(point.id), "score": score, "memory": data, "data": data,
             "title": payload.get("title", ""), "type": payload.get("type", ""),
+            "url": payload.get("url", ""),
             "date": payload.get("date", ""), "doc_label": payload.get("doc_label", ""),
             "workspace_id": payload.get("workspace_id", ""), "payload": payload,
         }

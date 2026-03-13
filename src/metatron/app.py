@@ -1,8 +1,8 @@
 """Unified entry point — runs API server and channel bots in one process.
 
-Starts FastAPI (uvicorn), Telegram bot, Discord bot, and Slack bot as
-concurrent async tasks sharing a single AgentRouter instance. Each channel
-is started only if its token is configured in the environment.
+Starts FastAPI (uvicorn) and messaging channels (Telegram, Discord, Slack)
+as concurrent async tasks sharing a single AgentRouter instance. Channels
+are started dynamically based on enabled connections in the database.
 
 Usage:
     python -m metatron.app
@@ -36,54 +36,6 @@ async def _run_api(settings: Settings) -> None:
     await server.serve()
 
 
-async def _run_channel_safe(name: str, coro: Coroutine) -> None:
-    """Run a channel coroutine with crash isolation and logging."""
-    try:
-        await coro
-    except Exception as e:
-        logger.error("channel.crashed", channel=name, error=str(e), exc_info=True)
-
-
-async def _run_telegram(router: AgentRouter, settings: Settings) -> None:
-    """Run Telegram bot if token is configured."""
-    from metatron.channels.telegram import TelegramChannel
-
-    channel = TelegramChannel(
-        bot_token=settings.telegram_bot_token,
-        router=router,
-        settings=settings,
-    )
-    logger.info("app.telegram.starting")
-    await channel.start()
-
-
-async def _run_discord(router: AgentRouter, settings: Settings) -> None:
-    """Run Discord bot if token is configured."""
-    from metatron.channels.discord import DiscordChannel
-
-    channel = DiscordChannel(
-        bot_token=settings.discord_bot_token,
-        router=router,
-        settings=settings,
-    )
-    logger.info("app.discord.starting")
-    await channel.start()
-
-
-async def _run_slack(router: AgentRouter, settings: Settings) -> None:
-    """Run Slack bot if tokens are configured."""
-    from metatron.channels.slack import SlackChannel
-
-    channel = SlackChannel(
-        bot_token=settings.slack_bot_token,
-        app_token=settings.slack_app_token,
-        router=router,
-        settings=settings,
-    )
-    logger.info("app.slack.starting")
-    await channel.start()
-
-
 async def run_all() -> None:
     """Start all configured services in a single event loop."""
     settings = Settings()
@@ -100,35 +52,51 @@ async def run_all() -> None:
     tasks.append(asyncio.create_task(_run_api(settings)))
     logger.info("app.api.scheduled", port=settings.port)
 
-    # Telegram — only if token is set
-    if settings.telegram_bot_token:
-        tasks.append(asyncio.create_task(
-            _run_channel_safe("telegram", _run_telegram(router, settings))
-        ))
-        logger.info("app.telegram.scheduled")
-    else:
-        logger.warning("app.telegram.skipped", reason="TELEGRAM_BOT_TOKEN not set")
+    # One-time migration: env-var credentials → DB connections (idempotent)
+    try:
+        from metatron.storage.migrate_env_connections import migrate_env_to_db
 
-    # Discord — only if token is set
-    if settings.discord_bot_token:
-        tasks.append(asyncio.create_task(
-            _run_channel_safe("discord", _run_discord(router, settings))
-        ))
-        logger.info("app.discord.scheduled")
-    else:
-        logger.warning("app.discord.skipped", reason="DISCORD_BOT_TOKEN not set")
+        mig = await migrate_env_to_db(
+            postgres_dsn=settings.postgres_dsn,
+            workspace_id=settings.default_workspace_id,
+            fernet_key=settings.fernet_key,
+        )
+        if mig["created"]:
+            logger.info(
+                "app.env_migration.done",
+                created=mig["created"],
+            )
+    except Exception as exc:
+        logger.warning(
+            "app.env_migration.failed", error=str(exc),
+        )
 
-    # Slack — only if both tokens are set
-    if settings.slack_bot_token and settings.slack_app_token:
-        tasks.append(asyncio.create_task(
-            _run_channel_safe("slack", _run_slack(router, settings))
-        ))
-        logger.info("app.slack.scheduled")
-    else:
-        logger.warning("app.slack.skipped", reason="SLACK_BOT_TOKEN or SLACK_APP_TOKEN not set")
+    # Start channels from DB config (shared store instance)
+    from metatron.channels.manager import ChannelManager
+    from metatron.storage.postgres import PostgresStore
+
+    store = PostgresStore(settings.postgres_dsn)
+    channel_manager = ChannelManager(router=router, store=store)
+    try:
+        started = await channel_manager.start_channels_from_db(
+            fernet_key=settings.fernet_key,
+            default_workspace_id=settings.default_workspace_id,
+        )
+        logger.info("app.channels.started", count=started)
+    except Exception as exc:
+        logger.error(
+            "app.channels.startup_failed",
+            error=str(exc),
+            exc_info=True,
+        )
 
     logger.info("app.starting", services=len(tasks))
-    await asyncio.gather(*tasks)
+
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        await channel_manager.stop_all()
+        await store.close()
 
 
 def main() -> None:

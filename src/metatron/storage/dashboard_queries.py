@@ -310,12 +310,19 @@ def get_graph_stats_data(workspace_id: str) -> dict:
             if edge_record:
                 result["total_edges"] = edge_record["cnt"]
             
-            # Find orphan nodes (nodes without any relationships)
+            # Find orphan nodes (nodes without any relationships).
+            # Memgraph doesn't support undirected patterns like (n)--()
+            # or anonymous nodes in NOT clauses. Use OPTIONAL MATCH instead.
             orphan_result = session.run(
                 """
                 MATCH (n {workspace_id: $wid})
-                WHERE NOT (n)--()
-                RETURN elementId(n) AS id, labels(n)[0] AS label,
+                OPTIONAL MATCH (n)-[r]->()
+                WITH n, r
+                WHERE r IS NULL
+                OPTIONAL MATCH (n)<-[r2]-()
+                WITH n, r2
+                WHERE r2 IS NULL
+                RETURN id(n) AS id, labels(n)[0] AS label,
                        COALESCE(n.name, n.title, n.id, 'Unknown') AS name
                 LIMIT $limit
                 """,

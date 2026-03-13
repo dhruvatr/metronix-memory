@@ -448,7 +448,7 @@ def _collect_frags(base, seen, total):
     return frags, seen, total
 
 
-_SOURCE_ICONS = {"confluence": "\U0001f4c4", "jira": "\U0001f4cb", "upload": "\U0001f4ce"}
+_SOURCE_ICONS = {"confluence": "\U0001f4c4", "jira": "\U0001f4cb", "upload": "\U0001f4ce", "notion": "\U0001f4d3"}
 _MAX_SOURCES = 5
 
 
@@ -467,7 +467,15 @@ def _append_sources(answer: str, results: list) -> str:
             continue
         seen_titles.add(title)
         icon = _SOURCE_ICONS.get(source_type, "\U0001f4c4")
-        sources.append(f"{icon} {title}")
+        url = (
+            mem.get("url")
+            or (mem.get("payload") or {}).get("url")
+            or ""
+        )
+        if url:
+            sources.append(f"{icon} {title} \u2014 {url}")
+        else:
+            sources.append(f"{icon} {title}")
         if len(sources) >= _MAX_SOURCES:
             break
     if sources:

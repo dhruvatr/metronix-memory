@@ -101,6 +101,20 @@ Used by connections API to protect connector credentials at rest.
 `cleanup_all()` — deletes all workspaces.
 `get_cleanup_preview()` — returns counts without deleting.
 
+### `migrate_env_connections.py`
+One-time migration: reads legacy env vars (CONFLUENCE_URL, TELEGRAM_BOT_TOKEN, etc.),
+groups them by connector type, validates required fields, and creates encrypted DB
+connections via `PostgresStore.create_connection()`. Idempotent — skips types that
+already exist in the database for the workspace.
+
+`_ENV_MAPPINGS` — maps env var names to `(connector_type, config_field)` tuples.
+`_collect_configs_from_env()` — reads env vars, returns `{connector_type: {field: value}}`.
+`migrate_env_to_db(postgres_dsn, workspace_id, fernet_key)` — async entry point.
+Returns `{"created": [...], "skipped": [...], "errors": [...]}`.
+
+Called automatically at startup in both `app.py` (unified launcher) and `api/app.py`
+(lifespan), after Alembic migrations. Safe to run repeatedly.
+
 ### `migrations.py`
 Auto-run Alembic migrations on startup with PostgreSQL advisory lock.
 See [migrations.md](./migrations.md) for full documentation.
