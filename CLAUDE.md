@@ -44,7 +44,7 @@ src/metatron/
 │   ├── middleware.py          # OptionalAuthMiddleware (JWT gate)
 │   ├── dependencies.py        # FastAPI DI helpers
 │   └── routes/                # auth, chat, admin, skills, connections, documents,
-│                              # workspaces, sync, benchmarker, dashboard/, files, graph, health
+│                              # workspaces, sync, benchmarker, dashboard/, files (+ download), graph, health
 ├── auth/
 │   ├── jwt.py                 # HS256, create_token/verify_token, 24h default
 │   ├── rbac.py                # Role hierarchy: viewer(0) < editor(1) < admin(2)
@@ -124,6 +124,10 @@ Request → OptionalAuthMiddleware (if AUTH_ENABLED)
 Query → expansion → entity injection → hybrid_search (dense+sparse, pool=75)
 → merge + diversify (k=50) → title_boost → RERANKER (bge-reranker-v2-m3, top 25)
 → collect_frags → graph enrichment → token budget → LLM → sources
+
+Source citation format: `"{icon} {title} — {url}"` (em-dash separator).
+Icons: 📄 confluence, 📋 jira, 📎 upload, 📓 notion.
+Frontend splits on `" — "` to extract URL; no URL → title only.
 ```
 
 ## Databases

@@ -10,6 +10,7 @@ import json
 import re
 import threading
 from typing import AsyncGenerator, Optional
+from uuid import uuid4
 
 import structlog
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -238,6 +239,23 @@ async def upload_file(
 
     file_name = file.filename or "document.txt"
 
+    # Persist original file for later download
+    from metatron.core.config import get_settings
+    from metatron.storage.file_store import FileStore
+    file_id = uuid4().hex
+    settings = get_settings()
+    file_store = FileStore(settings.file_store_path)
+    try:
+        await file_store.save(
+            workspace_id=workspace_id or "default",
+            file_id=file_id,
+            filename=file_name,
+            content=raw_bytes,
+        )
+    except Exception as exc:
+        logger.warning("upload.file_persist_failed", error=str(exc))
+        file_id = ""
+
     try:
         from metatron.ingestion.processors import is_tabular_file, process_tabular_file
         from metatron.ingestion.processors.html import process_html
@@ -267,6 +285,7 @@ async def upload_file(
             user_id=user_id,
             workspace_id=workspace_id,
             extract_graph=extract_graph,
+            file_id=file_id,
         )
     except Exception as exc:
         logger.error("upload.ingest_error", file=file_name, error=str(exc), exc_info=True)
@@ -284,6 +303,7 @@ def _ingest_text(
     user_id: str = "user",
     workspace_id: str | None = None,
     extract_graph: bool = True,
+    file_id: str = "",
 ) -> dict:
     """Send text to workspace-specific Qdrant + optionally graph."""
     from metatron.core.utils import build_doc_label
@@ -313,10 +333,11 @@ def _ingest_text(
 
     metadata = {
         "title": file_name,
-        "type": "confluence",
+        "type": "upload",
         "workspace_id": workspace_id,
         "user_id": user_id,
         "doc_label": doc_label,
+        "url": f"/api/v1/files/{file_id}/download?workspace_id={workspace_id}" if file_id else "",
     }
     if doc_date:
         metadata["date"] = doc_date

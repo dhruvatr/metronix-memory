@@ -126,6 +126,7 @@ class JiraConnector(ConnectorInterface):
         return Document(
             source_type="jira",
             source_id=issue_key,
+            url=f"{self._config.get('url', '').rstrip('/')}/browse/{issue_key}" if self._config.get("url") else "",
             workspace_id=workspace_id,
             title=f"[{issue_key}] {structured.get('summary', '')}",
             content=markdown,
