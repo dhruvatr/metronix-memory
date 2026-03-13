@@ -7,7 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from metatron.connectors.registry import ConnectorRegistry, register_builtins
@@ -89,8 +89,13 @@ class TestConnectionResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _get_workspace_id(request: Request) -> str:
-    """Extract workspace_id from request.state.user (set by middleware)."""
+def _get_workspace_id(
+    request: Request,
+    workspace_id: str | None = None,
+) -> str:
+    """Resolve workspace_id: query param > auth token > default."""
+    if workspace_id:
+        return workspace_id
     user = getattr(request.state, "user", {}) or {}
     workspace_ids = user.get("workspace_ids", [])
     if workspace_ids:
@@ -139,10 +144,11 @@ async def get_schemas() -> dict[str, Any]:
     return {"schemas": schemas}
 
 
-@router.post("/", status_code=201, response_model=ConnectionResponse)
+@router.post("", status_code=201, response_model=ConnectionResponse)
 async def create_connection(
     body: CreateConnectionRequest,
     request: Request,
+    workspace_id: str | None = Query(None),
 ) -> ConnectionResponse:
     """Create a new data source connection.
 
@@ -164,12 +170,12 @@ async def create_connection(
     if errors:
         raise HTTPException(status_code=422, detail="; ".join(errors))
 
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
 
     result = await store.create_connection(
-        workspace_id=workspace_id,
+        workspace_id=ws_id,
         connector_type=body.connector_type,
         name=body.name,
         config=body.config,
@@ -178,21 +184,22 @@ async def create_connection(
     return ConnectionResponse(**result)
 
 
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 async def list_connections(
     request: Request,
     category: str | None = None,
+    workspace_id: str | None = Query(None),
 ) -> dict[str, Any]:
     """List all connections for the current workspace.
 
     Optionally filter by category ('connector' or 'channel').
     """
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
 
-    logger.info("api.connections.list", workspace_id=workspace_id)
-    connections = await store.list_connections(workspace_id, fernet_key)
+    logger.info("api.connections.list", workspace_id=ws_id)
+    connections = await store.list_connections(ws_id, fernet_key)
 
     if category:
         if category not in ("connector", "channel"):
@@ -216,14 +223,15 @@ async def list_connections(
 async def get_connection(
     connection_id: str,
     request: Request,
+    workspace_id: str | None = Query(None),
 ) -> ConnectionResponse:
     """Get a single connection by ID with masked secrets."""
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
 
     conn = await store.get_connection(connection_id, fernet_key)
-    if conn is None or conn["workspace_id"] != workspace_id:
+    if conn is None or conn["workspace_id"] != ws_id:
         raise HTTPException(status_code=404, detail="Connection not found")
 
     return ConnectionResponse(**conn)
@@ -237,15 +245,16 @@ async def update_connection(
     connection_id: str,
     body: UpdateConnectionRequest,
     request: Request,
+    workspace_id: str | None = Query(None),
 ) -> ConnectionResponse:
     """Update a connection's config, name, or enabled status."""
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
 
     # Verify ownership
     existing = await store.get_connection(connection_id, fernet_key)
-    if existing is None or existing["workspace_id"] != workspace_id:
+    if existing is None or existing["workspace_id"] != ws_id:
         raise HTTPException(status_code=404, detail="Connection not found")
 
     updates: dict[str, Any] = {}
@@ -305,15 +314,16 @@ async def update_connection(
 async def delete_connection(
     connection_id: str,
     request: Request,
+    workspace_id: str | None = Query(None),
 ) -> None:
     """Delete a connection and its encrypted credentials."""
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
 
     # Verify ownership
     existing = await store.get_connection(connection_id, fernet_key)
-    if existing is None or existing["workspace_id"] != workspace_id:
+    if existing is None or existing["workspace_id"] != ws_id:
         raise HTTPException(status_code=404, detail="Connection not found")
 
     logger.info("api.connections.delete", connection_id=connection_id)
@@ -327,14 +337,15 @@ async def delete_connection(
 async def test_connection(
     connection_id: str,
     request: Request,
+    workspace_id: str | None = Query(None),
 ) -> TestConnectionResponse:
     """Test a connection by attempting to configure the connector."""
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
 
     conn = await store.get_connection_decrypted(connection_id, fernet_key)
-    if conn is None or conn["workspace_id"] != workspace_id:
+    if conn is None or conn["workspace_id"] != ws_id:
         raise HTTPException(status_code=404, detail="Connection not found")
 
     connector_type = conn["connector_type"]
@@ -394,6 +405,7 @@ async def trigger_sync(
     connection_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
+    workspace_id: str | None = Query(None),
 ) -> dict[str, str]:
     """Trigger a manual sync for a DB-based connection.
 
@@ -402,10 +414,10 @@ async def trigger_sync(
     """
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
-    workspace_id = _get_workspace_id(request)
+    ws_id = _get_workspace_id(request, workspace_id)
 
     conn = await store.get_connection_decrypted(connection_id, fernet_key)
-    if conn is None or conn["workspace_id"] != workspace_id:
+    if conn is None or conn["workspace_id"] != ws_id:
         raise HTTPException(status_code=404, detail="Connection not found")
 
     connector_type = conn["connector_type"]
@@ -431,7 +443,7 @@ async def trigger_sync(
         connection_id=connection_id,
         connector_type=connector_type,
         config=conn["config"],
-        workspace_id=workspace_id,
+        workspace_id=ws_id,
         store=store,
     )
 
