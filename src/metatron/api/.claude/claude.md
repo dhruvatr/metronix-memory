@@ -69,11 +69,26 @@ In-memory conversation history keyed by `user_id` (thread-safe with `threading.L
 `POST /api/v1/admin/cleanup/{workspace_id}` — delete workspace data
 
 ### `routes/connections.py`
-Full CRUD for data-source connections + sync trigger.
-`GET/POST /api/v1/connections` — list / create
-`GET/PUT/DELETE /api/v1/connections/{id}` — read / update / delete
-`POST /api/v1/connections/{id}/sync` — trigger background sync via `BackgroundTasks`
-Uses module-level `ConnectorRegistry` singleton, Fernet-encrypts connector config.
+Full CRUD for DB-based connections + sync trigger. Uses `PostgresStore` for persistence,
+`connectors/schemas.py` for validation/masking, and Fernet encryption for credentials.
+
+**New DB-backed CRUD endpoints:**
+- `GET /api/v1/connections/schemas` — all connector schemas for UI form rendering
+- `POST /api/v1/connections` — create connection (validates config, encrypts, 201)
+- `GET /api/v1/connections` — list connections for workspace (masked secrets). Optional `?category=connector|channel` filter
+- `GET /api/v1/connections/{id}` — single connection (masked secrets, workspace-scoped)
+- `PUT /api/v1/connections/{id}` — update name/config/enabled (handles `***` secret merge)
+- `DELETE /api/v1/connections/{id}` — delete (204, workspace-scoped)
+- `POST /api/v1/connections/{id}/test` — test connection via `connector.configure()`. Updates error_message on failure
+- `POST /api/v1/connections/{id}/sync` — trigger background sync from DB config (connectors only, not channels)
+
+**Helpers:**
+- `_get_workspace_id(request)` — extracts from `request.state.user` or falls back to `settings.default_workspace_id`
+- `_get_fernet_key(request)` — from `settings.fernet_key` (500 if not set)
+- `_get_store(request)` — lazy-inits `PostgresStore` on `app.state.postgres`
+- `_run_connection_sync(...)` — background sync task for DB-based connections, updates connection status on completion
+
+**Workspace isolation:** all read/update/delete endpoints verify `workspace_id` matches the current user's workspace.
 
 ### `routes/documents.py`
 `GET /api/v1/documents/{document_id}/history` — paginated version history.

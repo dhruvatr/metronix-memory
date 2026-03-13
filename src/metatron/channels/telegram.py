@@ -16,7 +16,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatAction, ParseMode
 
 from metatron.agent.router import AgentRouter
-from metatron.core.config import Settings
 
 logger = structlog.get_logger()
 
@@ -35,11 +34,13 @@ class TelegramChannel:
         self,
         bot_token: str,
         router: AgentRouter,
-        settings: Settings | None = None,
+        workspace_id: str | None = None,
     ) -> None:
         self._token = bot_token
         self._router = router
-        self._settings = settings or Settings()
+        self._workspace_id = (
+            workspace_id or router._settings.default_workspace_id
+        )
         self._bot = Bot(
             token=bot_token,
             default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN),
@@ -123,7 +124,7 @@ class TelegramChannel:
                 content=content,
                 filename=filename,
                 user_id=user_id,
-                workspace_id=self._settings.default_workspace_id,
+                workspace_id=self._workspace_id,
             )
         except Exception as e:
             logger.error("telegram.document.error", error=str(e), exc_info=True)
@@ -156,7 +157,7 @@ class TelegramChannel:
                 self._router.route,
                 text=text,
                 user_id=user_id,
-                workspace_id=self._settings.default_workspace_id,
+                workspace_id=self._workspace_id,
             )
         except Exception as e:
             logger.error("telegram.route.error", error=str(e), exc_info=True)
