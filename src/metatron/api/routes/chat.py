@@ -337,7 +337,7 @@ def _ingest_text(
         "workspace_id": workspace_id,
         "user_id": user_id,
         "doc_label": doc_label,
-        "url": f"/api/v1/files/{file_id}/download?workspace_id={workspace_id}" if file_id else "",
+        "url": f"/api/v1/files/{file_id}/download?workspace_id={workspace_id}" if file_id and workspace_id else "",
     }
     if doc_date:
         metadata["date"] = doc_date
