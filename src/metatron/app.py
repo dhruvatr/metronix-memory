@@ -71,13 +71,14 @@ async def run_all() -> None:
             "app.env_migration.failed", error=str(exc),
         )
 
-    # Start channels from DB config
+    # Start channels from DB config (shared store instance)
     from metatron.channels.manager import ChannelManager
+    from metatron.storage.postgres import PostgresStore
 
-    channel_manager = ChannelManager(router=router)
+    store = PostgresStore(settings.postgres_dsn)
+    channel_manager = ChannelManager(router=router, store=store)
     try:
         started = await channel_manager.start_channels_from_db(
-            postgres_dsn=settings.postgres_dsn,
             fernet_key=settings.fernet_key,
             default_workspace_id=settings.default_workspace_id,
         )
@@ -95,6 +96,7 @@ async def run_all() -> None:
         await asyncio.gather(*tasks)
     finally:
         await channel_manager.stop_all()
+        await store.close()
 
 
 def main() -> None:

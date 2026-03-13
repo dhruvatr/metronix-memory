@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -374,7 +375,7 @@ async def test_connection(
         return TestConnectionResponse(success=True)
 
     except Exception as exc:
-        error_msg = str(exc)
+        error_msg = _sanitize_error(str(exc))
         logger.warning(
             "api.connections.test_failed",
             connection_id=connection_id,
@@ -446,14 +447,34 @@ async def trigger_sync(
 # ---------------------------------------------------------------------------
 
 
-def _run_connection_sync(
+def _sanitize_error(error: str) -> str:
+    """Remove sensitive info from error messages before storing/returning."""
+    # Mask URLs with credentials
+    error = re.sub(r"://[^:]+:[^@]+@", "://***:***@", error)
+    # Mask file paths
+    error = re.sub(r"/Users/[^\s]+", "/...", error)
+    error = re.sub(r"/home/[^\s]+", "/...", error)
+    # Mask tokens/keys that might appear in errors
+    error = re.sub(
+        r"(token|key|secret|password)[\s=:]+\S+",
+        r"\1=***",
+        error,
+        flags=re.IGNORECASE,
+    )
+    # Truncate to reasonable length
+    if len(error) > 500:
+        error = error[:500] + "..."
+    return error
+
+
+async def _run_connection_sync(
     connection_id: str,
     connector_type: str,
     config: dict[str, Any],
     workspace_id: str,
     store: PostgresStore,
 ) -> None:
-    """Run sync for a DB-based connection. Background task."""
+    """Run sync for a DB-based connection. Async background task."""
     import asyncio
     import time
     import uuid
@@ -489,17 +510,9 @@ def _run_connection_sync(
             connector_type=connector_type,
         )
 
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(
-                connector.configure(connection_obj, config),
-            )
-            documents = loop.run_until_complete(
-                connector.fetch(workspace_id),
-            )
-            documents_fetched = len(documents)
-        finally:
-            loop.close()
+        await connector.configure(connection_obj, config)
+        documents = await connector.fetch(workspace_id)
+        documents_fetched = len(documents)
 
         logger.info(
             "sync.fetched",
@@ -509,8 +522,9 @@ def _run_connection_sync(
         )
 
         if documents:
-            result = ingest_documents(
-                documents, workspace_id, connector_type,
+            # ingest_documents is sync — run in thread pool
+            result = await asyncio.to_thread(
+                ingest_documents, documents, workspace_id, connector_type,
             )
             documents_new = result.documents_new
             documents_updated = result.documents_updated
@@ -520,7 +534,10 @@ def _run_connection_sync(
             )
 
             if result.errors:
-                errors_list = [str(e) for e in result.errors[:10]]
+                errors_list = [
+                    _sanitize_error(str(e))
+                    for e in result.errors[:10]
+                ]
                 status = (
                     "partial" if result.documents_new > 0 else "failed"
                 )
@@ -536,7 +553,7 @@ def _run_connection_sync(
             connection_id=connection_id,
             error=str(e),
         )
-        errors_list = [str(e)]
+        errors_list = [_sanitize_error(str(e))]
         status = "failed"
 
     finally:
@@ -550,18 +567,12 @@ def _run_connection_sync(
             "; ".join(errors_list) if errors_list else None
         )
         try:
-            loop2 = asyncio.new_event_loop()
-            try:
-                loop2.run_until_complete(
-                    store.update_connection_status(
-                        connection_id,
-                        status=final_status,
-                        error_message=error_msg,
-                        last_synced_at=datetime.now(UTC),
-                    ),
-                )
-            finally:
-                loop2.close()
+            await store.update_connection_status(
+                connection_id,
+                status=final_status,
+                error_message=error_msg,
+                last_synced_at=datetime.now(UTC),
+            )
         except Exception as e:
             logger.warning(
                 "sync.status_update_failed",
@@ -569,34 +580,37 @@ def _run_connection_sync(
                 error=str(e),
             )
 
-        # Log sync result
+        # Log sync result (sync ORM — run in thread pool)
         try:
-            with get_session() as session:
-                sync_log = SyncLogRow(
-                    id=sync_id,
-                    workspace_id=workspace_id,
-                    connection_id=connection_id,
-                    connector_type=connector_type,
-                    status=status,
-                    documents_fetched=documents_fetched,
-                    documents_new=documents_new,
-                    documents_updated=documents_updated,
-                    documents_skipped=documents_skipped,
-                    errors=errors_list,
-                    duration_ms=duration_ms,
-                    source_title=(
-                        f"{connector_type.capitalize()} Sync"
-                    ),
-                    qdrant_chunks=qdrant_chunks,
-                    created_at=datetime.now(UTC),
-                )
-                session.add(sync_log)
-                logger.info(
-                    "sync.logged",
-                    sync_id=sync_id,
-                    status=status,
-                    duration_ms=duration_ms,
-                )
+            def _write_sync_log() -> None:
+                with get_session() as session:
+                    sync_log = SyncLogRow(
+                        id=sync_id,
+                        workspace_id=workspace_id,
+                        connection_id=connection_id,
+                        connector_type=connector_type,
+                        status=status,
+                        documents_fetched=documents_fetched,
+                        documents_new=documents_new,
+                        documents_updated=documents_updated,
+                        documents_skipped=documents_skipped,
+                        errors=errors_list,
+                        duration_ms=duration_ms,
+                        source_title=(
+                            f"{connector_type.capitalize()} Sync"
+                        ),
+                        qdrant_chunks=qdrant_chunks,
+                        created_at=datetime.now(UTC),
+                    )
+                    session.add(sync_log)
+
+            await asyncio.to_thread(_write_sync_log)
+            logger.info(
+                "sync.logged",
+                sync_id=sync_id,
+                status=status,
+                duration_ms=duration_ms,
+            )
         except Exception as e:
             logger.warning(
                 "sync.log_failed", sync_id=sync_id, error=str(e),

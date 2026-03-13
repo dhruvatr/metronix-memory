@@ -9,11 +9,13 @@ channel startup.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 import structlog
 
 from metatron.agent.router import AgentRouter
+from metatron.storage.postgres import PostgresStore
 
 logger = structlog.get_logger()
 
@@ -23,17 +25,33 @@ logger = structlog.get_logger()
 _CHANNEL_TYPES = frozenset({"telegram", "discord", "slack"})
 
 
+def _sanitize_error(error: str) -> str:
+    """Remove sensitive info from error messages before logging."""
+    error = re.sub(r"://[^:]+:[^@]+@", "://***:***@", error)
+    error = re.sub(r"/Users/[^\s]+", "/...", error)
+    error = re.sub(r"/home/[^\s]+", "/...", error)
+    error = re.sub(
+        r"(token|key|secret|password)[\s=:]+\S+",
+        r"\1=***",
+        error,
+        flags=re.IGNORECASE,
+    )
+    if len(error) > 500:
+        error = error[:500] + "..."
+    return error
+
+
 class ChannelManager:
     """Manages dynamic start/stop of messaging channels based on DB config."""
 
-    def __init__(self, router: AgentRouter) -> None:
+    def __init__(self, router: AgentRouter, store: PostgresStore) -> None:
         self._router = router
+        self._store = store
         self._running: dict[str, Any] = {}  # connection_id → channel instance
         self._tasks: dict[str, asyncio.Task] = {}  # connection_id → task
 
     async def start_channels_from_db(
         self,
-        postgres_dsn: str,
         fernet_key: str,
         default_workspace_id: str,
     ) -> int:
@@ -46,15 +64,10 @@ class ChannelManager:
             return 0
 
         from metatron.connectors.schemas import CONNECTOR_SCHEMAS
-        from metatron.storage.postgres import PostgresStore
 
-        store = PostgresStore(postgres_dsn)
-        try:
-            connections = await store.list_connections(
-                default_workspace_id, fernet_key,
-            )
-        finally:
-            await store.close()
+        connections = await self._store.list_connections(
+            default_workspace_id, fernet_key,
+        )
 
         started = 0
         for conn in connections:
@@ -71,13 +84,9 @@ class ChannelManager:
                 continue
 
             # Need decrypted config for tokens
-            store2 = PostgresStore(postgres_dsn)
-            try:
-                decrypted = await store2.get_connection_decrypted(
-                    conn["id"], fernet_key,
-                )
-            finally:
-                await store2.close()
+            decrypted = await self._store.get_connection_decrypted(
+                conn["id"], fernet_key,
+            )
 
             if not decrypted:
                 logger.warning(
@@ -86,9 +95,12 @@ class ChannelManager:
                 )
                 continue
 
+            workspace_id = conn.get("workspace_id", default_workspace_id)
+
             try:
                 await self.start_channel(
                     conn["id"], ctype, decrypted["config"],
+                    workspace_id=workspace_id,
                 )
                 started += 1
             except Exception as exc:
@@ -96,7 +108,7 @@ class ChannelManager:
                     "channel_manager.start_failed",
                     connection_id=conn["id"],
                     connector_type=ctype,
-                    error=str(exc),
+                    error=_sanitize_error(str(exc)),
                     exc_info=True,
                 )
 
@@ -108,6 +120,7 @@ class ChannelManager:
         connection_id: str,
         connector_type: str,
         config: dict,
+        workspace_id: str | None = None,
     ) -> None:
         """Start a single channel with the given decrypted config."""
         if connection_id in self._running:
@@ -117,7 +130,10 @@ class ChannelManager:
             )
             return
 
-        channel = _create_channel(connector_type, config, self._router)
+        channel = _create_channel(
+            connector_type, config, self._router,
+            workspace_id=workspace_id,
+        )
         self._running[connection_id] = channel
 
         task = asyncio.create_task(
@@ -144,7 +160,7 @@ class ChannelManager:
             logger.warning(
                 "channel_manager.stop_error",
                 connection_id=connection_id,
-                error=str(exc),
+                error=_sanitize_error(str(exc)),
             )
 
         if task and not task.done():
@@ -171,10 +187,14 @@ class ChannelManager:
         connection_id: str,
         connector_type: str,
         config: dict,
+        workspace_id: str | None = None,
     ) -> None:
         """Stop and restart a channel with new config."""
         await self.stop_channel(connection_id)
-        await self.start_channel(connection_id, connector_type, config)
+        await self.start_channel(
+            connection_id, connector_type, config,
+            workspace_id=workspace_id,
+        )
 
     @property
     def running_count(self) -> int:
@@ -186,7 +206,10 @@ class ChannelManager:
 
 
 def _create_channel(
-    connector_type: str, config: dict, router: AgentRouter,
+    connector_type: str,
+    config: dict,
+    router: AgentRouter,
+    workspace_id: str | None = None,
 ) -> Any:
     """Create a channel instance from type and config dict."""
     if connector_type == "telegram":
@@ -196,7 +219,9 @@ def _create_channel(
         if not bot_token:
             msg = "Telegram bot_token is required"
             raise ValueError(msg)
-        return TelegramChannel(bot_token=bot_token, router=router)
+        return TelegramChannel(
+            bot_token=bot_token, router=router, workspace_id=workspace_id,
+        )
 
     if connector_type == "discord":
         from metatron.channels.discord import DiscordChannel
@@ -205,7 +230,9 @@ def _create_channel(
         if not bot_token:
             msg = "Discord bot_token is required"
             raise ValueError(msg)
-        return DiscordChannel(bot_token=bot_token, router=router)
+        return DiscordChannel(
+            bot_token=bot_token, router=router, workspace_id=workspace_id,
+        )
 
     if connector_type == "slack":
         from metatron.channels.slack import SlackChannel
@@ -217,6 +244,7 @@ def _create_channel(
             raise ValueError(msg)
         return SlackChannel(
             bot_token=bot_token, app_token=app_token, router=router,
+            workspace_id=workspace_id,
         )
 
     msg = f"Unknown channel type: {connector_type}"
@@ -236,6 +264,6 @@ async def _run_channel_safe(
             "channel_manager.channel_crashed",
             connection_id=connection_id,
             connector_type=connector_type,
-            error=str(exc),
+            error=_sanitize_error(str(exc)),
             exc_info=True,
         )
