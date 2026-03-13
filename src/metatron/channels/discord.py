@@ -13,7 +13,6 @@ import discord
 import structlog
 
 from metatron.agent.router import AgentRouter
-from metatron.core.config import Settings
 
 logger = structlog.get_logger()
 
@@ -32,11 +31,13 @@ class DiscordChannel:
         self,
         bot_token: str,
         router: AgentRouter,
-        settings: Settings | None = None,
+        workspace_id: str | None = None,
     ) -> None:
         self._token = bot_token
         self._router = router
-        self._settings = settings or Settings()
+        self._workspace_id = (
+            workspace_id or router._settings.default_workspace_id
+        )
 
         intents = discord.Intents.default()
         intents.message_content = True
@@ -97,7 +98,7 @@ class DiscordChannel:
                     self._router.route,
                     text=text,
                     user_id=user_id,
-                    workspace_id=self._settings.default_workspace_id,
+                    workspace_id=self._workspace_id,
                 )
             except Exception as e:
                 logger.error("discord.route.error", error=str(e), exc_info=True)
@@ -137,7 +138,7 @@ class DiscordChannel:
                         content=content,
                         filename=attachment.filename,
                         user_id=user_id,
-                        workspace_id=self._settings.default_workspace_id,
+                        workspace_id=self._workspace_id,
                     )
                 except Exception as e:
                     logger.error(

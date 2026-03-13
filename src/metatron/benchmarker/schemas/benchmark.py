@@ -104,8 +104,8 @@ class GenerateRequest(BaseModel):
     """Request body for POST /generate."""
 
     workspace_id: str = Field(..., description="Target workspace ID")
+    connection_id: str = Field(..., description="DB connection ID to sample documents from")
     num_questions: int = Field(default=10, ge=1, description="Number of questions to generate")
-    source: str = Field(..., description="Document source (jira / confluence)")
     num_clusters: Optional[int] = Field(None, ge=1, description="Number of clusters for question generation")
 
 

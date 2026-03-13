@@ -70,6 +70,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.error("migrations.failed", error=str(exc))
 
+    # One-time migration: env-var credentials → DB connections (idempotent)
+    try:
+        from metatron.storage.migrate_env_connections import migrate_env_to_db
+
+        mig = await migrate_env_to_db(
+            postgres_dsn=settings.postgres_dsn,
+            workspace_id=settings.default_workspace_id,
+            fernet_key=settings.fernet_key,
+        )
+        if mig["created"]:
+            logger.info("env_migration.done", created=mig["created"])
+    except Exception as exc:
+        logger.warning("env_migration.failed", error=str(exc))
+
     # TODO: initialize stores and services
     # app.state.postgres = PostgresStore(settings.postgres_dsn)
     # app.state.qdrant = QdrantVectorStore(...)

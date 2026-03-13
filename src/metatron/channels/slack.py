@@ -16,7 +16,6 @@ from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from metatron.agent.router import AgentRouter
-from metatron.core.config import Settings
 
 logger = structlog.get_logger()
 
@@ -36,12 +35,14 @@ class SlackChannel:
         bot_token: str,
         app_token: str,
         router: AgentRouter,
-        settings: Settings | None = None,
+        workspace_id: str | None = None,
     ) -> None:
         self._bot_token = bot_token
         self._app_token = app_token
         self._router = router
-        self._settings = settings or Settings()
+        self._workspace_id = (
+            workspace_id or router._settings.default_workspace_id
+        )
 
         self._app = AsyncApp(token=bot_token)
         self._handler: AsyncSocketModeHandler | None = None
@@ -111,7 +112,7 @@ class SlackChannel:
                 self._router.route,
                 text=text,
                 user_id=user_id,
-                workspace_id=self._settings.default_workspace_id,
+                workspace_id=self._workspace_id,
             )
         except Exception as e:
             logger.error("slack.route.error", error=str(e), exc_info=True)
@@ -166,7 +167,7 @@ class SlackChannel:
                     content=content,
                     filename=filename,
                     user_id=user_id,
-                    workspace_id=self._settings.default_workspace_id,
+                    workspace_id=self._workspace_id,
                 )
             except Exception as e:
                 logger.error(

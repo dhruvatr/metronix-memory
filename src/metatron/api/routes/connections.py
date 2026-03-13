@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
+from typing import Any
+
 import structlog
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from metatron.connectors.registry import ConnectorRegistry, register_builtins
+from metatron.connectors.schemas import (
+    CONNECTOR_SCHEMAS,
+    validate_config,
+)
 from metatron.core.config import Settings
 from metatron.core.models import Connection
+from metatron.storage.postgres import PostgresStore
 
 logger = structlog.get_logger()
 
@@ -26,145 +34,426 @@ def _get_registry() -> ConnectorRegistry:
     return _registry
 
 
-class ConnectionCreate(BaseModel):
+# ---------------------------------------------------------------------------
+# Pydantic request/response models
+# ---------------------------------------------------------------------------
+
+
+class CreateConnectionRequest(BaseModel):
     """Request body for creating a connection."""
 
     model_config = ConfigDict(strict=True)
 
-    workspace_id: str
     connector_type: str
-    config: dict[str, str]  # will be encrypted before storage
+    name: str
+    config: dict[str, Any]
+
+
+class UpdateConnectionRequest(BaseModel):
+    """Request body for updating a connection."""
+
+    model_config = ConfigDict(strict=True)
+
+    name: str | None = None
+    config: dict[str, Any] | None = None
+    enabled: bool | None = None
 
 
 class ConnectionResponse(BaseModel):
-    """Response body for a connection (config is NOT returned)."""
-
-    model_config = ConfigDict(strict=True)
+    """Response body for a connection (config has masked secrets)."""
 
     id: str
     workspace_id: str
     connector_type: str
+    name: str
+    config: dict[str, Any]
     status: str
+    enabled: bool
+    error_message: str | None
     last_synced_at: str | None
+    created_at: str | None
+    updated_at: str | None
 
 
-class SyncRequest(BaseModel):
-    """Optional request body for sync trigger."""
+class TestConnectionResponse(BaseModel):
+    """Response body for connection test."""
 
-    model_config = ConfigDict(strict=True)
-
-    workspace_id: str | None = None
-
-
-@router.get("/")
-async def list_connections(workspace_id: str) -> list[ConnectionResponse]:
-    """List all connections for a workspace."""
-    logger.info("api.connections.list", workspace_id=workspace_id)
-    # TODO: implement with PostgreSQL
-    return []
+    success: bool
+    message: str | None = None
+    error: str | None = None
 
 
-@router.post("/", status_code=201)
-async def create_connection(body: ConnectionCreate) -> ConnectionResponse:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_workspace_id(request: Request) -> str:
+    """Extract workspace_id from request.state.user (set by middleware)."""
+    user = getattr(request.state, "user", {}) or {}
+    workspace_ids = user.get("workspace_ids", [])
+    if workspace_ids:
+        return workspace_ids[0]
+    settings: Settings = request.app.state.settings
+    return settings.default_workspace_id
+
+
+def _get_fernet_key(request: Request) -> str:
+    """Get Fernet encryption key from settings."""
+    settings: Settings = request.app.state.settings
+    if not settings.fernet_key:
+        raise HTTPException(
+            status_code=500,
+            detail="FERNET_KEY not configured. Set the FERNET_KEY env var.",
+        )
+    return settings.fernet_key
+
+
+def _get_store(request: Request) -> PostgresStore:
+    """Get PostgresStore from app state."""
+    store = getattr(request.app.state, "postgres", None)
+    if store is None:
+        settings: Settings = request.app.state.settings
+        store = PostgresStore(settings.postgres_dsn)
+        request.app.state.postgres = store
+    return store
+
+
+# ---------------------------------------------------------------------------
+# New CRUD endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/schemas")
+async def get_schemas() -> dict[str, Any]:
+    """Return all connector schemas for UI form rendering."""
+    schemas = {}
+    for key, schema in CONNECTOR_SCHEMAS.items():
+        schemas[key] = {
+            "type": schema.type,
+            "label": schema.label,
+            "category": schema.category,
+            "fields": [asdict(f) for f in schema.fields],
+        }
+    return {"schemas": schemas}
+
+
+@router.post("/", status_code=201, response_model=ConnectionResponse)
+async def create_connection(
+    body: CreateConnectionRequest,
+    request: Request,
+) -> ConnectionResponse:
     """Create a new data source connection.
 
-    Encrypts the config before storing. Validates the connector
-    type exists in the registry.
+    Validates the connector type and config, encrypts credentials,
+    and stores in PostgreSQL.
     """
     logger.info("api.connections.create", connector_type=body.connector_type)
-    registry = _get_registry()
-    if not registry.is_registered(body.connector_type):
-        available = registry.list_available()
+
+    if body.connector_type not in CONNECTOR_SCHEMAS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown connector type '{body.connector_type}'. Available: {available}",
+            detail=(
+                f"Unknown connector type '{body.connector_type}'. "
+                f"Available: {sorted(CONNECTOR_SCHEMAS.keys())}"
+            ),
         )
-    # TODO: encrypt body.config with Fernet and persist to PostgreSQL
-    raise HTTPException(status_code=501, detail="Not yet implemented")
+
+    errors = validate_config(body.connector_type, body.config)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
+    workspace_id = _get_workspace_id(request)
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+
+    result = await store.create_connection(
+        workspace_id=workspace_id,
+        connector_type=body.connector_type,
+        name=body.name,
+        config=body.config,
+        fernet_key=fernet_key,
+    )
+    return ConnectionResponse(**result)
+
+
+@router.get("/", response_model=dict)
+async def list_connections(
+    request: Request,
+    category: str | None = None,
+) -> dict[str, Any]:
+    """List all connections for the current workspace.
+
+    Optionally filter by category ('connector' or 'channel').
+    """
+    workspace_id = _get_workspace_id(request)
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+
+    logger.info("api.connections.list", workspace_id=workspace_id)
+    connections = await store.list_connections(workspace_id, fernet_key)
+
+    if category:
+        if category not in ("connector", "channel"):
+            raise HTTPException(
+                status_code=400,
+                detail="category must be 'connector' or 'channel'",
+            )
+        connections = [
+            c for c in connections
+            if CONNECTOR_SCHEMAS.get(c["connector_type"], None)
+            and CONNECTOR_SCHEMAS[c["connector_type"]].category == category
+        ]
+
+    return {"connections": connections}
+
+
+@router.get(
+    "/{connection_id}",
+    response_model=ConnectionResponse,
+)
+async def get_connection(
+    connection_id: str,
+    request: Request,
+) -> ConnectionResponse:
+    """Get a single connection by ID with masked secrets."""
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+    workspace_id = _get_workspace_id(request)
+
+    conn = await store.get_connection(connection_id, fernet_key)
+    if conn is None or conn["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    return ConnectionResponse(**conn)
+
+
+@router.put(
+    "/{connection_id}",
+    response_model=ConnectionResponse,
+)
+async def update_connection(
+    connection_id: str,
+    body: UpdateConnectionRequest,
+    request: Request,
+) -> ConnectionResponse:
+    """Update a connection's config, name, or enabled status."""
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+    workspace_id = _get_workspace_id(request)
+
+    # Verify ownership
+    existing = await store.get_connection(connection_id, fernet_key)
+    if existing is None or existing["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    updates: dict[str, Any] = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.enabled is not None:
+        updates["enabled"] = body.enabled
+    if body.config is not None:
+        errors = validate_config(
+            existing["connector_type"], body.config,
+        )
+        # Allow masked secrets through validation (they'll be merged)
+        from metatron.connectors.schemas import SECRET_MASK
+        if errors:
+            # Re-check: are all errors for fields that are masked?
+            real_errors = []
+            for err in errors:
+                # Check if the error is for a secret field that has mask
+                skip = False
+                schema = CONNECTOR_SCHEMAS.get(existing["connector_type"])
+                if schema:
+                    for f in schema.fields:
+                        if (
+                            f.label in err
+                            and f.type == "secret"
+                            and body.config.get(f.name) == SECRET_MASK
+                        ):
+                            skip = True
+                            break
+                if not skip:
+                    real_errors.append(err)
+            if real_errors:
+                raise HTTPException(
+                    status_code=422, detail="; ".join(real_errors),
+                )
+        updates["config"] = body.config
+
+    if not updates:
+        raise HTTPException(
+            status_code=422, detail="No fields to update",
+        )
+
+    try:
+        result = await store.update_connection(
+            connection_id, updates, fernet_key,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    return ConnectionResponse(**result)
+
+
+@router.delete("/{connection_id}", status_code=204)
+async def delete_connection(
+    connection_id: str,
+    request: Request,
+) -> None:
+    """Delete a connection and its encrypted credentials."""
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+    workspace_id = _get_workspace_id(request)
+
+    # Verify ownership
+    existing = await store.get_connection(connection_id, fernet_key)
+    if existing is None or existing["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    logger.info("api.connections.delete", connection_id=connection_id)
+    await store.delete_connection(connection_id)
+
+
+@router.post(
+    "/{connection_id}/test",
+    response_model=TestConnectionResponse,
+)
+async def test_connection(
+    connection_id: str,
+    request: Request,
+) -> TestConnectionResponse:
+    """Test a connection by attempting to configure the connector."""
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+    workspace_id = _get_workspace_id(request)
+
+    conn = await store.get_connection_decrypted(connection_id, fernet_key)
+    if conn is None or conn["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    connector_type = conn["connector_type"]
+    schema = CONNECTOR_SCHEMAS.get(connector_type)
+    if not schema or schema.category != "connector":
+        # Channels don't have a testable configure() flow
+        return TestConnectionResponse(
+            success=True,
+            message=(
+                "Connection saved "
+                "(test not available for this type)"
+            ),
+        )
+
+    registry = _get_registry()
+    if not registry.is_registered(connector_type):
+        return TestConnectionResponse(
+            success=True,
+            message=(
+                "Connection saved "
+                "(test not available for this type)"
+            ),
+        )
+
+    try:
+        connector = registry.create(connector_type)
+        connection_obj = Connection(
+            id=conn["id"],
+            workspace_id=conn["workspace_id"],
+            connector_type=connector_type,
+        )
+        await connector.configure(connection_obj, conn["config"])
+
+        # Clear error on success
+        await store.update_connection_status(
+            connection_id, status="active", error_message=None,
+        )
+        return TestConnectionResponse(success=True)
+
+    except Exception as exc:
+        error_msg = str(exc)
+        logger.warning(
+            "api.connections.test_failed",
+            connection_id=connection_id,
+            error=error_msg,
+        )
+        await store.update_connection_status(
+            connection_id,
+            status="error",
+            error_message=error_msg,
+        )
+        return TestConnectionResponse(success=False, error=error_msg)
 
 
 @router.post("/{connection_id}/sync")
 async def trigger_sync(
     connection_id: str,
+    request: Request,
     background_tasks: BackgroundTasks,
-    body: SyncRequest | None = None,
 ) -> dict[str, str]:
-    """Trigger a manual sync for a connection.
+    """Trigger a manual sync for a DB-based connection.
 
-    Starts the sync in the background and returns immediately.
+    Only works for connectors (not channels). Starts sync
+    in the background and returns 202 Accepted.
     """
-    logger.info("api.connections.sync", connection_id=connection_id)
-    # TODO: fetch connection from DB, decrypt config, run in background
-    # For now, support env-based connector config for quick sync
-    raise HTTPException(status_code=501, detail="Not yet implemented")
+    fernet_key = _get_fernet_key(request)
+    store = _get_store(request)
+    workspace_id = _get_workspace_id(request)
+
+    conn = await store.get_connection_decrypted(connection_id, fernet_key)
+    if conn is None or conn["workspace_id"] != workspace_id:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    connector_type = conn["connector_type"]
+    schema = CONNECTOR_SCHEMAS.get(connector_type)
+    if not schema or schema.category != "connector":
+        raise HTTPException(
+            status_code=400,
+            detail="Sync is only available for connectors, not channels",
+        )
+
+    if not conn.get("enabled", True):
+        raise HTTPException(
+            status_code=400, detail="Connection is disabled",
+        )
+
+    # Mark as syncing
+    await store.update_connection_status(
+        connection_id, status="syncing",
+    )
+
+    background_tasks.add_task(
+        _run_connection_sync,
+        connection_id=connection_id,
+        connector_type=connector_type,
+        config=conn["config"],
+        workspace_id=workspace_id,
+        store=store,
+    )
+
+    return {
+        "status": "sync_started",
+        "connection_id": connection_id,
+        "connector_type": connector_type,
+    }
 
 
-@router.post("/sync/{connector_type}")
-async def trigger_sync_by_type(
+# ---------------------------------------------------------------------------
+# Background task helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_connection_sync(
+    connection_id: str,
     connector_type: str,
-    background_tasks: BackgroundTasks,
-) -> dict[str, str]:
-    """Trigger a sync using env-based config (no DB connection required).
-
-    Useful for dev/testing: reads connector credentials from environment.
-    """
-    registry = _get_registry()
-    if not registry.is_registered(connector_type):
-        available = registry.list_available()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown connector type '{connector_type}'. Available: {available}",
-        )
-
-    settings = Settings()
-    config = _config_from_env(connector_type, settings)
-    if not config:
-        raise HTTPException(
-            status_code=400,
-            detail=f"No environment config found for '{connector_type}'. Set the relevant env vars.",
-        )
-
-    workspace_id = settings.default_workspace_id
-    background_tasks.add_task(_run_sync, connector_type, config, workspace_id)
-
-    return {"status": "sync_started", "connector_type": connector_type, "workspace_id": workspace_id}
-
-
-def _config_from_env(connector_type: str, settings: Settings) -> dict[str, str]:
-    """Build connector config dict from environment variables."""
-    if connector_type == "confluence":
-        if not settings.confluence_url:
-            return {}
-        return {
-            "url": settings.confluence_url,
-            "username": settings.confluence_username,
-            "api_token": settings.confluence_api_token,
-            "space_key": settings.confluence_space_key,
-        }
-    if connector_type == "jira":
-        if not settings.jira_url:
-            return {}
-        return {
-            "url": settings.jira_url,
-            "username": settings.jira_username,
-            "api_token": settings.jira_api_token,
-            "project_key": settings.jira_project_key,
-        }
-    if connector_type == "notion":
-        if not settings.notion_api_token:
-            return {}
-        return {
-            "api_token": settings.notion_api_token,
-        }
-    return {}
-
-
-def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) -> None:
-    """Run a connector sync: fetch → ingest. Runs as a background task.
-
-    This is a regular (non-async) function so FastAPI runs it in a thread pool,
-    preventing the blocking atlassian-python-api HTTP calls from freezing the event loop.
-    """
+    config: dict[str, Any],
+    workspace_id: str,
+    store: PostgresStore,
+) -> None:
+    """Run sync for a DB-based connection. Background task."""
     import asyncio
     import time
     import uuid
@@ -184,64 +473,109 @@ def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) ->
     qdrant_chunks = 0
     errors_list: list[str] = []
 
-    logger.info("sync.started", sync_id=sync_id, connector_type=connector_type, workspace_id=workspace_id)
+    logger.info(
+        "sync.db_connection.started",
+        sync_id=sync_id,
+        connection_id=connection_id,
+        connector_type=connector_type,
+    )
     try:
         registry = _get_registry()
         connector = registry.create(connector_type)
 
-        connection = Connection(
+        connection_obj = Connection(
+            id=connection_id,
             workspace_id=workspace_id,
             connector_type=connector_type,
         )
 
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(connector.configure(connection, config))
-            documents = loop.run_until_complete(connector.fetch(workspace_id))
+            loop.run_until_complete(
+                connector.configure(connection_obj, config),
+            )
+            documents = loop.run_until_complete(
+                connector.fetch(workspace_id),
+            )
             documents_fetched = len(documents)
         finally:
             loop.close()
 
-        logger.info("sync.fetched", sync_id=sync_id, connector_type=connector_type, documents=documents_fetched)
+        logger.info(
+            "sync.fetched",
+            sync_id=sync_id,
+            connector_type=connector_type,
+            documents=documents_fetched,
+        )
 
         if documents:
-            result = ingest_documents(documents, workspace_id, connector_type)
+            result = ingest_documents(
+                documents, workspace_id, connector_type,
+            )
             documents_new = result.documents_new
             documents_updated = result.documents_updated
             documents_skipped = result.documents_skipped
-            qdrant_chunks = result.documents_new + result.documents_updated
-            
+            qdrant_chunks = (
+                result.documents_new + result.documents_updated
+            )
+
             if result.errors:
-                errors_list = [str(e) for e in result.errors[:10]]  # Limit to 10 errors
-                status = "partial" if result.documents_new > 0 else "failed"
+                errors_list = [str(e) for e in result.errors[:10]]
+                status = (
+                    "partial" if result.documents_new > 0 else "failed"
+                )
             else:
                 status = "success"
-            
-            logger.info("sync.ingested",
-                        sync_id=sync_id,
-                        connector_type=connector_type,
-                        new=result.documents_new,
-                        skipped=result.documents_skipped,
-                        errors=len(result.errors),
-                        status=status)
         else:
-            status = "success"  # No documents is not an error
-            logger.info("sync.no_documents", sync_id=sync_id, connector_type=connector_type)
+            status = "success"
 
     except Exception as e:
-        logger.error("sync.failed", sync_id=sync_id, connector_type=connector_type, error=str(e))
+        logger.error(
+            "sync.db_connection.failed",
+            sync_id=sync_id,
+            connection_id=connection_id,
+            error=str(e),
+        )
         errors_list = [str(e)]
         status = "failed"
-    
+
     finally:
-        # Log sync result to database
         duration_ms = (time.perf_counter() - start_time) * 1000
+
+        # Update connection status
+        final_status = (
+            "active" if status == "success" else "error"
+        )
+        error_msg = (
+            "; ".join(errors_list) if errors_list else None
+        )
+        try:
+            loop2 = asyncio.new_event_loop()
+            try:
+                loop2.run_until_complete(
+                    store.update_connection_status(
+                        connection_id,
+                        status=final_status,
+                        error_message=error_msg,
+                        last_synced_at=datetime.now(UTC),
+                    ),
+                )
+            finally:
+                loop2.close()
+        except Exception as e:
+            logger.warning(
+                "sync.status_update_failed",
+                connection_id=connection_id,
+                error=str(e),
+            )
+
+        # Log sync result
         try:
             with get_session() as session:
                 sync_log = SyncLogRow(
                     id=sync_id,
                     workspace_id=workspace_id,
-                    connection_id=None,  # NULL for env-based syncs
+                    connection_id=connection_id,
                     connector_type=connector_type,
                     status=status,
                     documents_fetched=documents_fetched,
@@ -250,20 +584,20 @@ def _run_sync(connector_type: str, config: dict[str, str], workspace_id: str) ->
                     documents_skipped=documents_skipped,
                     errors=errors_list,
                     duration_ms=duration_ms,
-                    source_title=f"{connector_type.capitalize()} Sync",
+                    source_title=(
+                        f"{connector_type.capitalize()} Sync"
+                    ),
                     qdrant_chunks=qdrant_chunks,
                     created_at=datetime.now(UTC),
                 )
                 session.add(sync_log)
-                # Context manager auto-commits on exit
-                logger.info("sync.logged", sync_id=sync_id, status=status, duration_ms=duration_ms)
+                logger.info(
+                    "sync.logged",
+                    sync_id=sync_id,
+                    status=status,
+                    duration_ms=duration_ms,
+                )
         except Exception as e:
-            logger.warning("sync.log_failed", sync_id=sync_id, error=str(e))
-
-
-@router.delete("/{connection_id}", status_code=204)
-async def delete_connection(connection_id: str) -> None:
-    """Delete a connection and its encrypted credentials."""
-    logger.info("api.connections.delete", connection_id=connection_id)
-    # TODO: implement
-    raise HTTPException(status_code=501, detail="Not yet implemented")
+            logger.warning(
+                "sync.log_failed", sync_id=sync_id, error=str(e),
+            )
