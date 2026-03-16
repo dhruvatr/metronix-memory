@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query
 from neo4j.exceptions import ServiceUnavailable, SessionExpired
 from pydantic import BaseModel
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/graph", tags=["graph"])
 
@@ -46,6 +49,14 @@ async def graph_overview(
     except (ServiceUnavailable, SessionExpired, ConnectionError,
             BrokenPipeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"Memgraph unavailable: {exc}")
+    except Exception as exc:
+        logger.error(
+            "api.graph.overview.error",
+            workspace_id=workspace_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(status_code=502, detail=f"Graph query failed: {exc}")
 
     return GraphResponse(
         nodes=[GraphNode(**n) for n in data["nodes"]],
@@ -71,6 +82,15 @@ async def graph_expand(
     except (ServiceUnavailable, SessionExpired, ConnectionError,
             BrokenPipeError, OSError) as exc:
         raise HTTPException(status_code=502, detail=f"Memgraph unavailable: {exc}")
+    except Exception as exc:
+        logger.error(
+            "api.graph.expand.error",
+            entity_id=entity_id,
+            workspace_id=workspace_id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(status_code=502, detail=f"Graph query failed: {exc}")
 
     return GraphResponse(
         nodes=[GraphNode(**n) for n in data["nodes"]],

@@ -122,9 +122,8 @@ class TestGraphDeleteDocumentNode:
         cypher = mock_session.run.call_args[0][0]
         assert "DETACH DELETE" in cypher
         assert "doc_label" in cypher
-        params = mock_session.run.call_args[0][1]
-        assert params["dl"] == "DOC-1"
-        assert params["ws"] == "MTRNIX"
+        assert "'DOC-1'" in cypher
+        assert "'MTRNIX'" in cypher
 
 
 # ---------------------------------------------------------------------------

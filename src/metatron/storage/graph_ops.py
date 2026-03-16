@@ -1,6 +1,8 @@
 """Memgraph graph query/read operations (workspace-aware).
 
 Migrated from PoC: metatron_experiments/metatron/indexers/memgraph_workspace.py
+
+All queries use single-field RETURN for Memgraph 2.18.1 compatibility.
 """
 # TODO: async migration
 from __future__ import annotations
@@ -8,7 +10,9 @@ from typing import Dict, List, Optional
 
 import structlog
 
-from metatron.storage.memgraph import get_memgraph_driver, memgraph_retry, DEFAULT_WORKSPACE_ID
+from metatron.storage.memgraph import (
+    get_memgraph_driver, memgraph_retry, DEFAULT_WORKSPACE_ID, _esc, _esc_list,
+)
 
 logger = structlog.get_logger()
 
@@ -20,40 +24,74 @@ def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
 
 
 @memgraph_retry()
-def get_graph_entities(texts: List[str], workspace_id: Optional[str] = None) -> List[Dict]:
+def get_graph_entities(texts: List[str],
+                       workspace_id: Optional[str] = None) -> List[Dict]:
     """Get entities mentioned in documents matching given texts."""
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
     with driver.session() as s:
+        # Step 1: get entities mentioned by matching documents
         if workspace_id == DEFAULT_WORKSPACE_ID:
             ent_res = s.run(
                 "MATCH (d:Document)-[:MENTIONS]->(e:Entity) "
-                "WHERE d.raw_text IN $texts "
-                "AND (d.workspace_id = $ws OR d.workspace_id IS NULL) "
-                "OPTIONAL MATCH (e)-[:ALIAS]-(alias:Entity) "
-                "WITH e, alias "
-                "RETURN DISTINCT e.name AS name, e.type AS type, "
-                "COLLECT(DISTINCT alias.name) AS aliases",
-                {"texts": texts, "ws": workspace_id},
+                f"WHERE d.raw_text IN {_esc_list(texts)} "
+                f"AND (d.workspace_id = {_esc(workspace_id)} "
+                "OR d.workspace_id IS NULL) "
+                "RETURN DISTINCT e",
             )
         else:
             ent_res = s.run(
                 "MATCH (d:Document)-[:MENTIONS]->(e:Entity) "
-                "WHERE d.raw_text IN $texts AND d.workspace_id = $ws AND e.workspace_id = $ws "
-                "OPTIONAL MATCH (e)-[:ALIAS]-(alias:Entity) "
-                "WHERE alias.workspace_id = $ws "
-                "WITH e, alias "
-                "RETURN DISTINCT e.name AS name, e.type AS type, "
-                "COLLECT(DISTINCT alias.name) AS aliases",
-                {"texts": texts, "ws": workspace_id},
+                f"WHERE d.raw_text IN {_esc_list(texts)} "
+                f"AND d.workspace_id = {_esc(workspace_id)} "
+                f"AND e.workspace_id = {_esc(workspace_id)} "
+                "RETURN DISTINCT e",
             )
-        return [{"name": r["name"], "type": r["type"],
-                 "aliases": [a for a in r["aliases"] if a]} for r in ent_res]
+        entities = []
+        for r in ent_res:
+            node = r[0]
+            entities.append({
+                "name": node.get("name"),
+                "type": node.get("type"),
+            })
+
+        # Step 2: get aliases for each entity
+        result = []
+        for ent in entities:
+            name = ent["name"]
+            if not name:
+                continue
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                alias_res = s.run(
+                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    "RETURN alias",
+                )
+            else:
+                alias_res = s.run(
+                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND e.workspace_id = {_esc(workspace_id)} "
+                    f"AND alias.workspace_id = {_esc(workspace_id)} "
+                    "RETURN alias",
+                )
+            aliases = []
+            for ar in alias_res:
+                aname = ar[0].get("name")
+                if aname:
+                    aliases.append(aname)
+            result.append({
+                "name": name,
+                "type": ent["type"],
+                "aliases": aliases,
+            })
+        return result
 
 
 @memgraph_retry()
 def get_entities_by_doc_labels(doc_labels: List[str],
-                               workspace_id: Optional[str] = None) -> List[Dict]:
+                               workspace_id: Optional[str] = None,
+                               ) -> List[Dict]:
     """Get entities mentioned in documents by doc_label."""
     labels = [l for l in doc_labels if l]
     if not labels:
@@ -64,28 +102,60 @@ def get_entities_by_doc_labels(doc_labels: List[str],
         if workspace_id == DEFAULT_WORKSPACE_ID:
             ent_res = s.run(
                 "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
-                "AND d.doc_label IN $labels "
-                "AND (d.workspace_id = $ws OR d.workspace_id IS NULL) "
+                f"AND d.doc_label IN {_esc_list(labels)} "
+                f"AND (d.workspace_id = {_esc(workspace_id)} "
+                "OR d.workspace_id IS NULL) "
                 "MATCH (d)-[:MENTIONS]->(e:Entity) "
-                "OPTIONAL MATCH (e)-[:ALIAS]-(alias:Entity) "
-                "WITH e, alias "
-                "RETURN DISTINCT e.name AS name, e.type AS type, "
-                "COLLECT(DISTINCT alias.name) AS aliases",
-                {"labels": labels, "ws": workspace_id},
+                "RETURN DISTINCT e",
             )
         else:
             ent_res = s.run(
                 "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
-                "AND d.doc_label IN $labels AND d.workspace_id = $ws "
-                "MATCH (d)-[:MENTIONS]->(e:Entity) WHERE e.workspace_id = $ws "
-                "OPTIONAL MATCH (e)-[:ALIAS]-(alias:Entity) WHERE alias.workspace_id = $ws "
-                "WITH e, alias "
-                "RETURN DISTINCT e.name AS name, e.type AS type, "
-                "COLLECT(DISTINCT alias.name) AS aliases",
-                {"labels": labels, "ws": workspace_id},
+                f"AND d.doc_label IN {_esc_list(labels)} "
+                f"AND d.workspace_id = {_esc(workspace_id)} "
+                "MATCH (d)-[:MENTIONS]->(e:Entity) "
+                f"WHERE e.workspace_id = {_esc(workspace_id)} "
+                "RETURN DISTINCT e",
             )
-        return [{"name": r["name"], "type": r["type"],
-                 "aliases": [a for a in r["aliases"] if a]} for r in ent_res]
+        entities = []
+        for r in ent_res:
+            node = r[0]
+            entities.append({
+                "name": node.get("name"),
+                "type": node.get("type"),
+            })
+
+        # Get aliases for each entity
+        result = []
+        for ent in entities:
+            name = ent["name"]
+            if not name:
+                continue
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                alias_res = s.run(
+                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    "RETURN alias",
+                )
+            else:
+                alias_res = s.run(
+                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND e.workspace_id = {_esc(workspace_id)} "
+                    f"AND alias.workspace_id = {_esc(workspace_id)} "
+                    "RETURN alias",
+                )
+            aliases = []
+            for ar in alias_res:
+                aname = ar[0].get("name")
+                if aname:
+                    aliases.append(aname)
+            result.append({
+                "name": name,
+                "type": ent["type"],
+                "aliases": aliases,
+            })
+        return result
 
 
 @memgraph_retry()
@@ -98,17 +168,19 @@ def get_all_workspace_entities(workspace_id: Optional[str] = None,
         if workspace_id == DEFAULT_WORKSPACE_ID:
             res = s.run(
                 "MATCH (e:Entity) "
-                "WHERE e.workspace_id = $ws OR e.workspace_id IS NULL "
-                "RETURN DISTINCT e.name AS name, e.type AS type LIMIT $lim",
-                {"ws": workspace_id, "lim": limit},
+                f"WHERE e.workspace_id = {_esc(workspace_id)} "
+                "OR e.workspace_id IS NULL "
+                "RETURN DISTINCT e "
+                f"LIMIT {_esc(limit)}",
             )
         else:
             res = s.run(
-                "MATCH (e:Entity) WHERE e.workspace_id = $ws "
-                "RETURN DISTINCT e.name AS name, e.type AS type LIMIT $lim",
-                {"ws": workspace_id, "lim": limit},
+                f"MATCH (e:Entity) WHERE e.workspace_id = {_esc(workspace_id)} "
+                "RETURN DISTINCT e "
+                f"LIMIT {_esc(limit)}",
             )
-        return [{"name": r["name"], "type": r["type"]} for r in res]
+        return [{"name": r[0].get("name"), "type": r[0].get("type")}
+                for r in res]
 
 
 @memgraph_retry()
@@ -124,37 +196,61 @@ def get_graph_relationships(entity_names: List[str],
     """
     workspace_id = _normalize_workspace_id(workspace_id)
     depth = max(1, min(max_depth, 5))
-    active_filter = "AND r.valid_to IS NULL " if active_only else ""
     driver = get_memgraph_driver()
+    results: list[Dict] = []
+    seen: set[tuple] = set()
     with driver.session() as s:
-        if workspace_id == DEFAULT_WORKSPACE_ID:
-            rel_res = s.run(
-                f"MATCH p = (e:Entity)-[rels:RELATION*1..{depth}]-(e2:Entity) "
-                "WHERE e.name IN $names "
-                "UNWIND range(0, size(rels)-1) AS idx "
-                "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
-                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {active_filter}"
-                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
-                "r.valid_from AS valid_from, r.valid_to AS valid_to "
-                "LIMIT 200",
-                {"names": entity_names},
-            )
-        else:
-            rel_res = s.run(
-                f"MATCH p = (e:Entity)-[rels:RELATION*1..{depth}]-(e2:Entity) "
-                "WHERE e.name IN $names AND e.workspace_id = $ws AND e2.workspace_id = $ws "
-                "UNWIND range(0, size(rels)-1) AS idx "
-                "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
-                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {active_filter}"
-                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
-                "r.valid_from AS valid_from, r.valid_to AS valid_to "
-                "LIMIT 200",
-                {"names": entity_names, "ws": workspace_id},
-            )
-        return [{"source": r["source"], "target": r["target"],
-                 "type": r["rel_type"],
-                 "valid_from": r["valid_from"], "valid_to": r["valid_to"]}
-                for r in rel_res]
+        # For each entity, get RELATION edges (both directions)
+        for name in entity_names:
+            _all_rels = []
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} RETURN r",
+                ))
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} RETURN r",
+                ))
+            else:
+                _ws = _esc(workspace_id)
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND e.workspace_id = {_ws} "
+                    f"AND e2.workspace_id = {_ws} RETURN r",
+                ))
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND e.workspace_id = {_ws} "
+                    f"AND e2.workspace_id = {_ws} RETURN r",
+                ))
+            for rr in _all_rels:
+                rel = rr[0]
+                src_node = rel.start_node
+                tgt_node = rel.end_node
+                src_name = src_node.get("name", "")
+                tgt_name = tgt_node.get("name", "")
+                rel_type = rel.get("type")
+                vf = rel.get("valid_from")
+                vt = rel.get("valid_to")
+                if active_only and vt is not None:
+                    continue
+                key = (src_name, tgt_name, rel_type)
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append({
+                    "source": src_name,
+                    "target": tgt_name,
+                    "type": rel_type,
+                    "valid_from": vf,
+                    "valid_to": vt,
+                })
+            if len(results) >= 200:
+                break
+    return results[:200]
 
 
 @memgraph_retry()
@@ -169,75 +265,138 @@ def get_relationships_at_date(entity_names: List[str],
     - valid_to is NULL or >= target_date
     """
     workspace_id = _normalize_workspace_id(workspace_id)
-    depth = max(1, min(max_depth, 5))
-    date_filter = (
-        "AND (r.valid_from IS NULL OR r.valid_from <= $target_date) "
-        "AND (r.valid_to IS NULL OR r.valid_to >= $target_date) "
-    )
     driver = get_memgraph_driver()
+    results: list[Dict] = []
+    seen: set[tuple] = set()
     with driver.session() as s:
-        if workspace_id == DEFAULT_WORKSPACE_ID:
-            rel_res = s.run(
-                f"MATCH p = (e:Entity)-[rels:RELATION*1..{depth}]-(e2:Entity) "
-                "WHERE e.name IN $names "
-                "UNWIND range(0, size(rels)-1) AS idx "
-                "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
-                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {date_filter}"
-                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
-                "r.valid_from AS valid_from, r.valid_to AS valid_to "
-                "LIMIT 200",
-                {"names": entity_names, "target_date": target_date},
-            )
-        else:
-            rel_res = s.run(
-                f"MATCH p = (e:Entity)-[rels:RELATION*1..{depth}]-(e2:Entity) "
-                "WHERE e.name IN $names AND e.workspace_id = $ws AND e2.workspace_id = $ws "
-                "UNWIND range(0, size(rels)-1) AS idx "
-                "WITH rels[idx] AS r, nodes(p)[idx] AS n1, nodes(p)[idx+1] AS n2 "
-                f"WHERE n1.name IS NOT NULL AND n2.name IS NOT NULL {date_filter}"
-                "RETURN DISTINCT n1.name AS source, n2.name AS target, r.type AS rel_type, "
-                "r.valid_from AS valid_from, r.valid_to AS valid_to "
-                "LIMIT 200",
-                {"names": entity_names, "ws": workspace_id,
-                 "target_date": target_date},
-            )
-        return [{"source": r["source"], "target": r["target"],
-                 "type": r["rel_type"],
-                 "valid_from": r["valid_from"], "valid_to": r["valid_to"]}
-                for r in rel_res]
+        for name in entity_names:
+            _all_rels = []
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} RETURN r",
+                ))
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} RETURN r",
+                ))
+            else:
+                _ws = _esc(workspace_id)
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND e.workspace_id = {_ws} "
+                    f"AND e2.workspace_id = {_ws} RETURN r",
+                ))
+                _all_rels.extend(s.run(
+                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND e.workspace_id = {_ws} "
+                    f"AND e2.workspace_id = {_ws} RETURN r",
+                ))
+            for rr in _all_rels:
+                rel = rr[0]
+                vf = rel.get("valid_from")
+                vt = rel.get("valid_to")
+                # Date filter in Python
+                if vf is not None and vf > target_date:
+                    continue
+                if vt is not None and vt < target_date:
+                    continue
+                src_name = rel.start_node.get("name", "")
+                tgt_name = rel.end_node.get("name", "")
+                rel_type = rel.get("type")
+                key = (src_name, tgt_name, rel_type)
+                if key in seen:
+                    continue
+                seen.add(key)
+                results.append({
+                    "source": src_name,
+                    "target": tgt_name,
+                    "type": rel_type,
+                    "valid_from": vf,
+                    "valid_to": vt,
+                })
+            if len(results) >= 200:
+                break
+    return results[:200]
 
 
 @memgraph_retry()
 def get_doc_labels_by_entities(entity_names: List[str],
-                               workspace_id: Optional[str] = None) -> List[Dict]:
+                               workspace_id: Optional[str] = None,
+                               ) -> List[Dict]:
     """Get document labels for documents linked to given entities."""
     if not entity_names:
         return []
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
+    results: list[Dict] = []
+    seen_labels: set[str] = set()
     with driver.session() as s:
-        ws_filter = "(e.workspace_id = $ws OR e.workspace_id IS NULL)" if workspace_id == DEFAULT_WORKSPACE_ID else "e.workspace_id = $ws"
-        d_filter = "(d.workspace_id = $ws OR d.workspace_id IS NULL)" if workspace_id == DEFAULT_WORKSPACE_ID else "d.workspace_id = $ws"
-        doc_res = s.run(
-            f"MATCH (e:Entity) WHERE e.name IN $names AND {ws_filter} "
-            "WITH DISTINCT e UNWIND COALESCE(e.doc_labels, []) AS dl "
-            "WITH DISTINCT dl AS doc_label WHERE doc_label IS NOT NULL AND doc_label <> '' "
-            f"MATCH (d) WHERE (d:Document OR d:JiraIssue) AND d.doc_label = doc_label AND {d_filter} "
-            "RETURN DISTINCT d.doc_label AS doc_label, "
-            "COALESCE(d.file_name, d.issue_key, d.summary, d.doc_id) AS title "
-            "UNION "
-            f"MATCH (e:Entity) WHERE e.name IN $names AND {ws_filter} "
-            "MATCH (e)<-[:MENTIONS]-(d) "
-            f"WHERE (d:Document OR d:JiraIssue) AND d.doc_label IS NOT NULL AND {d_filter} "
-            "RETURN DISTINCT d.doc_label AS doc_label, "
-            "COALESCE(d.file_name, d.issue_key, d.summary, d.doc_id) AS title",
-            {"names": entity_names, "ws": workspace_id},
-        )
-        return [{"doc_label": r["doc_label"], "title": r["title"]} for r in doc_res]
+        ws = _esc(workspace_id)
+        for name in entity_names:
+            # Path 1: via doc_labels property
+            ent_res = s.run(
+                f"MATCH (e:Entity) "
+                f"WHERE e.name = {_esc(name)} "
+                f"AND e.workspace_id = {ws} "
+                "RETURN e",
+            )
+            for er in ent_res:
+                node = er[0]
+                doc_labels = node.get("doc_labels")
+                if not doc_labels:
+                    continue
+                for dl in doc_labels:
+                    if dl and dl not in seen_labels:
+                        seen_labels.add(dl)
+
+            # Path 2: via MENTIONS edges
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                d_filter = (
+                    f"(d.workspace_id = {ws} "
+                    "OR d.workspace_id IS NULL)"
+                )
+            else:
+                d_filter = f"d.workspace_id = {ws}"
+            doc_res = s.run(
+                "MATCH (e:Entity)<-[:MENTIONS]-(d) "
+                f"WHERE e.name = {_esc(name)} "
+                f"AND e.workspace_id = {ws} "
+                "AND (d:Document OR d:JiraIssue) "
+                f"AND d.doc_label IS NOT NULL AND {d_filter} "
+                "RETURN d",
+            )
+            for dr in doc_res:
+                dnode = dr[0]
+                dl = dnode.get("doc_label")
+                if dl and dl not in seen_labels:
+                    seen_labels.add(dl)
+
+        # Fetch titles for all doc_labels
+        for dl in seen_labels:
+            d_res = s.run(
+                "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
+                f"AND d.doc_label = {_esc(dl)} "
+                "RETURN d",
+            )
+            rec = d_res.single()
+            if rec:
+                dnode = rec[0]
+                title = (
+                    dnode.get("file_name")
+                    or dnode.get("issue_key")
+                    or dnode.get("summary")
+                    or dnode.get("doc_id")
+                )
+                results.append({"doc_label": dl, "title": title})
+    return results
 
 
 @memgraph_retry()
-def delete_document_node(doc_label: str, workspace_id: Optional[str] = None) -> None:
+def delete_document_node(doc_label: str,
+                         workspace_id: Optional[str] = None) -> None:
     """Delete a document/issue node and its MENTIONS edges.
 
     Keeps entity nodes (they may be shared across documents).
@@ -248,41 +407,91 @@ def delete_document_node(doc_label: str, workspace_id: Optional[str] = None) -> 
     with driver.session() as s:
         s.run(
             "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
-            "AND d.doc_label = $dl AND d.workspace_id = $ws "
+            f"AND d.doc_label = {_esc(doc_label)} "
+            f"AND d.workspace_id = {_esc(workspace_id)} "
             "DETACH DELETE d",
-            {"dl": doc_label, "ws": workspace_id},
         )
-    logger.info("graph.delete_document_node", doc_label=doc_label, workspace_id=workspace_id)
+    logger.info("graph.delete_document_node",
+                doc_label=doc_label, workspace_id=workspace_id)
 
 
 @memgraph_retry()
 def get_related_documents(texts: List[str],
-                          workspace_id: Optional[str] = None) -> List[Dict]:
+                          workspace_id: Optional[str] = None,
+                          ) -> List[Dict]:
     """Get documents linked through shared entities."""
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
     with driver.session() as s:
+        # Step 1: get entities mentioned by matching documents
         if workspace_id == DEFAULT_WORKSPACE_ID:
-            doc_res = s.run(
+            ent_res = s.run(
                 "MATCH (d1:Document)-[:MENTIONS]->(e:Entity) "
-                "WHERE d1.raw_text IN $texts "
-                "OPTIONAL MATCH (e)-[:ALIAS]-(alias:Entity) "
-                "WITH COALESCE(alias, e) AS linked "
-                "MATCH (linked)<-[:MENTIONS]-(d2:Document) "
-                "RETURN DISTINCT d2.doc_id AS doc_id, d2.file_name AS file_name",
-                {"texts": texts},
+                f"WHERE d1.raw_text IN {_esc_list(texts)} "
+                "RETURN DISTINCT e",
             )
         else:
-            doc_res = s.run(
+            ent_res = s.run(
                 "MATCH (d1:Document)-[:MENTIONS]->(e:Entity) "
-                "WHERE d1.raw_text IN $texts AND d1.workspace_id = $ws AND e.workspace_id = $ws "
-                "OPTIONAL MATCH (e)-[:ALIAS]-(alias:Entity) WHERE alias.workspace_id = $ws "
-                "WITH COALESCE(alias, e) AS linked "
-                "MATCH (linked)<-[:MENTIONS]-(d2:Document) WHERE d2.workspace_id = $ws "
-                "RETURN DISTINCT d2.doc_id AS doc_id, d2.file_name AS file_name",
-                {"texts": texts, "ws": workspace_id},
+                f"WHERE d1.raw_text IN {_esc_list(texts)} "
+                f"AND d1.workspace_id = {_esc(workspace_id)} "
+                f"AND e.workspace_id = {_esc(workspace_id)} "
+                "RETURN DISTINCT e",
             )
-        return [{"doc_id": r["doc_id"], "file_name": r["file_name"]} for r in doc_res]
+        entity_names: set[str] = set()
+        for r in ent_res:
+            name = r[0].get("name")
+            if name:
+                entity_names.add(name)
+
+        # Step 2: also collect alias names
+        expanded_names = set(entity_names)
+        for name in entity_names:
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                alias_res = s.run(
+                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    "RETURN alias",
+                )
+            else:
+                alias_res = s.run(
+                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
+                    f"WHERE e.name = {_esc(name)} "
+                    f"AND alias.workspace_id = {_esc(workspace_id)} "
+                    "RETURN alias",
+                )
+            for ar in alias_res:
+                aname = ar[0].get("name")
+                if aname:
+                    expanded_names.add(aname)
+
+        # Step 3: find documents mentioning those entities
+        results: list[Dict] = []
+        seen: set[str] = set()
+        for ename in expanded_names:
+            if workspace_id == DEFAULT_WORKSPACE_ID:
+                doc_res = s.run(
+                    f"MATCH (ent:Entity)<-[:MENTIONS]-(d2:Document) "
+                    f"WHERE ent.name = {_esc(ename)} "
+                    "RETURN d2",
+                )
+            else:
+                doc_res = s.run(
+                    f"MATCH (ent:Entity)<-[:MENTIONS]-(d2:Document) "
+                    f"WHERE ent.name = {_esc(ename)} "
+                    f"AND d2.workspace_id = {_esc(workspace_id)} "
+                    "RETURN d2",
+                )
+            for dr in doc_res:
+                dnode = dr[0]
+                doc_id = dnode.get("doc_id")
+                if doc_id and doc_id not in seen:
+                    seen.add(doc_id)
+                    results.append({
+                        "doc_id": doc_id,
+                        "file_name": dnode.get("file_name"),
+                    })
+        return results
 
 
 @memgraph_retry()
@@ -297,61 +506,112 @@ def get_graph_overview(workspace_id: Optional[str] = None,
     limit = max(1, min(limit, 500))
     driver = get_memgraph_driver()
     with driver.session() as s:
+        _ws = _esc(workspace_id)
         if workspace_id == DEFAULT_WORKSPACE_ID:
-            ws_filter = "(e.workspace_id = $ws OR e.workspace_id IS NULL)"
-            ws_filter_e1 = "(e1.workspace_id = $ws OR e1.workspace_id IS NULL)"
-            ws_filter_e2 = "(e2.workspace_id = $ws OR e2.workspace_id IS NULL)"
-        else:
-            ws_filter = "e.workspace_id = $ws"
-            ws_filter_e1 = "e1.workspace_id = $ws"
-            ws_filter_e2 = "e2.workspace_id = $ws"
-
-        # 1. Top-N nodes by degree
-        node_res = s.run(
-            f"MATCH (e:Entity) WHERE {ws_filter} "
-            "OPTIONAL MATCH (e)-[r:RELATION]-() "
-            "WITH e, count(r) AS degree "
-            "ORDER BY degree DESC LIMIT $lim "
-            "RETURN id(e) AS uid, e.name AS name, e.type AS type, "
-            "e.workspace_id AS workspace_id, degree",
-            {"ws": workspace_id, "lim": limit},
-        )
-        nodes = []
-        node_names: set[str] = set()
-        for r in node_res:
-            # Skip NULL-workspace nodes that slip through the DEFAULT
-            # filter — prevents leaking unassigned entities.
-            if r["workspace_id"] is None:
-                continue
-            nodes.append({
-                "id": r["uid"],
-                "name": r["name"],
-                "type": r["type"],
-                "workspace_id": r["workspace_id"],
-                "connections": r["degree"],
-            })
-            node_names.add(r["name"])
-
-        # 2. Edges between returned nodes only
-        edges: list[Dict] = []
-        if len(node_names) >= 2:
-            edge_res = s.run(
-                f"MATCH (e1:Entity)-[r:RELATION]->(e2:Entity) "
-                f"WHERE {ws_filter_e1} "
-                f"AND {ws_filter_e2} "
-                "AND e1.name IN $names AND e2.name IN $names "
-                "RETURN DISTINCT id(e1) AS source, id(e2) AS target, "
-                "r.type AS type, r.valid_from AS valid_from, r.valid_to AS valid_to",
-                {"ws": workspace_id, "names": list(node_names)},
+            ws_filter = (
+                f"(a.workspace_id = {_ws} "
+                "OR a.workspace_id IS NULL)"
             )
-            edges = [
-                {"source": r["source"], "target": r["target"],
-                 "type": r["type"], "valid_from": r["valid_from"],
-                 "valid_to": r["valid_to"]}
-                for r in edge_res
-            ]
+        else:
+            ws_filter = f"a.workspace_id = {_ws}"
 
-    return {"nodes": nodes, "edges": edges, "truncated": len(nodes) >= limit}
+        # 1. Get all edges for workspace in ONE query
+        q_edges = (
+            f"MATCH (a:Entity)-[r]->(b:Entity) "
+            f"WHERE {ws_filter} "
+            "RETURN r"
+        )
+        logger.debug("graph_overview.edges", query=q_edges)
+        all_edges: list[Dict] = []
+        node_map: dict[int, Dict] = {}  # id → node dict
+        try:
+            for rec in s.run(q_edges):
+                rel = rec[0]
+                src_node = rel.start_node
+                tgt_node = rel.end_node
+                src_id = src_node.id
+                tgt_id = tgt_node.id
+                # Collect nodes from edges
+                if src_id not in node_map:
+                    ws = src_node.get("workspace_id")
+                    if ws is not None:
+                        node_map[src_id] = {
+                            "id": src_id,
+                            "name": src_node.get("name", ""),
+                            "type": src_node.get("type"),
+                            "workspace_id": ws,
+                        }
+                if tgt_id not in node_map:
+                    ws = tgt_node.get("workspace_id")
+                    if ws is not None:
+                        node_map[tgt_id] = {
+                            "id": tgt_id,
+                            "name": tgt_node.get("name", ""),
+                            "type": tgt_node.get("type"),
+                            "workspace_id": ws,
+                        }
+                all_edges.append({
+                    "source": src_id,
+                    "target": tgt_id,
+                    "type": rel.get("type"),
+                    "valid_from": rel.get("valid_from"),
+                    "valid_to": rel.get("valid_to"),
+                })
+        except Exception as exc:
+            logger.warning("graph_overview.edges_failed", error=str(exc))
+
+        # Also fetch isolated nodes (no edges)
+        if workspace_id == DEFAULT_WORKSPACE_ID:
+            ws_filter_e = (
+                f"(e.workspace_id = {_ws} "
+                "OR e.workspace_id IS NULL)"
+            )
+        else:
+            ws_filter_e = f"e.workspace_id = {_ws}"
+        q_nodes = f"MATCH (e:Entity) WHERE {ws_filter_e} RETURN e"
+        logger.debug("graph_overview.nodes", query=q_nodes)
+        for rec in s.run(q_nodes):
+            node = rec[0]
+            nid = node.id
+            if nid not in node_map:
+                ws = node.get("workspace_id")
+                if ws is not None:
+                    node_map[nid] = {
+                        "id": nid,
+                        "name": node.get("name", ""),
+                        "type": node.get("type"),
+                        "workspace_id": ws,
+                    }
+
+        # 2. Compute degree from edges in Python
+        degree: dict[int, int] = {}
+        for e in all_edges:
+            degree[e["source"]] = degree.get(e["source"], 0) + 1
+            degree[e["target"]] = degree.get(e["target"], 0) + 1
+
+        # 3. Sort by degree, take top-N
+        ent_list = list(node_map.values())
+        for ent in ent_list:
+            ent["connections"] = degree.get(ent["id"], 0)
+        ent_list.sort(key=lambda x: x["connections"], reverse=True)
+        nodes = ent_list[:limit]
+
+        node_ids: set[int] = {n["id"] for n in nodes}
+
+        # 4. Filter edges to only those between returned nodes
+        edges: list[Dict] = []
+        seen_edges: set[tuple] = set()
+        for e in all_edges:
+            if e["source"] in node_ids and e["target"] in node_ids:
+                key = (e["source"], e["target"], e["type"])
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges.append(e)
+
+    return {
+        "nodes": nodes, "edges": edges,
+        "truncated": len(nodes) >= limit,
+    }
 
 
 @memgraph_retry()
@@ -361,72 +621,108 @@ def get_graph_expand(entity_id: int,
                      limit: int = 50) -> Dict:
     """Expand a single entity by Memgraph internal ID.
 
-    Args:
-        entity_id: Memgraph internal node ID.
-        depth: Traversal depth (1-3).
-        limit: Max neighbor nodes to return.
+    Uses the same single-query approach as get_graph_overview:
+    fetch ALL workspace edges once, then find neighbors of entity_id
+    by walking edges in Python up to *depth* hops.
     """
     workspace_id = _normalize_workspace_id(workspace_id)
     depth = max(1, min(depth, 3))
     limit = max(1, min(limit, 500))
     driver = get_memgraph_driver()
     with driver.session() as s:
-        if workspace_id == DEFAULT_WORKSPACE_ID:
-            ws_filter_n = "(n.workspace_id = $ws OR n.workspace_id IS NULL)"
-            ws_filter_e1 = "(e1.workspace_id = $ws OR e1.workspace_id IS NULL)"
-            ws_filter_e2 = "(e2.workspace_id = $ws OR e2.workspace_id IS NULL)"
-        else:
-            ws_filter_n = "n.workspace_id = $ws"
-            ws_filter_e1 = "e1.workspace_id = $ws"
-            ws_filter_e2 = "e2.workspace_id = $ws"
+        _ws = _esc(workspace_id)
 
-        # 1. Find neighbors via RELATION edges up to depth
-        node_res = s.run(
-            f"MATCH (e:Entity) WHERE id(e) = $eid "
-            f"MATCH (e)-[:RELATION*1..{depth}]-(n:Entity) "
-            f"WHERE {ws_filter_n} AND id(n) <> $eid "
-            "OPTIONAL MATCH (n)-[r:RELATION]-() "
-            "WITH DISTINCT n, count(r) AS degree "
-            "ORDER BY degree DESC LIMIT $lim "
-            "RETURN id(n) AS uid, n.name AS name, n.type AS type, "
-            "n.workspace_id AS workspace_id, degree",
-            {"eid": entity_id, "ws": workspace_id, "lim": limit},
+        # 1. Fetch ALL edges for workspace in one query
+        q_edges = (
+            f"MATCH (a:Entity)-[r]->(b:Entity) "
+            f"WHERE a.workspace_id = {_ws} "
+            "RETURN r"
         )
-        nodes = []
-        node_ids: set[int] = set()
-        for r in node_res:
-            # Skip NULL-workspace nodes that slip through the DEFAULT
-            # filter — prevents leaking unassigned entities.
-            if r["workspace_id"] is None:
-                continue
-            nodes.append({
-                "id": r["uid"],
-                "name": r["name"],
-                "type": r["type"],
-                "workspace_id": r["workspace_id"],
-                "connections": r["degree"],
-            })
-            node_ids.add(r["uid"])
+        logger.debug("graph_expand.edges", query=q_edges)
 
-        # Include the center entity itself
-        node_ids.add(entity_id)
+        all_edges: list[Dict] = []
+        node_map: dict[int, Dict] = {}  # id → node dict
+        # adjacency: node_id → set of neighbor node_ids
+        adj: dict[int, set[int]] = {}
+        try:
+            for rec in s.run(q_edges):
+                rel = rec[0]
+                src_node = rel.start_node
+                tgt_node = rel.end_node
+                src_id = src_node.id
+                tgt_id = tgt_node.id
+                # Collect nodes
+                for nd, nid in ((src_node, src_id), (tgt_node, tgt_id)):
+                    if nid not in node_map:
+                        ws = nd.get("workspace_id")
+                        if ws is not None:
+                            node_map[nid] = {
+                                "id": nid,
+                                "name": nd.get("name", ""),
+                                "type": nd.get("type"),
+                                "workspace_id": ws,
+                            }
+                # Build adjacency (both directions for traversal)
+                adj.setdefault(src_id, set()).add(tgt_id)
+                adj.setdefault(tgt_id, set()).add(src_id)
+                all_edges.append({
+                    "source": src_id,
+                    "target": tgt_id,
+                    "type": rel.get("type"),
+                    "valid_from": rel.get("valid_from"),
+                    "valid_to": rel.get("valid_to"),
+                })
+        except Exception as exc:
+            logger.warning("graph_expand.edges_failed", error=str(exc))
+            return {"nodes": [], "edges": [], "truncated": False}
 
-        # 2. All edges between returned nodes + center
+        # 2. BFS from entity_id up to depth hops (in Python)
+        visited: set[int] = {entity_id}
+        frontier: set[int] = {entity_id}
+        for _ in range(depth):
+            next_frontier: set[int] = set()
+            for nid in frontier:
+                for neighbor in adj.get(nid, set()):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        next_frontier.add(neighbor)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        # Remove center from neighbor list (it's included separately)
+        neighbor_ids = visited - {entity_id}
+
+        # 3. Compute degree from edges, sort, take top-N
+        degree: dict[int, int] = {}
+        for e in all_edges:
+            degree[e["source"]] = degree.get(e["source"], 0) + 1
+            degree[e["target"]] = degree.get(e["target"], 0) + 1
+
+        neighbor_list = []
+        for nid in neighbor_ids:
+            if nid in node_map:
+                nd = dict(node_map[nid])
+                nd["connections"] = degree.get(nid, 0)
+                neighbor_list.append(nd)
+        neighbor_list.sort(key=lambda x: x["connections"], reverse=True)
+        nodes = neighbor_list[:limit]
+
+        final_ids: set[int] = {entity_id}
+        for n in nodes:
+            final_ids.add(n["id"])
+
+        # 4. Filter edges to final node set, deduplicate
         edges: list[Dict] = []
-        if node_ids:
-            edge_res = s.run(
-                "MATCH (e1:Entity)-[r:RELATION]->(e2:Entity) "
-                f"WHERE {ws_filter_e1} AND {ws_filter_e2} "
-                "AND id(e1) IN $ids AND id(e2) IN $ids "
-                "RETURN DISTINCT id(e1) AS source, id(e2) AS target, "
-                "r.type AS type, r.valid_from AS valid_from, r.valid_to AS valid_to",
-                {"ids": list(node_ids), "ws": workspace_id},
-            )
-            edges = [
-                {"source": r["source"], "target": r["target"],
-                 "type": r["type"], "valid_from": r["valid_from"],
-                 "valid_to": r["valid_to"]}
-                for r in edge_res
-            ]
+        seen_edges: set[tuple] = set()
+        for e in all_edges:
+            if e["source"] in final_ids and e["target"] in final_ids:
+                key = (e["source"], e["target"], e["type"])
+                if key not in seen_edges:
+                    seen_edges.add(key)
+                    edges.append(e)
 
-    return {"nodes": nodes, "edges": edges, "truncated": len(nodes) >= limit}
+    return {
+        "nodes": nodes, "edges": edges,
+        "truncated": len(nodes) >= limit,
+    }
