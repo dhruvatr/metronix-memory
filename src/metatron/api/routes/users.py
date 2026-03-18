@@ -33,7 +33,6 @@ class CreateUserRequest(BaseModel):
     password: str
     display_name: str = ""
     role: str = "viewer"
-    workspace_ids: list[str] = []
 
 
 class UpdateUserRequest(BaseModel):
@@ -43,9 +42,6 @@ class UpdateUserRequest(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
-
-class AddWorkspaceRequest(BaseModel):
-    workspace_id: str
 
 
 @router.post("/users", status_code=201)
@@ -59,7 +55,6 @@ async def create_user(req: CreateUserRequest, request: Request) -> dict:
             password=req.password,
             display_name=req.display_name,
             role=req.role,
-            workspace_ids=req.workspace_ids,
         )
     except Exception as e:
         if "unique" in str(e).lower() or "duplicate" in str(e).lower():
@@ -120,19 +115,7 @@ async def delete_user(user_id: str, request: Request) -> None:
         raise HTTPException(status_code=404, detail="User not found")
 
 
-@router.post("/users/{user_id}/workspaces", status_code=201)
-async def add_workspace(user_id: str, req: AddWorkspaceRequest, request: Request) -> dict:
-    _require_admin(request)
-    user_store = _get_user_store(request)
-    user = await user_store.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    await user_store.add_workspace(user_id, req.workspace_id)
-    return {"user_id": user_id, "workspace_id": req.workspace_id}
-
-
-@router.delete("/users/{user_id}/workspaces/{workspace_id}", status_code=204)
-async def remove_workspace(user_id: str, workspace_id: str, request: Request) -> None:
-    _require_admin(request)
-    user_store = _get_user_store(request)
-    await user_store.remove_workspace(user_id, workspace_id)
+    # Workspace management removed — workspace access is managed through
+    # enterprise access groups. Adding a user to a group automatically
+    # grants workspace access. Removing from all groups in a workspace
+    # revokes access.
