@@ -21,6 +21,7 @@ from metatron.api.routes import (
     auth,
     benchmarker,
     chat,
+    config,
     connections,
     dashboard,
     documents,
@@ -29,6 +30,7 @@ from metatron.api.routes import (
     health,
     skills,
     sync,
+    users,
     workspaces,
 )
 from metatron.core.config import Settings
@@ -84,6 +86,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("env_migration.failed", error=str(exc))
 
+    # --- User store ---
+    try:
+        from metatron.auth.user_store import UserStore
+        from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
+        _user_engine = _create_engine(settings.postgres_dsn)
+        user_store = UserStore(_user_engine)
+        logger.info("user_store.init.starting")
+        await user_store.ensure_schema()
+        logger.info("user_store.schema.done")
+        seeded = await user_store.seed_admin(settings.auth_password)
+        if seeded:
+            logger.info("user_store.admin.seeded", email="admin@metatron.local")
+        app.state.user_store = user_store
+        logger.info("user_store.ready")
+    except Exception as exc:
+        import traceback
+        logger.error("user_store.init.failed", error=str(exc))
+        traceback.print_exc()
+
     # TODO: initialize stores and services
     # app.state.postgres = PostgresStore(settings.postgres_dsn)
     # app.state.qdrant = QdrantVectorStore(...)
@@ -121,6 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         description="AI knowledge agent for teams",
         version="0.1.0",
         lifespan=lifespan,
+        redirect_slashes=False,
     )
     app.state.settings = settings
 
@@ -128,6 +150,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     plugin_manager = PluginManager()
     discover_plugins(plugin_manager)
     app.state.plugin_manager = plugin_manager
+
+    # Enterprise plugin requires auth — auto-enable if any plugin loaded
+    if plugin_manager.loaded_plugins and not settings.auth_enabled:
+        settings = settings.model_copy(update={"auth_enabled": True})
+        app.state.settings = settings
+        logger.info("auth.auto_enabled", reason="enterprise plugin loaded")
 
     # CORS — credentials are only safe with explicit origins, not wildcard
     origins = settings.cors_origins_list
@@ -164,6 +192,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(graph.router, prefix="/api/v1")
+    app.include_router(config.router, prefix="/api/v1")
+    app.include_router(users.router, prefix="/api/v1")
 
     from metatron.api.routes.finops import router as finops_router
     app.include_router(finops_router, prefix="/api/v1")
