@@ -315,6 +315,7 @@ async def _stream_response(
     model: str,
     completion_id: str,
     created: int,
+    plugin_manager: object | None = None,
 ) -> AsyncGenerator[str, None]:
     """Generate OpenAI-format SSE stream from search pipeline."""
     import asyncio
@@ -344,6 +345,7 @@ async def _stream_response(
             user_id=user_id,
             workspace_id=workspace_id,
             intent_query=user_message,
+            plugin_manager=plugin_manager,
         )
     except Exception as exc:
         logger.error("openai_compat.stream.error", error=str(exc), exc_info=True)
@@ -405,6 +407,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
     user_id = req.user or "openai-default"
     completion_id = f"chatcmpl-{uuid4().hex[:24]}"
     created = int(time.time())
+    plugin_manager = getattr(request.app.state, "plugin_manager", None)
 
     # Build composite query with our history
     composite_query = _build_composite_query(user_id, user_message)
@@ -419,6 +422,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
                 req.model,
                 completion_id,
                 created,
+                plugin_manager,
             ),
             media_type="text/event-stream",
         )
@@ -435,6 +439,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
             user_id=user_id,
             workspace_id=workspace_id,
             intent_query=user_message,
+            plugin_manager=plugin_manager,
         )
     except Exception as exc:
         logger.error("openai_compat.search_error", error=str(exc), exc_info=True)
