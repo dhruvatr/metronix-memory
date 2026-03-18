@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     auth_enabled: bool = Field(default=False, alias="AUTH_ENABLED")
     auth_password: str = Field(default="metatron", alias="AUTH_PASSWORD")
 
+    # --- OpenAI-compatible API (for Open WebUI integration) ---
+    openai_compat_enabled: bool = Field(True, alias="METATRON_OPENAI_COMPAT_ENABLED")
+    openai_compat_key: str = Field("", alias="METATRON_OPENAI_COMPAT_KEY")
+
     # --- PostgreSQL ---
     postgres_host: str = Field("localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(5432, alias="POSTGRES_PORT")

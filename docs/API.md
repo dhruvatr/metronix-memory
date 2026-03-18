@@ -1288,6 +1288,104 @@ Delete a test run and all its results.
 
 - `workspace_id` (required): Workspace ID
 
+## OpenAI-Compatible API (Open WebUI Integration)
+
+OpenAI-compatible endpoints for connecting Open WebUI or any OpenAI-compatible client to Metatron.
+
+**Authentication:** `Authorization: Bearer <METATRON_OPENAI_COMPAT_KEY>`
+
+**Error format:** `{"error": {"message": "...", "type": "invalid_request_error"}}`
+
+### GET /v1/models
+
+List available models. Each workspace is exposed as a separate model.
+
+**Response:**
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "metatron-rag-MTRNIX",
+      "object": "model",
+      "created": 1710000000,
+      "owned_by": "metatron"
+    }
+  ]
+}
+```
+
+**Example:**
+
+```bash
+curl -H "Authorization: Bearer YOUR_KEY" http://localhost:8000/v1/models
+```
+
+### POST /v1/chat/completions
+
+Chat completions in OpenAI format. Calls the Metatron hybrid search pipeline internally.
+
+**Request Body:**
+
+```json
+{
+  "model": "metatron-rag-MTRNIX",
+  "messages": [
+    {"role": "user", "content": "What tasks are in backlog?"}
+  ],
+  "stream": true,
+  "user": "optional-user-id"
+}
+```
+
+Fields `temperature`, `max_tokens`, `top_p` etc. are accepted but ignored — LLM parameters are controlled by the search pipeline.
+
+**Streaming Response (SSE):**
+
+```
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"content":"The backlog contains..."},"finish_reason":null}]}
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop"}]}
+data: [DONE]
+```
+
+**Non-Streaming Response:**
+
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "model": "metatron-rag-MTRNIX",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Answer with sources..."},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+}
+```
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8000/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "metatron-rag-MTRNIX", "messages": [{"role": "user", "content": "Hello"}], "stream": false}'
+```
+
+### Open WebUI Setup
+
+1. Add Open WebUI to docker-compose: `docker compose -f docker-compose.full.yml --profile openwebui up`
+2. Open `http://localhost:3080`
+3. Settings → Connections → OpenAI API → Add
+4. URL: `http://metatron-core:8000/v1` (docker) or `http://host.docker.internal:8000/v1` (local dev)
+5. Auth: Bearer, Key: `<METATRON_OPENAI_COMPAT_KEY>`
+6. New Chat → select `metatron-rag-MTRNIX`
+
 ## Error Responses
 
 All endpoints may return error responses in the following format:

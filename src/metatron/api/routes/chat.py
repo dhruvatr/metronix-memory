@@ -111,7 +111,7 @@ def chat(req: ChatRequest, request: Request) -> ChatResponse:
     return ChatResponse(answer=answer, workspace_id=workspace_id)
 
 
-def _split_into_sentences(text: str) -> list[str]:
+def split_into_sentences(text: str) -> list[str]:
     """Split text into sentence-like chunks for progressive SSE streaming."""
     parts = re.split(r'(?<=[.!?])\s+', text)
     chunks: list[str] = []
@@ -126,7 +126,7 @@ def _split_into_sentences(text: str) -> list[str]:
     return chunks if chunks else [text]
 
 
-def _extract_sources_section(answer: str) -> tuple[str, list[str]]:
+def extract_sources_section(answer: str) -> tuple[str, list[str]]:
     """Split answer into body and source lines."""
     marker = "\U0001f4da Sources:"
     if marker not in answer:
@@ -216,11 +216,11 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
             if len(hist) > 20:
                 del hist[:-20]
 
-        body, sources = _extract_sources_section(answer)
+        body, sources = extract_sources_section(answer)
 
         yield {"event": "status", "data": json.dumps({"status": "answering"})}
 
-        for chunk in _split_into_sentences(body):
+        for chunk in split_into_sentences(body):
             yield {"event": "chunk", "data": json.dumps({"text": chunk})}
             await asyncio.sleep(0.03)
 
