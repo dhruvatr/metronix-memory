@@ -105,24 +105,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error("user_store.init.failed", error=str(exc))
         traceback.print_exc()
 
-    # TODO: initialize stores and services
-    # app.state.postgres = PostgresStore(settings.postgres_dsn)
-    # app.state.qdrant = QdrantVectorStore(...)
-    # app.state.memgraph = MemgraphGraphStore(...)
-    # app.state.ollama = OllamaProvider(...)
-    # Register builtins: register_builtins(app.state.connector_registry)
+    # --- PostgresStore (shared) ---
+    from metatron.storage.postgres import PostgresStore
+
+    store = PostgresStore(settings.postgres_dsn)
+    app.state.postgres = store
+
+    # --- Channel manager (starts bots from DB config) ---
+    if not getattr(app.state, "channel_manager", None):
+        try:
+            from metatron.agent.router import AgentRouter
+            from metatron.channels.manager import ChannelManager
+
+            agent_router = AgentRouter(settings=settings)
+            channel_manager = ChannelManager(router=agent_router, store=store)
+            started = await channel_manager.start_channels_from_db(
+                fernet_key=settings.fernet_key,
+                default_workspace_id=settings.default_workspace_id,
+            )
+            app.state.channel_manager = channel_manager
+            logger.info("channel_manager.started", channels=started)
+        except Exception as exc:
+            logger.warning("channel_manager.startup_failed", error=str(exc))
 
     # Initialize MCP session manager (required for streamable-http transport)
     async with mcp_server.session_manager.run():
         logger.info("mcp.session_manager.started")
         yield
 
-    # Shutdown: close all connections
+    # Shutdown
     logger.info("app.shutdown")
-    # TODO: close stores
-    # await app.state.postgres.close()
-    # await app.state.qdrant.close()
-    # await app.state.memgraph.close()
+    cm = getattr(app.state, "channel_manager", None)
+    if cm is not None:
+        await cm.stop_all()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

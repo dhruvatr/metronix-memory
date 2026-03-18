@@ -9,6 +9,7 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import text as sa_text
 
 from metatron.connectors.registry import ConnectorRegistry, register_builtins
 from metatron.connectors.schemas import (
@@ -93,12 +94,17 @@ def _get_workspace_id(
     request: Request,
     workspace_id: str | None = None,
 ) -> str:
-    """Resolve workspace_id: query param > auth token > default."""
-    if workspace_id:
+    """Resolve workspace_id: query param > auth token > default.
+
+    The wildcard ``"*"`` means "admin has access to all workspaces" — it is
+    NOT a real workspace_id and must never be stored.  When encountered,
+    fall back to ``default_workspace_id``.
+    """
+    if workspace_id and workspace_id != "*":
         return workspace_id
     user = getattr(request.state, "user", {}) or {}
     workspace_ids = user.get("workspace_ids", [])
-    if workspace_ids:
+    if workspace_ids and workspace_ids[0] != "*":
         return workspace_ids[0]
     settings: Settings = request.app.state.settings
     return settings.default_workspace_id
@@ -123,6 +129,66 @@ def _get_store(request: Request) -> PostgresStore:
         store = PostgresStore(settings.postgres_dsn)
         request.app.state.postgres = store
     return store
+
+
+async def _ensure_workspace_exists(store: PostgresStore, workspace_id: str) -> None:
+    """Ensure the workspace row exists in PostgreSQL (FK target for connections).
+
+    The WorkspaceManager creates it lazily on first use, but connections may
+    be created before any workspace route is hit.  This upsert guarantees the
+    FK target is present.
+    """
+    async with store._engine.begin() as conn:
+        await conn.execute(
+            sa_text("""
+                INSERT INTO workspaces (id, name, slug, created_at)
+                VALUES (:id, :name, :slug, NOW())
+                ON CONFLICT (id) DO NOTHING
+            """),
+            {
+                "id": workspace_id,
+                "name": workspace_id,
+                "slug": workspace_id.lower(),
+            },
+        )
+
+
+async def _try_start_channel(
+    request: Request,
+    connection_id: str,
+    connector_type: str,
+    config: dict[str, Any],
+    workspace_id: str,
+) -> None:
+    """Start a channel bot if ChannelManager is available on app.state.
+
+    Non-fatal — logs warning on failure but never raises.
+    """
+    channel_manager = getattr(request.app.state, "channel_manager", None)
+    if channel_manager is None:
+        logger.info(
+            "api.connections.channel_start.skipped",
+            reason="no channel_manager on app.state",
+            connection_id=connection_id,
+        )
+        return
+
+    try:
+        await channel_manager.start_channel(
+            connection_id, connector_type, config,
+            workspace_id=workspace_id,
+        )
+        logger.info(
+            "api.connections.channel_started",
+            connection_id=connection_id,
+            connector_type=connector_type,
+        )
+    except Exception as exc:
+        logger.warning(
+            "api.connections.channel_start.failed",
+            connection_id=connection_id,
+            error=_sanitize_error(str(exc)),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -174,13 +240,35 @@ async def create_connection(
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
 
-    result = await store.create_connection(
-        workspace_id=ws_id,
-        connector_type=body.connector_type,
-        name=body.name,
-        config=body.config,
-        fernet_key=fernet_key,
-    )
+    try:
+        await _ensure_workspace_exists(store, ws_id)
+        result = await store.create_connection(
+            workspace_id=ws_id,
+            connector_type=body.connector_type,
+            name=body.name,
+            config=body.config,
+            fernet_key=fernet_key,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except Exception as e:
+        logger.error(
+            "api.connections.create.failed",
+            connector_type=body.connector_type,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create connection: {_sanitize_error(str(e))}",
+        ) from None
+
+    # Auto-start channel if ChannelManager is available
+    schema = CONNECTOR_SCHEMAS.get(body.connector_type)
+    if schema and schema.category == "channel":
+        await _try_start_channel(
+            request, result["id"], body.connector_type, body.config, ws_id,
+        )
+
     return ConnectionResponse(**result)
 
 
@@ -325,6 +413,11 @@ async def delete_connection(
     existing = await store.get_connection(connection_id, fernet_key)
     if existing is None or existing["workspace_id"] != ws_id:
         raise HTTPException(status_code=404, detail="Connection not found")
+
+    # Stop channel if running
+    channel_manager = getattr(request.app.state, "channel_manager", None)
+    if channel_manager is not None:
+        await channel_manager.stop_channel(connection_id)
 
     logger.info("api.connections.delete", connection_id=connection_id)
     await store.delete_connection(connection_id)

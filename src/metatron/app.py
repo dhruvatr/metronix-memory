@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import structlog
 import uvicorn
@@ -23,9 +24,14 @@ from metatron.core.logging import configure_logging
 logger = structlog.get_logger()
 
 
-async def _run_api(settings: Settings) -> None:
+async def _run_api(
+    settings: Settings,
+    channel_manager: Any | None = None,
+) -> None:
     """Run FastAPI via uvicorn as an async server."""
     app = create_app(settings)
+    if channel_manager is not None:
+        app.state.channel_manager = channel_manager
     config = uvicorn.Config(
         app=app,
         host=settings.host,
@@ -46,12 +52,6 @@ async def run_all() -> None:
 
     router = AgentRouter(settings=settings)
 
-    tasks: list[asyncio.Task] = []
-
-    # API server — always runs
-    tasks.append(asyncio.create_task(_run_api(settings)))
-    logger.info("app.api.scheduled", port=settings.port)
-
     # One-time migration: env-var credentials → DB connections (idempotent)
     try:
         from metatron.storage.migrate_env_connections import migrate_env_to_db
@@ -71,7 +71,7 @@ async def run_all() -> None:
             "app.env_migration.failed", error=str(exc),
         )
 
-    # Start channels from DB config (shared store instance)
+    # Create channel manager (shared store instance)
     from metatron.channels.manager import ChannelManager
     from metatron.storage.postgres import PostgresStore
 
@@ -89,6 +89,14 @@ async def run_all() -> None:
             error=str(exc),
             exc_info=True,
         )
+
+    tasks: list[asyncio.Task] = []
+
+    # API server — always runs (pass channel_manager for dynamic channel start)
+    tasks.append(asyncio.create_task(
+        _run_api(settings, channel_manager=channel_manager),
+    ))
+    logger.info("app.api.scheduled", port=settings.port)
 
     logger.info("app.starting", services=len(tasks))
 
