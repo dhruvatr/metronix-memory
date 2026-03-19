@@ -3,6 +3,13 @@
 Migrated from PoC: metatron_experiments/metatron/indexers/memgraph_workspace.py
 
 All queries use single-field RETURN for Memgraph 2.18.1 compatibility.
+
+Memgraph 2.18.1 + neo4j driver 5.28 Cypher constraints:
+- Variable names must NOT contain digits (e2, d1 → parser errors)
+- Second-node variables after -[r]->() must be single-char (a, b, n — not tgt)
+- Relationship types that collide with keyword prefixes (ALIAS→ALL,
+  RELATION→RETURN) need backtick-escaping or type(r) filtering
+- Use ``type(r) = 'TYPE'`` in WHERE as a safe alternative to ``[:TYPE]``
 """
 # TODO: async migration
 from __future__ import annotations
@@ -17,6 +24,37 @@ from metatron.storage.memgraph import (
 logger = structlog.get_logger()
 
 
+def _alias_query(entity_name: str, workspace_id: Optional[str] = None,
+                  ws_esc: Optional[str] = None) -> str:
+    """Build Cypher query for ALIAS edges in both directions.
+
+    ``ALIAS`` is a reserved keyword in Memgraph, so we avoid it in MATCH
+    patterns entirely.  Instead we match generic edges and filter by
+    ``type(r) = 'ALIAS'`` in the WHERE clause.
+    """
+    name = _esc(entity_name)
+    if workspace_id is None or workspace_id == DEFAULT_WORKSPACE_ID:
+        return (
+            f"MATCH (e:Entity)-[r]->(n:Entity) "
+            f"WHERE type(r) = 'ALIAS' AND e.name = {name} RETURN n "
+            f"UNION "
+            f"MATCH (e:Entity)<-[r]-(n:Entity) "
+            f"WHERE type(r) = 'ALIAS' AND e.name = {name} RETURN n"
+        )
+    ws = ws_esc or _esc(workspace_id)
+    return (
+        f"MATCH (e:Entity)-[r]->(n:Entity) "
+        f"WHERE type(r) = 'ALIAS' AND e.name = {name} "
+        f"AND e.workspace_id = {ws} "
+        f"AND n.workspace_id = {ws} RETURN n "
+        f"UNION "
+        f"MATCH (e:Entity)<-[r]-(n:Entity) "
+        f"WHERE type(r) = 'ALIAS' AND e.name = {name} "
+        f"AND e.workspace_id = {ws} "
+        f"AND n.workspace_id = {ws} RETURN n"
+    )
+
+
 def _acl_clause(user_groups: Optional[List[str]], node_alias: str = "d") -> str:
     """Build Cypher WHERE fragment for access_groups filtering.
 
@@ -28,10 +66,10 @@ def _acl_clause(user_groups: Optional[List[str]], node_alias: str = "d") -> str:
     if user_groups:
         groups_list = _esc_list(user_groups)
         return (
-            f"AND ({node_alias}.access_groups IS NULL "
-            f"OR ANY(g IN {node_alias}.access_groups WHERE g IN {groups_list}))"
+            f"AND ({node_alias}.`access_groups` IS NULL "
+            f"OR ANY(g IN {node_alias}.`access_groups` WHERE g IN {groups_list}))"
         )
-    return f"AND {node_alias}.access_groups IS NULL"
+    return f"AND {node_alias}.`access_groups` IS NULL"
 
 
 def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
@@ -78,20 +116,7 @@ def get_graph_entities(texts: List[str],
             name = ent["name"]
             if not name:
                 continue
-            if workspace_id == DEFAULT_WORKSPACE_ID:
-                alias_res = s.run(
-                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
-                    f"WHERE e.name = {_esc(name)} "
-                    "RETURN alias",
-                )
-            else:
-                alias_res = s.run(
-                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
-                    f"WHERE e.name = {_esc(name)} "
-                    f"AND e.workspace_id = {_esc(workspace_id)} "
-                    f"AND alias.workspace_id = {_esc(workspace_id)} "
-                    "RETURN alias",
-                )
+            alias_res = s.run(_alias_query(name, workspace_id))
             aliases = []
             for ar in alias_res:
                 aname = ar[0].get("name")
@@ -118,7 +143,7 @@ def get_entities_by_doc_labels(doc_labels: List[str],
     with driver.session() as s:
         if workspace_id == DEFAULT_WORKSPACE_ID:
             ent_res = s.run(
-                "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
+                "MATCH (d) WHERE ('Document' IN labels(d) OR 'JiraIssue' IN labels(d)) "
                 f"AND d.doc_label IN {_esc_list(labels)} "
                 f"AND (d.workspace_id = {_esc(workspace_id)} "
                 "OR d.workspace_id IS NULL) "
@@ -127,7 +152,7 @@ def get_entities_by_doc_labels(doc_labels: List[str],
             )
         else:
             ent_res = s.run(
-                "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
+                "MATCH (d) WHERE ('Document' IN labels(d) OR 'JiraIssue' IN labels(d)) "
                 f"AND d.doc_label IN {_esc_list(labels)} "
                 f"AND d.workspace_id = {_esc(workspace_id)} "
                 "MATCH (d)-[:MENTIONS]->(e:Entity) "
@@ -148,20 +173,7 @@ def get_entities_by_doc_labels(doc_labels: List[str],
             name = ent["name"]
             if not name:
                 continue
-            if workspace_id == DEFAULT_WORKSPACE_ID:
-                alias_res = s.run(
-                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
-                    f"WHERE e.name = {_esc(name)} "
-                    "RETURN alias",
-                )
-            else:
-                alias_res = s.run(
-                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
-                    f"WHERE e.name = {_esc(name)} "
-                    f"AND e.workspace_id = {_esc(workspace_id)} "
-                    f"AND alias.workspace_id = {_esc(workspace_id)} "
-                    "RETURN alias",
-                )
+            alias_res = s.run(_alias_query(name, workspace_id))
             aliases = []
             for ar in alias_res:
                 aname = ar[0].get("name")
@@ -222,26 +234,26 @@ def get_graph_relationships(entity_names: List[str],
             _all_rels = []
             if workspace_id == DEFAULT_WORKSPACE_ID:
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"MATCH (e:Entity)-[r]->(b:Entity) "
                     f"WHERE e.name = {_esc(name)} RETURN r",
                 ))
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"MATCH (e:Entity)<-[r]-(b:Entity) "
                     f"WHERE e.name = {_esc(name)} RETURN r",
                 ))
             else:
                 _ws = _esc(workspace_id)
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"MATCH (e:Entity)-[r]->(b:Entity) "
                     f"WHERE e.name = {_esc(name)} "
                     f"AND e.workspace_id = {_ws} "
-                    f"AND e2.workspace_id = {_ws} RETURN r",
+                    f"AND b.workspace_id = {_ws} RETURN r",
                 ))
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"MATCH (e:Entity)<-[r]-(b:Entity) "
                     f"WHERE e.name = {_esc(name)} "
                     f"AND e.workspace_id = {_ws} "
-                    f"AND e2.workspace_id = {_ws} RETURN r",
+                    f"AND b.workspace_id = {_ws} RETURN r",
                 ))
             for rr in _all_rels:
                 rel = rr[0]
@@ -290,26 +302,26 @@ def get_relationships_at_date(entity_names: List[str],
             _all_rels = []
             if workspace_id == DEFAULT_WORKSPACE_ID:
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"MATCH (e:Entity)-[r]->(b:Entity) "
                     f"WHERE e.name = {_esc(name)} RETURN r",
                 ))
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"MATCH (e:Entity)<-[r]-(b:Entity) "
                     f"WHERE e.name = {_esc(name)} RETURN r",
                 ))
             else:
                 _ws = _esc(workspace_id)
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)-[r]->(e2:Entity) "
+                    f"MATCH (e:Entity)-[r]->(b:Entity) "
                     f"WHERE e.name = {_esc(name)} "
                     f"AND e.workspace_id = {_ws} "
-                    f"AND e2.workspace_id = {_ws} RETURN r",
+                    f"AND b.workspace_id = {_ws} RETURN r",
                 ))
                 _all_rels.extend(s.run(
-                    f"MATCH (e:Entity)<-[r]-(e2:Entity) "
+                    f"MATCH (e:Entity)<-[r]-(b:Entity) "
                     f"WHERE e.name = {_esc(name)} "
                     f"AND e.workspace_id = {_ws} "
-                    f"AND e2.workspace_id = {_ws} RETURN r",
+                    f"AND b.workspace_id = {_ws} RETURN r",
                 ))
             for rr in _all_rels:
                 rel = rr[0]
@@ -383,7 +395,7 @@ def get_doc_labels_by_entities(entity_names: List[str],
                 "MATCH (e:Entity)<-[:MENTIONS]-(d) "
                 f"WHERE e.name = {_esc(name)} "
                 f"AND e.workspace_id = {ws} "
-                "AND (d:Document OR d:JiraIssue) "
+                "AND ('Document' IN labels(d) OR 'JiraIssue' IN labels(d)) "
                 f"AND d.doc_label IS NOT NULL AND {d_filter} "
                 f"{acl} "
                 "RETURN d",
@@ -398,7 +410,7 @@ def get_doc_labels_by_entities(entity_names: List[str],
         acl = _acl_clause(user_groups, "d")
         for dl in seen_labels:
             d_res = s.run(
-                "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
+                "MATCH (d) WHERE ('Document' IN labels(d) OR 'JiraIssue' IN labels(d)) "
                 f"AND d.doc_label = {_esc(dl)} "
                 f"{acl} "
                 "RETURN d",
@@ -428,7 +440,7 @@ def delete_document_node(doc_label: str,
     driver = get_memgraph_driver()
     with driver.session() as s:
         s.run(
-            "MATCH (d) WHERE (d:Document OR d:JiraIssue) "
+            "MATCH (d) WHERE ('Document' IN labels(d) OR 'JiraIssue' IN labels(d)) "
             f"AND d.doc_label = {_esc(doc_label)} "
             f"AND d.workspace_id = {_esc(workspace_id)} "
             "DETACH DELETE d",
@@ -449,15 +461,15 @@ def get_related_documents(texts: List[str],
         # Step 1: get entities mentioned by matching documents
         if workspace_id == DEFAULT_WORKSPACE_ID:
             ent_res = s.run(
-                "MATCH (d1:Document)-[:MENTIONS]->(e:Entity) "
-                f"WHERE d1.raw_text IN {_esc_list(texts)} "
+                "MATCH (d:Document)-[:MENTIONS]->(e:Entity) "
+                f"WHERE d.raw_text IN {_esc_list(texts)} "
                 "RETURN DISTINCT e",
             )
         else:
             ent_res = s.run(
-                "MATCH (d1:Document)-[:MENTIONS]->(e:Entity) "
-                f"WHERE d1.raw_text IN {_esc_list(texts)} "
-                f"AND d1.workspace_id = {_esc(workspace_id)} "
+                "MATCH (d:Document)-[:MENTIONS]->(e:Entity) "
+                f"WHERE d.raw_text IN {_esc_list(texts)} "
+                f"AND d.workspace_id = {_esc(workspace_id)} "
                 f"AND e.workspace_id = {_esc(workspace_id)} "
                 "RETURN DISTINCT e",
             )
@@ -470,43 +482,31 @@ def get_related_documents(texts: List[str],
         # Step 2: also collect alias names
         expanded_names = set(entity_names)
         for name in entity_names:
-            if workspace_id == DEFAULT_WORKSPACE_ID:
-                alias_res = s.run(
-                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
-                    f"WHERE e.name = {_esc(name)} "
-                    "RETURN alias",
-                )
-            else:
-                alias_res = s.run(
-                    f"MATCH (e:Entity)-[:ALIAS]-(alias:Entity) "
-                    f"WHERE e.name = {_esc(name)} "
-                    f"AND alias.workspace_id = {_esc(workspace_id)} "
-                    "RETURN alias",
-                )
+            alias_res = s.run(_alias_query(name, workspace_id))
             for ar in alias_res:
                 aname = ar[0].get("name")
                 if aname:
                     expanded_names.add(aname)
 
         # Step 3: find documents mentioning those entities
-        acl = _acl_clause(user_groups, "d2")
+        acl = _acl_clause(user_groups, "m")
         results: list[Dict] = []
         seen: set[str] = set()
         for ename in expanded_names:
             if workspace_id == DEFAULT_WORKSPACE_ID:
                 doc_res = s.run(
-                    f"MATCH (ent:Entity)<-[:MENTIONS]-(d2:Document) "
+                    f"MATCH (ent:Entity)<-[:MENTIONS]-(m:Document) "
                     f"WHERE ent.name = {_esc(ename)} "
                     f"{acl} "
-                    "RETURN d2",
+                    "RETURN m",
                 )
             else:
                 doc_res = s.run(
-                    f"MATCH (ent:Entity)<-[:MENTIONS]-(d2:Document) "
+                    f"MATCH (ent:Entity)<-[:MENTIONS]-(m:Document) "
                     f"WHERE ent.name = {_esc(ename)} "
-                    f"AND d2.workspace_id = {_esc(workspace_id)} "
+                    f"AND m.workspace_id = {_esc(workspace_id)} "
                     f"{acl} "
-                    "RETURN d2",
+                    "RETURN m",
                 )
             for dr in doc_res:
                 dnode = dr[0]
