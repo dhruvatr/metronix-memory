@@ -142,7 +142,23 @@ Frontend splits on `" — "` to extract URL; no URL → title only.
 - RERANKER_ENABLED (true) — bge-reranker-v2-m3
 - QUERY_EXPANSION_ENABLED (true) — LLM query expansion
 - GRAPH_EXTRACTION_ENABLED (true) — NER → Memgraph
+- METATRON_OPENAI_COMPAT_ENABLED (true) — OpenAI-compatible API for Open WebUI
+- METATRON_OPENAI_COMPAT_KEY ("") — static API key for OpenAI-compat endpoints (empty = disabled)
 - See core/config.py for full list
+
+## Open WebUI Integration
+Metatron exposes OpenAI-compatible API at `/v1/` for use with Open WebUI or any OpenAI-compatible client.
+
+Endpoints:
+- `GET /v1/models` — list models (one per workspace, format: `metatron-rag-{workspace_id}`)
+- `POST /v1/chat/completions` — chat completions (streaming + non-streaming)
+- `GET /v1/openapi.json` — stub for connection verification
+
+Auth: `Authorization: Bearer <METATRON_OPENAI_COMPAT_KEY>`
+
+Setup in Open WebUI: Settings → Connections → OpenAI API → Add URL `http://metatron:8000/v1` + key.
+
+Docker: Open WebUI available in `docker-compose.full.yml` with profile `openwebui` on port 3080.
 
 ## Testing
 - 915+ tests, `make test` runs unit only

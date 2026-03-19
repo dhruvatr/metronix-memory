@@ -213,6 +213,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from metatron.api.routes.finops import router as finops_router
     app.include_router(finops_router, prefix="/api/v1")
 
+    # OpenAI-compatible API (for Open WebUI integration)
+    if settings.openai_compat_enabled:
+        from metatron.api.routes.openai_compat import router as openai_compat_router
+        app.include_router(openai_compat_router)
+
     # Lazy import benchmarker module router (optional dependency)
     try:
         from metatron.benchmarker.api import router as benchmarker_module_router

@@ -425,33 +425,33 @@ class TestAdmin:
 
 class TestSentenceSplitter:
     def test_splits_on_sentence_boundaries(self) -> None:
-        from metatron.api.routes.chat import _split_into_sentences
+        from metatron.api.routes.chat import split_into_sentences
         text = "First sentence. Second sentence. Third sentence here."
-        chunks = _split_into_sentences(text)
+        chunks = split_into_sentences(text)
         assert len(chunks) >= 1
         # All text is preserved
         assert "".join(chunks).replace(" ", "") == text.replace(" ", "")
 
     def test_empty_string_returns_original(self) -> None:
-        from metatron.api.routes.chat import _split_into_sentences
-        assert _split_into_sentences("") == [""]
+        from metatron.api.routes.chat import split_into_sentences
+        assert split_into_sentences("") == [""]
 
     def test_short_text_single_chunk(self) -> None:
-        from metatron.api.routes.chat import _split_into_sentences
-        assert _split_into_sentences("Hi.") == ["Hi."]
+        from metatron.api.routes.chat import split_into_sentences
+        assert split_into_sentences("Hi.") == ["Hi."]
 
 
 class TestSourceExtraction:
     def test_extracts_sources(self) -> None:
-        from metatron.api.routes.chat import _extract_sources_section
+        from metatron.api.routes.chat import extract_sources_section
         answer = "The answer.\n\n\U0001f4da Sources:\n\U0001f4c4 Doc A\n\U0001f4cb Task B"
-        body, sources = _extract_sources_section(answer)
+        body, sources = extract_sources_section(answer)
         assert body == "The answer."
         assert len(sources) == 2
         assert "\U0001f4c4 Doc A" in sources
 
     def test_no_sources_section(self) -> None:
-        from metatron.api.routes.chat import _extract_sources_section
-        body, sources = _extract_sources_section("Just an answer.")
+        from metatron.api.routes.chat import extract_sources_section
+        body, sources = extract_sources_section("Just an answer.")
         assert body == "Just an answer."
         assert sources == []
