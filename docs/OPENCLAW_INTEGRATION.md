@@ -18,24 +18,41 @@ Without this, the `/mcp` endpoint accepts all requests without authentication.
 
 ### 2. Ensure `/mcp` Is Accessible
 
-Metatron serves MCP over streamable-http at `/mcp` on the same port as the API (default `8000`). Make sure this endpoint is reachable from the OpenClaw server — check firewall rules and reverse proxy config.
+Metatron serves MCP over streamable-http at `/mcp` on the same port as the API (default `8000`). Make sure this endpoint is reachable from the OpenClaw server.
+
+**Nginx configuration:** if Metatron is behind an nginx reverse proxy (as in the dev environment at `ui.metatrondev.ximi.group`), you need to explicitly proxy the `/mcp` path. By default nginx may serve the SPA frontend for unknown paths and block POST requests.
+
+Add to your nginx config:
+
+```nginx
+location /mcp {
+    proxy_pass http://metatron-backend:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
 
 ### 3. Find Your Workspace ID
 
 MCP tools require a `workspace_id` parameter. Get yours:
 
 ```bash
-curl https://metatron-server:8000/api/v1/workspaces
+curl https://ui.metatrondev.ximi.group/api/v1/workspaces
 ```
 
 ### 4. Verify Connectivity
 
 ```bash
-curl -H "Authorization: Bearer your-secure-key-here" \
-     https://metatron-server:8000/mcp
+curl -X POST -H "Authorization: Bearer your-secure-key-here" \
+     https://ui.metatrondev.ximi.group/mcp
 ```
 
-A response (even an error about missing MCP payload) confirms the endpoint is reachable and the key is valid. A `401` means the key is wrong or missing.
+A response (even an error about missing MCP payload) confirms the endpoint is reachable and the key is valid. A `401` means the key is wrong or missing. A `405 Not Allowed` from nginx means the reverse proxy is not configured for `/mcp` (see step 2).
 
 ## Option A: mcp-remote (Recommended)
 
@@ -53,7 +70,7 @@ Add to `openclaw.json`:
         "command": "npx",
         "args": [
           "-y", "mcp-remote",
-          "https://metatron-server:8000/mcp",
+          "https://ui.metatrondev.ximi.group/mcp",
           "--header", "Authorization:Bearer ${METATRON_MCP_KEY}"
         ],
         "env": {
@@ -65,7 +82,7 @@ Add to `openclaw.json`:
 }
 ```
 
-Replace `metatron-server:8000` with your Metatron host and port.
+Replace `ui.metatrondev.ximi.group` with your Metatron host if using a different environment.
 
 ### Verify
 
@@ -107,7 +124,7 @@ Create `~/.mcporter/mcporter.json`:
 {
   "servers": {
     "metatron": {
-      "url": "https://metatron-server:8000/mcp",
+      "url": "https://ui.metatrondev.ximi.group/mcp",
       "headers": {
         "Authorization": "Bearer your-secure-key-here"
       }
@@ -172,8 +189,14 @@ Unlike mcp-remote, the agent calls Metatron through CLI commands via the built-i
 - Run `openclaw gateway restart` after changing config
 - Check OpenClaw logs for MCP connection errors
 
+**405 Not Allowed on /mcp**
+- Nginx is not proxying `/mcp` to the Metatron backend — add the `location /mcp` block to your nginx config (see step 2 in Metatron Setup)
+
+**GET /mcp returns HTML instead of MCP response**
+- Same issue — nginx serves the SPA frontend for unknown GET paths. Add the nginx proxy rule for `/mcp`
+
 **Timeout or connection refused**
-- Verify Metatron is running and `/mcp` is accessible from the OpenClaw server
+- Verify Metatron is running: `curl https://ui.metatrondev.ximi.group/health`
 - Check firewall/reverse proxy rules
 - Try `curl` from the OpenClaw server to confirm network connectivity
 
