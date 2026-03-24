@@ -3,6 +3,10 @@ name: Build CORE
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +24,7 @@ jobs:
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
-        password: ${{ secrets.TOKEN_PAT }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Determine branch name
       id: branch
