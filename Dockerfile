@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 COPY src/ src/
 
-RUN pip install --no-cache-dir --prefix=/install ".[connectors,channels,benchmarker]"
+RUN pip install --no-cache-dir --prefix=/install \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    ".[connectors,channels,benchmarker]"
 
 # Stage 2: Runtime
 FROM python:3.12-slim AS runtime
