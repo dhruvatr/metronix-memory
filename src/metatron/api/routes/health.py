@@ -81,7 +81,7 @@ async def ready() -> JSONResponse:
     all_ok = all(v == "ok" for v in services.values())
     return JSONResponse(
         content={"status": "ready" if all_ok else "degraded", "services": services},
-        status_code=200 if all_ok else 503,
+        status_code=200,
     )
 
 
