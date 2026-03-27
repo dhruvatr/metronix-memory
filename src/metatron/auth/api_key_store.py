@@ -8,6 +8,7 @@ Table: api_keys (created lazily via ensure_schema)
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from typing import Any
 
@@ -90,7 +91,7 @@ class ApiKeyStore:
         self, raw_key: str, static_key: str = ""
     ) -> dict[str, Any] | None:
         """Resolve a raw API key to user info. Returns None if invalid."""
-        if static_key and raw_key == static_key:
+        if static_key and hmac.compare_digest(raw_key, static_key):
             return {"user_id": "openai-default", "source": "static"}
 
         await self._ensure()

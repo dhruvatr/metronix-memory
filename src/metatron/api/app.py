@@ -87,11 +87,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning("env_migration.failed", error=str(exc))
 
     # --- Shared DB engine for user store + API key store ---
-    from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
-    _user_engine = _create_engine(settings.postgres_dsn)
+    _user_engine = None
+    try:
+        from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
+        _user_engine = _create_engine(settings.postgres_dsn)
+    except Exception as exc:
+        logger.error("db_engine.init.failed", error=str(exc))
 
     # --- User store ---
     try:
+        if _user_engine is None:
+            raise RuntimeError("DB engine not initialized")
         from metatron.auth.user_store import UserStore
         user_store = UserStore(_user_engine)
         logger.info("user_store.init.starting")
@@ -109,6 +115,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # --- API Key store (personal keys for /v1 endpoints) ---
     try:
+        if _user_engine is None:
+            raise RuntimeError("DB engine not initialized")
         from metatron.auth.api_key_store import ApiKeyStore
         api_key_store = ApiKeyStore(_user_engine)
         await api_key_store.ensure_schema()
@@ -166,6 +174,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cm = getattr(app.state, "channel_manager", None)
     if cm is not None:
         await cm.stop_all()
+    owui_sync = getattr(app.state, "owui_sync", None)
+    if owui_sync and owui_sync._client:
+        await owui_sync._client.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

@@ -15,6 +15,13 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["admin"])
 
 
+def _require_admin(request: Request) -> dict:
+    user = getattr(request.state, "user", {})
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
 def _generate_password(length: int = 16) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
@@ -34,9 +41,7 @@ class ImportRequest(BaseModel):
 
 @router.post("/admin/import-openwebui-users")
 async def import_openwebui_users(req: ImportRequest, request: Request) -> dict:
-    user = getattr(request.state, "user", {})
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    _require_admin(request)
 
     user_store = getattr(request.app.state, "user_store", None)
     api_key_store = getattr(request.app.state, "api_key_store", None)

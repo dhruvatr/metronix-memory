@@ -81,7 +81,6 @@ async def create_user(req: CreateUserRequest, request: Request) -> dict:
                 await user_store.update_user(
                     user["id"],
                     owui_user_id=sync_result["owui_user_id"],
-                    owui_token=sync_result["owui_token"],
                 )
 
     return user
@@ -99,6 +98,11 @@ async def list_users(
     return {"users": users, "total": total}
 
 
+def _sanitize_user(user: dict) -> dict:
+    """Remove internal fields from user dict before returning to API."""
+    return {k: v for k, v in user.items() if k not in ("owui_user_id",)}
+
+
 @router.get("/users/{user_id}")
 async def get_user(user_id: str, request: Request) -> dict:
     _require_admin(request)
@@ -106,7 +110,7 @@ async def get_user(user_id: str, request: Request) -> dict:
     user = await user_store.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return _sanitize_user(user)
 
 
 @router.patch("/users/{user_id}")
