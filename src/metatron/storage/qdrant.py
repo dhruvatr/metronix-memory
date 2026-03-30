@@ -36,7 +36,8 @@ from metatron.llm.embeddings import (  # TODO: async migration
     get_cached_embedding,
     get_cached_embedding_split,
 )
-from metatron.retrieval.hybrid import rrf_fusion
+# Lazy import to avoid circular: qdrant → hybrid → retrieval → channels → qdrant
+# from metatron.retrieval.hybrid import rrf_fusion  # imported in methods that need it
 
 logger = structlog.get_logger()
 
@@ -252,6 +253,8 @@ class QdrantVectorStore:
                     limit=limit * 3,
                     filter_conditions=filter_conditions,
                 )
+                from metatron.retrieval.hybrid import rrf_fusion
+
                 fused = rrf_fusion(dense_raw, sparse_raw, k=rrf_k, top_k=limit)
                 if not fused:
                     return []
@@ -740,6 +743,8 @@ class AsyncQdrantVectorStore:
                     limit=limit * 3,
                     filter_conditions=filter_conditions,
                 )
+                from metatron.retrieval.hybrid import rrf_fusion
+
                 fused = rrf_fusion(dense_raw, sparse_raw, k=rrf_k, top_k=limit)
                 if not fused:
                     return []
