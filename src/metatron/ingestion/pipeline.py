@@ -384,20 +384,39 @@ def _extract_graphs_parallel(
             _write_doc_to_graph(doc, ws_id)
         return doc.source_id
 
+    failed: list[tuple[Document, str]] = []
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {
-            pool.submit(_write_graph, doc, ws_id): doc.source_id
+        future_to_item = {
+            pool.submit(_write_graph, doc, ws_id): (doc, ws_id)
             for doc, ws_id in eligible
         }
-        for future in as_completed(futures):
-            src_id = futures[future]
+        for future in as_completed(future_to_item):
+            doc, ws_id = future_to_item[future]
             try:
                 future.result()
                 ok_count += 1
             except Exception as e:
                 error_count += 1
+                failed.append((doc, ws_id))
                 logger.warning("ingest.graph_parallel.error",
-                               source_id=src_id, error=str(e))
+                               source_id=doc.source_id, error=str(e))
+
+    # Retry failed documents sequentially (Memgraph may have recovered)
+    if failed:
+        retry_ok = 0
+        for doc, ws_id in failed:
+            try:
+                _write_graph(doc, ws_id)
+                retry_ok += 1
+                ok_count += 1
+                error_count -= 1
+            except Exception as e:
+                logger.warning("ingest.graph_retry.error",
+                               source_id=doc.source_id, error=str(e))
+        if retry_ok:
+            logger.info("ingest.graph_retry.recovered", retried=len(failed),
+                        recovered=retry_ok, still_failed=len(failed) - retry_ok)
 
     duration_s = time.time() - t0
     logger.info("ingest.graph_parallel.done",

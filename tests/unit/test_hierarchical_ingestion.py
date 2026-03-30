@@ -209,3 +209,49 @@ class TestGracefulDegradation:
         # hierarchy write).
         assert result.documents_new == 1
         assert mock_store.add_document.call_count >= 1
+
+
+class TestGraphRetry:
+    """Failed graph writes are retried sequentially after parallel extraction."""
+
+    def test_retry_recovers_failed_graph_writes(self) -> None:
+        from metatron.ingestion.pipeline import _extract_graphs_parallel
+
+        doc1 = _make_doc("A" * 200, source_id="doc1")
+        doc2 = _make_doc("B" * 200, source_id="doc2")
+        queue = [(doc1, "ws"), (doc2, "ws")]
+
+        call_count: dict[str, int] = {"doc1": 0, "doc2": 0}
+
+        def flaky_write(doc: Document, ws_id: str) -> None:
+            call_count[doc.source_id] += 1
+            # doc1 fails on first call (parallel), succeeds on retry
+            if doc.source_id == "doc1" and call_count["doc1"] == 1:
+                raise ConnectionError("Memgraph down")
+
+        with patch("metatron.ingestion.pipeline._write_jira_to_graph"):
+            with patch(
+                "metatron.ingestion.pipeline._write_doc_to_graph",
+                side_effect=flaky_write,
+            ):
+                result = _extract_graphs_parallel(queue, max_workers=1)
+
+        assert result["ok"] == 2
+        assert result["errors"] == 0
+
+    def test_retry_still_counts_persistent_failures(self) -> None:
+        from metatron.ingestion.pipeline import _extract_graphs_parallel
+
+        doc = _make_doc("A" * 200, source_id="doc1")
+        queue = [(doc, "ws")]
+
+        with patch("metatron.ingestion.pipeline._write_jira_to_graph"):
+            with patch(
+                "metatron.ingestion.pipeline._write_doc_to_graph",
+                side_effect=ConnectionError("Memgraph permanently down"),
+            ):
+                result = _extract_graphs_parallel(queue, max_workers=1)
+
+        # Still fails after retry
+        assert result["errors"] == 1
+        assert result["ok"] == 0
