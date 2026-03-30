@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List
 
 import structlog
 
@@ -109,7 +108,7 @@ class AliasRegistry:
         self._custom_aliases[alias.lower().strip()] = display_name.strip()
         self._save()
 
-    def resolve(self, query: str) -> List[str]:
+    def resolve(self, query: str) -> list[str]:
         """Resolve a name query to possible Jira display names.
 
         Args:

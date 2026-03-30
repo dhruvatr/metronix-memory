@@ -11,26 +11,14 @@ Uses SQLite in-memory via fixtures from conftest_benchmarker.py.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-# Ensure conftest_benchmarker fixtures are available
-from tests.unit.conftest_benchmarker import (
-    db_session,
-    patch_get_session,
-    sqlite_engine,
-)
 
 from metatron.benchmarker.db import crud
 from metatron.benchmarker.db.models import (
-    BenchmarkQuestionRow,
-    BenchmarkSetRow,
     TestResultRow,
-    TestRunRow,
 )
 
+# Ensure conftest_benchmarker fixtures are available
 
 # ---------------------------------------------------------------------------
 # Helpers

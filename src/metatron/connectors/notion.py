@@ -6,7 +6,7 @@ Supports incremental sync via last_edited_time filter.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 
@@ -104,7 +104,7 @@ class NotionConnector(ConnectorInterface):
                 edited_str = page.get("last_edited_time", "")
                 if since and edited_str:
                     edited = datetime.fromisoformat(edited_str.replace("Z", "+00:00"))
-                    since_aware = since.replace(tzinfo=timezone.utc) if since.tzinfo is None else since
+                    since_aware = since.replace(tzinfo=UTC) if since.tzinfo is None else since
                     if edited < since_aware:
                         return all_pages
                 all_pages.append(page)

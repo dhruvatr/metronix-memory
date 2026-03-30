@@ -4,6 +4,7 @@
 def test_result_type_cached_in_scoring():
     """_result_type should be cached via type_cache dict."""
     import inspect
+
     from metatron.retrieval import search
 
     source = inspect.getsource(search.hybrid_search_and_answer)
@@ -13,6 +14,7 @@ def test_result_type_cached_in_scoring():
 def test_memory_dicts_not_mutated_with_internal_scores():
     """Internal scoring keys (_signal_score, _final_score) must not leak into memory dicts."""
     import inspect
+
     from metatron.retrieval import search
 
     source = inspect.getsource(search.hybrid_search_and_answer)
@@ -31,6 +33,7 @@ def test_min_signal_score_in_config():
 def test_confidence_filter_in_search():
     """Search pipeline includes min_signal_score filtering logic."""
     import inspect
+
     from metatron.retrieval import search
     source = inspect.getsource(search.hybrid_search_and_answer)
     assert "min_signal_score" in source
@@ -38,8 +41,9 @@ def test_confidence_filter_in_search():
 
 def test_recall_graph_caches_entity_lookups():
     """Second call with same seeds should hit cache, not Memgraph."""
-    from unittest.mock import patch, MagicMock
-    from metatron.retrieval.channels import recall_graph, RecallContext, _cached_get_graph_entities
+    from unittest.mock import MagicMock, patch
+
+    from metatron.retrieval.channels import RecallContext, _cached_get_graph_entities, recall_graph
 
     ctx = RecallContext(
         original_query="test",
@@ -76,6 +80,7 @@ def test_recall_graph_caches_entity_lookups():
 def test_recall_channels_run_in_parallel():
     """Recall channels should use ThreadPoolExecutor, not sequential calls."""
     import inspect
+
     from metatron.retrieval import search
     source = inspect.getsource(search.hybrid_search_and_answer)
     assert "_run_recall_channels" in source

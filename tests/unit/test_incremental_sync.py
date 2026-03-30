@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from metatron.connectors.sync_state import SyncState
-
 
 # ---------------------------------------------------------------------------
 # SyncState
@@ -20,7 +19,7 @@ class TestSyncState:
 
     def test_set_and_get(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
-        ts = datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 2, 11, 10, 0, 0, tzinfo=UTC)
         state.set_last_sync("WS1", "confluence", ts)
         result = state.get_last_sync("WS1", "confluence")
         assert result == ts
@@ -30,7 +29,7 @@ class TestSyncState:
         state.set_last_sync("WS1", "jira")
         result = state.get_last_sync("WS1", "jira")
         assert result is not None
-        assert result.year == datetime.now(timezone.utc).year
+        assert result.year == datetime.now(UTC).year
 
     def test_clear(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
@@ -40,8 +39,8 @@ class TestSyncState:
 
     def test_multiple_workspaces(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
-        ts1 = datetime(2026, 2, 10, tzinfo=timezone.utc)
-        ts2 = datetime(2026, 2, 11, tzinfo=timezone.utc)
+        ts1 = datetime(2026, 2, 10, tzinfo=UTC)
+        ts2 = datetime(2026, 2, 11, tzinfo=UTC)
         state.set_last_sync("WS1", "confluence", ts1)
         state.set_last_sync("WS2", "confluence", ts2)
         assert state.get_last_sync("WS1", "confluence") == ts1
@@ -49,15 +48,15 @@ class TestSyncState:
 
     def test_multiple_source_types(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
-        ts1 = datetime(2026, 2, 10, tzinfo=timezone.utc)
-        ts2 = datetime(2026, 2, 11, tzinfo=timezone.utc)
+        ts1 = datetime(2026, 2, 10, tzinfo=UTC)
+        ts2 = datetime(2026, 2, 11, tzinfo=UTC)
         state.set_last_sync("WS1", "confluence", ts1)
         state.set_last_sync("WS1", "jira", ts2)
         assert state.get_last_sync("WS1", "confluence") == ts1
         assert state.get_last_sync("WS1", "jira") == ts2
 
     def test_file_persistence(self, tmp_path) -> None:
-        ts = datetime(2026, 2, 11, 12, 30, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 2, 11, 12, 30, 0, tzinfo=UTC)
         state1 = SyncState(state_dir=str(tmp_path))
         state1.set_last_sync("WS1", "jira", ts)
 
@@ -133,14 +132,16 @@ class TestGraphDeleteDocumentNode:
 
 class TestConnectorSinceParameter:
     def test_confluence_fetch_signature_accepts_since(self) -> None:
-        from metatron.connectors.confluence import ConfluenceConnector
         import inspect
+
+        from metatron.connectors.confluence import ConfluenceConnector
         sig = inspect.signature(ConfluenceConnector.fetch)
         assert "since" in sig.parameters
 
     def test_jira_fetch_signature_accepts_since(self) -> None:
-        from metatron.connectors.jira import JiraConnector
         import inspect
+
+        from metatron.connectors.jira import JiraConnector
         sig = inspect.signature(JiraConnector.fetch)
         assert "since" in sig.parameters
 

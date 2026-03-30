@@ -15,7 +15,7 @@ Default weights (sum = 0.85, output normalized to [0,1]):
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def recency_score(
@@ -29,11 +29,11 @@ def recency_score(
     Returns score in (0.0, 1.0].
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=timezone.utc)
+        updated_at = updated_at.replace(tzinfo=UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
 
     age_days = max((now - updated_at).total_seconds() / 86400.0, 0.0)
     decay_rate = math.log(2) / half_life_days

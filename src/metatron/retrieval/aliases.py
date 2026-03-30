@@ -10,7 +10,7 @@ Use seed_custom_aliases() to migrate these entries into the registry.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from metatron.retrieval.alias_registry import AliasRegistry
@@ -61,7 +61,7 @@ NAME_ALIASES: dict[str, list[str]] = {
 }
 
 
-def resolve_person_name(extracted: str) -> List[str]:
+def resolve_person_name(extracted: str) -> list[str]:
     """Resolve an extracted person name to Jira assignee display names.
 
     Args:

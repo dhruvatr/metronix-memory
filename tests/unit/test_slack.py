@@ -8,7 +8,6 @@ import pytest
 
 from metatron.channels.slack import SlackChannel, _split_message
 
-
 # ---------------------------------------------------------------------------
 # TestSplitMessage — pure function tests
 # ---------------------------------------------------------------------------

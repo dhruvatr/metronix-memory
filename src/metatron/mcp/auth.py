@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import hmac
 import os
-from typing import Optional
 
 import structlog
 
 logger = structlog.get_logger()
 
 
-def get_api_key() -> Optional[str]:
+def get_api_key() -> str | None:
     """Get the configured API key from environment.
 
     Returns:
@@ -23,7 +22,7 @@ def get_api_key() -> Optional[str]:
     return os.environ.get("METATRON_MCP_API_KEY")
 
 
-def validate_api_key(authorization_header: Optional[str]) -> bool:
+def validate_api_key(authorization_header: str | None) -> bool:
     """Validate the authorization header for MCP HTTP requests.
 
     Args:
@@ -62,7 +61,7 @@ def validate_api_key(authorization_header: Optional[str]) -> bool:
     return True
 
 
-def require_api_key(authorization_header: Optional[str]) -> None:
+def require_api_key(authorization_header: str | None) -> None:
     """Require a valid API key, raising an exception if invalid.
 
     Args:

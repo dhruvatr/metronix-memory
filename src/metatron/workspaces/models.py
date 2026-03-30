@@ -6,7 +6,7 @@ Migrated from PoC metatron/workspaces/models.py.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -42,7 +42,7 @@ class Workspace:
 
     def __post_init__(self) -> None:
         if self.created_at is None:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            self.created_at = datetime.now(UTC).isoformat()
         if self.config is None:
             self.config = {}
 

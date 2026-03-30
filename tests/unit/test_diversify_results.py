@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from metatron.retrieval.search import (
-    _collect_frags, _result_type, _append_sources, _JIRA_KEY_RE,
+    _JIRA_KEY_RE,
+    _append_sources,
+    _collect_frags,
+    _result_type,
     detect_response_language,
     extract_proper_nouns,
 )

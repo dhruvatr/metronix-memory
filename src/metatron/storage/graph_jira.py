@@ -8,18 +8,17 @@ Migrated from PoC: metatron_experiments/metatron/indexers/memgraph_workspace.py
 # TODO: async migration
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from typing import Optional
+from datetime import UTC, datetime
 
 import structlog
 
 from metatron.storage.memgraph import (
-    get_memgraph_driver,
-    extract_graph_from_text,
-    memgraph_retry,
     DEFAULT_WORKSPACE_ID,
     _esc,
     _esc_list,
+    extract_graph_from_text,
+    get_memgraph_driver,
+    memgraph_retry,
 )
 
 logger = structlog.get_logger()
@@ -30,7 +29,7 @@ _DONE_STATUSES = frozenset({
 })
 
 
-def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
+def _normalize_workspace_id(workspace_id: str | None) -> str:
     if workspace_id is None or workspace_id == "default":
         return DEFAULT_WORKSPACE_ID
     return workspace_id.strip()
@@ -41,11 +40,11 @@ def write_jira_graph_to_memgraph(
     jira_data: dict,
     markdown_text: str,
     user_id: str = "user",
-    workspace_id: Optional[str] = None,
-    doc_label: Optional[str] = None,
-    upload_time: Optional[str] = None,
+    workspace_id: str | None = None,
+    doc_label: str | None = None,
+    upload_time: str | None = None,
     skip_llm_extraction: bool = False,
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
 ) -> None:
     """Write Jira issue to Memgraph with workspace isolation.
 
@@ -132,11 +131,11 @@ def write_jira_graph_to_memgraph(
     logger.info("graph_jira.written", issue_key=issue_key, workspace_id=workspace_id)
 
 
-def _link_person(session, person_name: Optional[str], issue_key: str,
+def _link_person(session, person_name: str | None, issue_key: str,
                  rel_type: str, workspace_id: str, user_id: str,
                  doc_label: str,
-                 valid_from: Optional[str] = None,
-                 valid_to: Optional[str] = None) -> None:
+                 valid_from: str | None = None,
+                 valid_to: str | None = None) -> None:
     """Link a person (assignee/reporter) to a Jira issue node."""
     if not person_name:
         return
@@ -156,7 +155,7 @@ def _link_person(session, person_name: Optional[str], issue_key: str,
 def _write_jira_entities(session, graph: dict, issue_key: str,
                          workspace_id: str, user_id: str,
                          doc_label: str,
-                         valid_from: Optional[str] = None) -> None:
+                         valid_from: str | None = None) -> None:
     """Write extracted entities and relationships for a Jira issue."""
     entities = graph.get("entities", [])
     relationships = graph.get("relationships", [])

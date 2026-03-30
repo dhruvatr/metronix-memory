@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from metatron.mcp.errors import ErrorCode, MCPError, handle_tool_error
 
 

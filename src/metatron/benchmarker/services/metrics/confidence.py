@@ -14,11 +14,10 @@ No UQLM / langchain dependencies — uses direct RAG calls instead.
 from __future__ import annotations
 
 import asyncio
-import structlog
-from typing import List, Optional
 
 import httpx
 import numpy as np
+import structlog
 
 from metatron.benchmarker.schemas.test_result import ConfidenceResult
 from metatron.retrieval.search import hybrid_search_and_answer
@@ -62,7 +61,7 @@ class ConfidenceMetric:
     # Embedding helpers
     # ------------------------------------------------------------------
 
-    async def _get_embedding(self, text: str) -> List[float]:
+    async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for a single text via Embedding Proxy."""
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -80,8 +79,8 @@ class ConfidenceMetric:
             return []
 
     async def _get_embeddings_batch(
-        self, texts: List[str],
-    ) -> List[List[float]]:
+        self, texts: list[str],
+    ) -> list[list[float]]:
         """Get embeddings for a list of texts in parallel."""
         tasks = [self._get_embedding(text) for text in texts]
         return await asyncio.gather(*tasks)
@@ -91,7 +90,7 @@ class ConfidenceMetric:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
         """Cosine similarity between two vectors."""
         v1 = np.array(vec1)
         v2 = np.array(vec2)
@@ -104,7 +103,7 @@ class ConfidenceMetric:
 
     @staticmethod
     def _calculate_confidence_from_embeddings(
-        embeddings: List[List[float]],
+        embeddings: list[list[float]],
     ) -> dict:
         """Calculate confidence score from pairwise cosine similarity."""
         n = len(embeddings)
@@ -155,9 +154,9 @@ class ConfidenceMetric:
 
     async def _generate_responses(
         self, question: str, workspace_id: str,
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate NUM_RESPONSES answers by calling RAG multiple times."""
-        responses: List[str] = []
+        responses: list[str] = []
         for i in range(NUM_RESPONSES):
             answer = await asyncio.to_thread(
                 self._generate_single_response, question, workspace_id,
@@ -221,9 +220,9 @@ class ConfidenceMetric:
 
     async def calculate_batch(
         self,
-        questions: List[str],
-        workspace_id: Optional[str] = None,
-    ) -> List[ConfidenceResult]:
+        questions: list[str],
+        workspace_id: str | None = None,
+    ) -> list[ConfidenceResult]:
         """Calculate confidence for a batch of questions.
 
         Args:
@@ -235,7 +234,7 @@ class ConfidenceMetric:
         """
         logger.info("Calculating confidence for %d questions", len(questions))
 
-        results: List[ConfidenceResult] = []
+        results: list[ConfidenceResult] = []
         for idx, question in enumerate(questions, 1):
             logger.info(
                 "Confidence %d/%d: %.50s...", idx, len(questions), question,

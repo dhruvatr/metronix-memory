@@ -4,18 +4,17 @@ Ollama runs models locally, useful for privacy and offline operation.
 """
 
 import os
-from typing import List, Optional
 
 import requests
 import structlog
 
 from metatron.core.http import get_http_session
 from metatron.llm.base import (
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
 )
 
 logger = structlog.get_logger()
@@ -28,8 +27,8 @@ class OllamaProvider(LLMProvider):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        host: Optional[str] = None,
+        model: str | None = None,
+        host: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize Ollama provider.
@@ -84,9 +83,9 @@ class OllamaProvider(LLMProvider):
 
     def chat_completion(  # TODO: async migration
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 120,  # Ollama can be slow for first request
         **kwargs,

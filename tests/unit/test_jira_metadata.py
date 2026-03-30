@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from metatron.connectors.jira_processing import process_jira_issue
-from metatron.retrieval.search import _ACTIVITY_KW, _PERSON_RU, _PERSON_EN
+from metatron.retrieval.search import _ACTIVITY_KW, _PERSON_EN, _PERSON_RU
 
 
 def _make_jira_issue(**overrides):

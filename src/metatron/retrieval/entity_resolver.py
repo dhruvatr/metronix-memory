@@ -11,7 +11,6 @@ Env variables:
 import math
 import os
 import re
-from typing import List, Optional
 
 import structlog
 from rapidfuzz import fuzz
@@ -32,13 +31,13 @@ _NICKNAME_MAP = {
 }
 
 
-def _is_person_type(entity_type: Optional[str]) -> bool:
+def _is_person_type(entity_type: str | None) -> bool:
     return (entity_type or "").strip().lower() in {
         "person", "human", "employee", "user",
     }
 
 
-def _tokenize_name(name: str) -> List[str]:
+def _tokenize_name(name: str) -> list[str]:
     """Tokenize a name into normalized tokens.
 
     - Keeps words from parentheses as tokens
@@ -65,7 +64,7 @@ def _normalize_entity_name(name: str) -> str:
     return " ".join(_tokenize_name(name))
 
 
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+def cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
     """Calculate cosine similarity between two vectors."""
     dot_product = sum(a * b for a, b in zip(vec1, vec2))
     norm1 = math.sqrt(sum(a * a for a in vec1))
@@ -79,8 +78,8 @@ def find_typo_match(
     name: str,
     existing: list[str],
     threshold: float = 90,
-    entity_type: Optional[str] = None,
-) -> Optional[str]:
+    entity_type: str | None = None,
+) -> str | None:
     """Find a typo match via rapidfuzz.
 
     Returns the name of an existing entity if match > threshold.
@@ -140,7 +139,7 @@ def find_semantic_match(
     name: str,
     existing: list[str],
     threshold: float = 0.88,
-) -> Optional[str]:
+) -> str | None:
     """Find a semantically similar entity via Ollama embeddings.
 
     Returns the name if cosine similarity > threshold.

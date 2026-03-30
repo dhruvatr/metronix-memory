@@ -512,12 +512,12 @@ class PostgresStore:
             ID of the stored trace.
         """
         import json
-        
+
         logger.info("postgres.trace.store", workspace_id=workspace_id)
-        
+
         trace_id = uuid4().hex
         now = datetime.now(UTC)
-        
+
         async with self._engine.begin() as conn:
             await conn.execute(
                 text("""
@@ -534,7 +534,7 @@ class PostgresStore:
                     "created_at": now,
                 },
             )
-        
+
         return trace_id
 
     async def store_sync_log(

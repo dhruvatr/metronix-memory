@@ -7,8 +7,8 @@ so tests can create isolated app instances.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 import uvicorn
@@ -41,8 +41,8 @@ logger = structlog.get_logger()
 
 
 # MCP server instance — imported to register tools
-from metatron.mcp.server import mcp as mcp_server
 import metatron.mcp.tools  # noqa: F401 — registers @mcp.tool() decorators
+from metatron.mcp.server import mcp as mcp_server
 
 
 @asynccontextmanager
@@ -65,6 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # continues if the schema is already up to date.
     try:
         import asyncio
+
         from metatron.storage.migrations import run_migrations_sync
         await asyncio.to_thread(
             run_migrations_sync, settings.postgres_sync_dsn, settings.postgres_dsn

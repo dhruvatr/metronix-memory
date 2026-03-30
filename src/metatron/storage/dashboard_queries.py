@@ -32,7 +32,7 @@ def get_overview_stats(workspace_id: str) -> dict:
         "active_connectors": 0,
         "last_upload": None,
     }
-    
+
     # Get document count from Qdrant
     try:
         from metatron.storage.qdrant import get_hybrid_store
@@ -45,7 +45,7 @@ def get_overview_stats(workspace_id: str) -> dict:
             workspace_id=workspace_id,
             error=str(e),
         )
-    
+
     # Get jira_issues count from Memgraph
     try:
         from metatron.storage.memgraph import get_memgraph_driver
@@ -64,7 +64,7 @@ def get_overview_stats(workspace_id: str) -> dict:
             workspace_id=workspace_id,
             error=str(e),
         )
-    
+
     # Count active connectors from PostgreSQL
     try:
         with get_session() as session:
@@ -82,7 +82,7 @@ def get_overview_stats(workspace_id: str) -> dict:
             workspace_id=workspace_id,
             error=str(e),
         )
-    
+
     # Get last_upload from workspace stats
     try:
         from metatron.workspaces import get_workspace_manager
@@ -95,7 +95,7 @@ def get_overview_stats(workspace_id: str) -> dict:
             workspace_id=workspace_id,
             error=str(e),
         )
-    
+
     return result
 
 
@@ -118,7 +118,7 @@ def get_sync_history_data(workspace_id: str, limit: int) -> list[dict]:
                 .limit(limit)
             )
             rows = result.scalars().all()
-            
+
             items = []
             for row in rows:
                 items.append({
@@ -160,7 +160,7 @@ def get_ingestion_errors_data(workspace_id: str, limit: int) -> tuple[int, list[
                 )
             )
             total = count_result.scalar() or 0
-            
+
             # Get error records
             result = session.execute(
                 select(SyncLogRow)
@@ -172,7 +172,7 @@ def get_ingestion_errors_data(workspace_id: str, limit: int) -> tuple[int, list[
                 .limit(limit)
             )
             rows = result.scalars().all()
-            
+
             items = []
             for row in rows:
                 # Determine severity based on status
@@ -181,10 +181,10 @@ def get_ingestion_errors_data(workspace_id: str, limit: int) -> tuple[int, list[
                     severity = "critical"
                 elif row.status == "partial":
                     severity = "warning"
-                
+
                 # Format record identifier
                 record = row.source_title or f"{row.connector_type.capitalize()} Sync"
-                
+
                 # Extract error message from errors JSONB field
                 error_msg = "Unknown error"
                 if row.errors and isinstance(row.errors, list) and len(row.errors) > 0:
@@ -197,7 +197,7 @@ def get_ingestion_errors_data(workspace_id: str, limit: int) -> tuple[int, list[
                     # Truncate to 200 chars
                     if len(error_msg) > 200:
                         error_msg = error_msg[:197] + "..."
-                
+
                 items.append({
                     "source": row.connector_type,
                     "record": record,
@@ -205,7 +205,7 @@ def get_ingestion_errors_data(workspace_id: str, limit: int) -> tuple[int, list[
                     "time": row.created_at,
                     "severity": severity,
                 })
-            
+
             return total, items
     except Exception as e:
         logger.warning(
@@ -231,7 +231,7 @@ def get_query_trend_data(workspace_id: str, days: int) -> tuple[list[str], list[
             # Calculate date range
             end_date = datetime.now(UTC).date()
             start_date = end_date - timedelta(days=days - 1)
-            
+
             # Query: group by date, count queries
             result = session.execute(
                 select(
@@ -246,10 +246,10 @@ def get_query_trend_data(workspace_id: str, days: int) -> tuple[list[str], list[
                 .order_by(cast(QueryTraceRow.created_at, Date))
             )
             rows = result.all()
-            
+
             # Build date -> count mapping
             date_counts = {row.date: row.count for row in rows}
-            
+
             # Generate complete date range (fill missing dates with 0)
             labels = []
             values = []
@@ -258,7 +258,7 @@ def get_query_trend_data(workspace_id: str, days: int) -> tuple[list[str], list[
                 labels.append(current_date.isoformat())
                 values.append(date_counts.get(current_date, 0))
                 current_date += timedelta(days=1)
-            
+
             return labels, values
     except Exception as e:
         logger.warning(
@@ -286,7 +286,7 @@ def get_graph_stats_data(workspace_id: str) -> dict:
         "raw_documents": 0,
         "chunks": 0,
     }
-    
+
     # Get graph stats from Memgraph
     try:
         from metatron.storage.memgraph import get_memgraph_driver
@@ -319,18 +319,18 @@ def get_graph_stats_data(workspace_id: str) -> dict:
             )
             result["orphan_nodes"] = 0
             result["orphan_list"] = []
-    
+
     except Exception as e:
         logger.warning(
             "dashboard.graph_stats.memgraph.error",
             workspace_id=workspace_id,
             error=str(e),
         )
-    
+
     # Get document and chunk counts from Qdrant
     try:
         from metatron.storage.qdrant import get_hybrid_store
-        
+
         store = get_hybrid_store(workspace_id)
         qdrant_stats = store.get_stats()
         result["raw_documents"] = qdrant_stats.get("file_count", 0)
@@ -341,5 +341,5 @@ def get_graph_stats_data(workspace_id: str) -> dict:
             workspace_id=workspace_id,
             error=str(e),
         )
-    
+
     return result

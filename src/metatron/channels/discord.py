@@ -8,11 +8,10 @@ indicator, long message splitting, and file uploads.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import discord
 import structlog
-
-from typing import Any
 
 from metatron.agent.router import AgentRouter
 

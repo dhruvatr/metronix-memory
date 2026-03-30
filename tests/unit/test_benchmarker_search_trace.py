@@ -8,10 +8,7 @@ Validates:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
+from unittest.mock import patch
 
 # We mock all internal functions so the test doesn't need real services.
 _SEARCH_MODULE = "metatron.retrieval.search"

@@ -12,10 +12,9 @@ fresh event loop to prevent conflicts with the running uvicorn loop.
 from __future__ import annotations
 
 import asyncio
-import structlog
-from typing import Dict, List, Optional
 
 import pandas as pd
+import structlog
 from benchmark_qed.autoe.assertion_scores import get_assertion_scores
 from benchmark_qed.config.llm_config import LLMConfig, LLMProvider
 from benchmark_qed.llm.provider.openai import OpenAIChat
@@ -50,8 +49,8 @@ class QEDMetricsCalculator:
         self.concurrent_requests = concurrent_requests
         self.temperature = temperature
 
-        self._llm: Optional[OpenAIChat] = None
-        self._llm_config: Optional[LLMConfig] = None
+        self._llm: OpenAIChat | None = None
+        self._llm_config: LLMConfig | None = None
 
         logger.info(
             "QEDMetricsCalculator initialized: model=%s", deepseek_model,
@@ -72,8 +71,8 @@ class QEDMetricsCalculator:
 
     def _prepare_dataframes(
         self,
-        questions: List[BenchmarkQuestion],
-        actual_answers: List[str],
+        questions: list[BenchmarkQuestion],
+        actual_answers: list[str],
     ) -> tuple:
         """Prepare answers and assertions DataFrames for AutoE.
 
@@ -110,10 +109,10 @@ class QEDMetricsCalculator:
 
     async def evaluate_answers(
         self,
-        questions: List[BenchmarkQuestion],
-        actual_answers: List[str],
-        latencies_ms: List[float],
-    ) -> List[Dict]:
+        questions: list[BenchmarkQuestion],
+        actual_answers: list[str],
+        latencies_ms: list[float],
+    ) -> list[dict]:
         """Evaluate correctness of answers using BenchmarkQED AutoE.
 
         Builds two DataFrames (answers + assertions) and calls
@@ -184,15 +183,15 @@ class QEDMetricsCalculator:
 
     def _build_results(
         self,
-        questions: List[BenchmarkQuestion],
+        questions: list[BenchmarkQuestion],
         results_df: pd.DataFrame,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Build per-question result dicts from the AutoE results DataFrame."""
         # Map question_text -> question_id
         question_text_to_id = {q.text: q.id for q in questions}
 
         # Group results by question
-        results_by_question: Dict[str, List[Dict]] = {}
+        results_by_question: dict[str, list[dict]] = {}
         for _, row in results_df.iterrows():
             question_text = row.get("question", "")
             question_id = question_text_to_id.get(question_text)
@@ -214,7 +213,7 @@ class QEDMetricsCalculator:
             })
 
         # Build final results list
-        results: List[Dict] = []
+        results: list[dict] = []
         for question in questions:
             claim_scores = results_by_question.get(question.id, [])
             if claim_scores:

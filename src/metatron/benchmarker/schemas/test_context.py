@@ -9,7 +9,6 @@ on ``hybrid_search_and_answer()`` instead of a separate query log fetch.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
 
 from .benchmark import BenchmarkQuestion
 
@@ -22,9 +21,9 @@ class ChunkData:
     title: str
     data: str  # chunk text content
     doc_label: str
-    score: Optional[float] = None
-    chunk_num: Optional[int] = None
-    type: Optional[str] = None
+    score: float | None = None
+    chunk_num: int | None = None
+    type: str | None = None
 
 
 @dataclass
@@ -41,22 +40,22 @@ class TestContext:
     question: BenchmarkQuestion
     answer: str
     latency_ms: float
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
 
     # White-box data from return_trace
-    source_results: Optional[List[Dict]] = field(default=None)
-    fragments: Optional[List[str]] = field(default=None)
-    graph_entities: Optional[List[Dict]] = field(default=None)
+    source_results: list[dict] | None = field(default=None)
+    fragments: list[str] | None = field(default=None)
+    graph_entities: list[dict] | None = field(default=None)
 
     # Ground-truth doc_labels for retrieval metrics
-    expected_doc_labels: Optional[Set[str]] = field(default=None)
+    expected_doc_labels: set[str] | None = field(default=None)
 
     # Ordered retrieved doc_labels from search results
-    retrieved_doc_labels: Optional[List[str]] = field(default=None)
+    retrieved_doc_labels: list[str] | None = field(default=None)
 
     # Chunk data fetched from Qdrant (populated by ContextFetcher)
-    source_chunks: Optional[List[ChunkData]] = field(default=None)
-    enrichment_chunks: Optional[List[ChunkData]] = field(default=None)
+    source_chunks: list[ChunkData] | None = field(default=None)
+    enrichment_chunks: list[ChunkData] | None = field(default=None)
 
     @property
     def has_white_box_data(self) -> bool:
@@ -64,9 +63,9 @@ class TestContext:
         return self.source_results is not None and self.fragments is not None
 
     @property
-    def all_chunks(self) -> List[ChunkData]:
+    def all_chunks(self) -> list[ChunkData]:
         """Return all chunks (source + enrichment)."""
-        chunks: List[ChunkData] = []
+        chunks: list[ChunkData] = []
         if self.source_chunks:
             chunks.extend(self.source_chunks)
         if self.enrichment_chunks:
@@ -78,7 +77,7 @@ class TestContext:
         """Concatenated text of all chunks for metric calculations."""
         return "\n\n".join(chunk.data for chunk in self.all_chunks)
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dictionary."""
         return {
             "question": self.question.model_dump(),

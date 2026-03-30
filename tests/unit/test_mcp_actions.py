@@ -10,7 +10,6 @@ import pytest
 
 from metatron.mcp.action_store import ActionStore, PendingAction
 
-
 # ---------------------------------------------------------------------------
 # ActionStore tests
 # ---------------------------------------------------------------------------

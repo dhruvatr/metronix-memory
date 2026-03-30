@@ -9,11 +9,10 @@ if each ground truth claim can be attributed to the context.
 from __future__ import annotations
 
 import json
-import structlog
 from dataclasses import dataclass
-from typing import List
 
 import httpx
+import structlog
 
 logger = structlog.get_logger()
 
@@ -89,11 +88,11 @@ class ContextRecallMetric:
 
     async def calculate_batch(
         self,
-        questions: List[str],
-        answers: List[str],
-        contexts: List[str],
-        ground_truths: List[str],
-    ) -> List[ContextRecallResult]:
+        questions: list[str],
+        answers: list[str],
+        contexts: list[str],
+        ground_truths: list[str],
+    ) -> list[ContextRecallResult]:
         """Calculate context recall for a batch of questions.
 
         Args:
@@ -105,7 +104,7 @@ class ContextRecallMetric:
         Returns:
             List of :class:`ContextRecallResult` with scores and reasoning.
         """
-        results: List[ContextRecallResult] = []
+        results: list[ContextRecallResult] = []
 
         for question, answer, context, ground_truth in zip(
             questions, answers, contexts, ground_truths,

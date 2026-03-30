@@ -94,11 +94,11 @@ class TestEmptyFile:
 
 class TestFileParsing:
     def test_txt_file_decoded(self, router: AgentRouter) -> None:
-        text = router._parse_upload("Hello world!".encode(), "doc.txt", ".txt")
+        text = router._parse_upload(b"Hello world!", "doc.txt", ".txt")
         assert text == "Hello world!"
 
     def test_md_file_decoded(self, router: AgentRouter) -> None:
-        text = router._parse_upload("# Heading\nBody".encode(), "doc.md", ".md")
+        text = router._parse_upload(b"# Heading\nBody", "doc.md", ".md")
         assert "Heading" in text
 
     def test_html_file_processed(self, router: AgentRouter) -> None:

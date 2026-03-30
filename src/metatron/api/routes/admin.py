@@ -6,7 +6,7 @@ Provides cleanup and system status operations.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException
@@ -33,9 +33,9 @@ class CleanupPreviewResponse(BaseModel):
 
 class CleanupResponse(BaseModel):
     status: str
-    qdrant: Optional[dict[str, Any]] = None
-    memgraph: Optional[dict[str, Any]] = None
-    workspace_id: Optional[str] = None
+    qdrant: dict[str, Any] | None = None
+    memgraph: dict[str, Any] | None = None
+    workspace_id: str | None = None
 
 
 @router.get("/cleanup/preview", response_model=CleanupPreviewResponse)
@@ -48,7 +48,7 @@ def preview_cleanup() -> CleanupPreviewResponse:
 @router.delete("/cleanup/workspace/{workspace_id}", response_model=CleanupResponse)
 def cleanup_workspace_endpoint(
     workspace_id: str,
-    x_confirm_cleanup: Optional[str] = Header(None),
+    x_confirm_cleanup: str | None = Header(None),
 ) -> CleanupResponse:
     """Delete all data for a specific workspace.
 
@@ -68,7 +68,7 @@ def cleanup_workspace_endpoint(
 
 @router.delete("/cleanup/all", response_model=CleanupResponse)
 def cleanup_all_endpoint(
-    x_confirm_cleanup: Optional[str] = Header(None),
+    x_confirm_cleanup: str | None = Header(None),
 ) -> CleanupResponse:
     """Delete ALL data from ALL databases.
 

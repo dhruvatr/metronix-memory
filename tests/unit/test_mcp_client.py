@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from metatron.mcp.config import MCPServerConfig
-
 
 # ---------------------------------------------------------------------------
 # MCPServerConfig tests
@@ -226,8 +224,8 @@ class TestAdapterRegistry:
 
     def test_registered_adapter(self) -> None:
         from metatron.mcp.adapter import (
-            GenericMCPAdapter,
             _ADAPTER_REGISTRY,
+            GenericMCPAdapter,
             get_adapter,
             register_adapter,
         )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import pytest
@@ -11,8 +10,8 @@ pytest.importorskip("aiosqlite")
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from metatron.auth.user_mapping import _CACHE_TTL_SECONDS, PlatformUserMapper
 from metatron.auth.user_store import UserStore
-from metatron.auth.user_mapping import PlatformUserMapper, _CACHE_TTL_SECONDS
 from metatron.core.events import USER_CREATED
 from metatron.core.models import User
 

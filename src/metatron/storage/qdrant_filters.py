@@ -7,10 +7,8 @@ Migrated from PoC: metatron_experiments/metatron/indexers/hybrid_store_workspace
 """
 from __future__ import annotations
 
-from typing import List, Dict
-
 import structlog
-from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny
+from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
 
 from metatron.storage.qdrant import QdrantVectorStore
 
@@ -21,8 +19,8 @@ logger = structlog.get_logger()
 # Filter-based search methods (scroll, no vector query)
 # ---------------------------------------------------------------------------
 
-def search_by_date(store: QdrantVectorStore, dates: List[str],
-                   limit: int = 10) -> List[Dict]:
+def search_by_date(store: QdrantVectorStore, dates: list[str],
+                   limit: int = 10) -> list[dict]:
     """Search by date filter using MatchAny."""
     if not dates:
         return []
@@ -38,7 +36,7 @@ def search_by_date(store: QdrantVectorStore, dates: List[str],
 
 
 def search_by_type(store: QdrantVectorStore, doc_type: str,
-                   limit: int = 10) -> List[Dict]:
+                   limit: int = 10) -> list[dict]:
     """Search by document type filter."""
     filter_cond = Filter(
         must=[FieldCondition(key="type", match=MatchValue(value=doc_type))]
@@ -51,8 +49,8 @@ def search_by_type(store: QdrantVectorStore, doc_type: str,
     return [store._format_result(p, 1.0) for p in results]
 
 
-def search_by_doc_labels(store: QdrantVectorStore, doc_labels: List[str],
-                         limit: int = 10) -> List[Dict]:
+def search_by_doc_labels(store: QdrantVectorStore, doc_labels: list[str],
+                         limit: int = 10) -> list[dict]:
     """Search by document label filter."""
     labels = [label for label in doc_labels if label]
     if not labels:
@@ -73,7 +71,7 @@ def search_by_doc_labels(store: QdrantVectorStore, doc_labels: List[str],
 # Collection info / stats
 # ---------------------------------------------------------------------------
 
-def get_collection_info(store: QdrantVectorStore) -> Dict:
+def get_collection_info(store: QdrantVectorStore) -> dict:
     """Get collection statistics."""
     try:
         info = store.client.get_collection(store.collection_name)
@@ -94,7 +92,7 @@ def get_collection_info(store: QdrantVectorStore) -> Dict:
         }
 
 
-def get_stats(store: QdrantVectorStore) -> Dict:
+def get_stats(store: QdrantVectorStore) -> dict:
     """Get detailed statistics: chunk count and unique file count.
 
     Delegates to the instance method ``QdrantVectorStore.get_stats()``.
@@ -103,4 +101,4 @@ def get_stats(store: QdrantVectorStore) -> Dict:
 
 
 # Re-export from main module for backward compatibility
-from metatron.storage.qdrant import get_hybrid_store, clear_store_cache  # noqa: F401, E402
+from metatron.storage.qdrant import clear_store_cache, get_hybrid_store  # noqa: F401, E402

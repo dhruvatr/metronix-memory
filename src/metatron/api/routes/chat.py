@@ -9,7 +9,7 @@ import asyncio
 import json
 import re
 import threading
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 from uuid import uuid4
 
 import structlog
@@ -28,7 +28,7 @@ _history_lock = threading.Lock()
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1)
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
     user_id: str = "user"
     top_k: int = Field(25, ge=1, le=50)
     history_turns: int = Field(6, ge=0, le=20)
@@ -198,7 +198,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
             while not task.done():
                 try:
                     await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield {"event": "ping", "data": "{}"}
             answer: str = task.result()
         except Exception as exc:
@@ -236,7 +236,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
 async def upload_file(
     file: UploadFile = File(...),
     user_id: str = Form("user"),
-    workspace_id: Optional[str] = Form(None),
+    workspace_id: str | None = Form(None),
     extract_graph: bool = Form(True),
 ) -> UploadResponse:
     """Upload and index a document to a workspace."""

@@ -15,7 +15,6 @@ from metatron.benchmarker.schemas.benchmark import QEDDocument
 from metatron.benchmarker.services.document_sampler import DocumentSampler
 from metatron.core.models import Connection, Document
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

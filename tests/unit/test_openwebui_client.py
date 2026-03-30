@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
-import pytest
+
 import httpx
+import pytest
 import respx
 
 from metatron.auth.openwebui_client import OpenWebUIClient

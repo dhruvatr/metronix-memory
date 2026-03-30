@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from metatron.mcp.errors import handle_tool_error
 from metatron.mcp.server import mcp
@@ -20,8 +20,8 @@ from metatron.mcp.tools.models import SyncResponse, SyncSourceResult
     ),
 )
 async def metatron_sync(
-    source: Optional[str] = None,
-    workspace_id: Optional[str] = None,
+    source: str | None = None,
+    workspace_id: str | None = None,
     force_full: bool = False,
 ) -> dict[str, Any]:
     """Trigger document sync from configured MCP sources."""

@@ -9,8 +9,9 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from .overview import get_valid_workspace
 from metatron.workspaces.models import Workspace
+
+from .overview import get_valid_workspace
 
 router = APIRouter()
 
@@ -48,13 +49,13 @@ async def get_sync_history(
         Sync history items.
     """
     from metatron.storage.dashboard_queries import get_sync_history_data
-    
+
     items = await asyncio.to_thread(
         get_sync_history_data,
         workspace.workspace_id,
         limit,
     )
-    
+
     return SyncHistoryResponse(items=items)
 
 
@@ -90,11 +91,11 @@ async def get_ingestion_errors(
         Ingestion errors with total count and items.
     """
     from metatron.storage.dashboard_queries import get_ingestion_errors_data
-    
+
     total, items = await asyncio.to_thread(
         get_ingestion_errors_data,
         workspace.workspace_id,
         limit,
     )
-    
+
     return IngestionErrorsResponse(total=total, items=items)

@@ -7,9 +7,9 @@ benchmarks and test runs.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +26,6 @@ from metatron.benchmarker.db.models import (  # noqa: F401 — register models w
 )
 from metatron.core.config import Settings
 from metatron.storage.pg_models import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

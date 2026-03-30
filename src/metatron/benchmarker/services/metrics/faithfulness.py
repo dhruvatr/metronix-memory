@@ -9,11 +9,10 @@ the answer can be inferred from the context.
 from __future__ import annotations
 
 import json
-import structlog
 from dataclasses import dataclass
-from typing import List
 
 import httpx
+import structlog
 
 logger = structlog.get_logger()
 
@@ -88,10 +87,10 @@ class FaithfulnessMetric:
 
     async def calculate_batch(
         self,
-        questions: List[str],
-        answers: List[str],
-        contexts: List[str],
-    ) -> List[FaithfulnessResult]:
+        questions: list[str],
+        answers: list[str],
+        contexts: list[str],
+    ) -> list[FaithfulnessResult]:
         """Calculate faithfulness for a batch of question/answer/context triples.
 
         Args:
@@ -102,7 +101,7 @@ class FaithfulnessMetric:
         Returns:
             List of :class:`FaithfulnessResult` with scores and reasoning.
         """
-        results: List[FaithfulnessResult] = []
+        results: list[FaithfulnessResult] = []
 
         for question, answer, context in zip(questions, answers, contexts):
             try:

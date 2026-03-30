@@ -9,9 +9,10 @@ Stores workspace metadata in Memgraph for sync between environments.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Callable, Optional, TypeVar
+from typing import TypeVar
 
 import structlog
 from neo4j import GraphDatabase
@@ -88,7 +89,7 @@ class MemgraphWorkspacePersistence:
                 f" w.user_id = {_esc(workspace.user_id)},"
                 f" w.is_active = {_esc(workspace.is_active)},"
                 f" w.config = {_esc(json.dumps(workspace.config or {}))},"
-                f" w.updated_at = {_esc(datetime.now(timezone.utc).isoformat())}"
+                f" w.updated_at = {_esc(datetime.now(UTC).isoformat())}"
             )
 
     @with_retry()
@@ -121,7 +122,7 @@ class MemgraphWorkspacePersistence:
             session.run(
                 f"MERGE (s:WorkspaceSetting {{user_id: {_esc(user_id)}}})"
                 f" SET s.active_workspace_id = {_esc(workspace_id)},"
-                f" s.updated_at = {_esc(datetime.now(timezone.utc).isoformat())}"
+                f" s.updated_at = {_esc(datetime.now(UTC).isoformat())}"
             )
 
     @with_retry()
@@ -146,7 +147,7 @@ class MemgraphWorkspacePersistence:
                 f" s.jira_issue_count = {_esc(stats.jira_issue_count)},"
                 f" s.total_chunks = {_esc(stats.total_chunks)},"
                 f" s.last_upload_time = {_esc(stats.last_upload_time)},"
-                f" s.updated_at = {_esc(datetime.now(timezone.utc).isoformat())}"
+                f" s.updated_at = {_esc(datetime.now(UTC).isoformat())}"
             )
 
     @with_retry()
@@ -205,7 +206,7 @@ class MemgraphWorkspacePersistence:
             return None
 
 
-_persistence: Optional[MemgraphWorkspacePersistence] = None
+_persistence: MemgraphWorkspacePersistence | None = None
 
 
 def get_workspace_persistence() -> MemgraphWorkspacePersistence:

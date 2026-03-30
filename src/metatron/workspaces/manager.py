@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import uuid
 from threading import Lock
-from typing import Optional
 
 import structlog
 
@@ -68,16 +67,17 @@ class WorkspaceManager:
     def _sync_workspace_to_postgres(self, workspace: Workspace) -> None:
         """Sync workspace to PostgreSQL for foreign key integrity (minimal fields only)."""
         try:
-            from metatron.storage.pg_connection import get_session
             from sqlalchemy import text
-            
+
+            from metatron.storage.pg_connection import get_session
+
             with get_session() as session:
                 # Check if workspace exists
                 result = session.execute(
                     text("SELECT id FROM workspaces WHERE id = :id"),
                     {"id": workspace.workspace_id}
                 ).fetchone()
-                
+
                 if result:
                     # Update existing
                     session.execute(
@@ -101,7 +101,7 @@ class WorkspaceManager:
                             "slug": workspace.workspace_id.lower(),
                         }
                     )
-                
+
                 session.commit()
                 logger.info("workspace.postgres.synced", workspace_id=workspace.workspace_id)
         except Exception as e:
@@ -257,7 +257,7 @@ class WorkspaceManager:
             self._ensure_default_workspace()
 
 
-_workspace_manager: Optional[WorkspaceManager] = None
+_workspace_manager: WorkspaceManager | None = None
 _manager_lock = Lock()
 
 

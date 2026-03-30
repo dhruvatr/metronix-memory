@@ -5,19 +5,15 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from metatron.storage.graph_entities import (
     ALLOWED_ENTITY_TYPES,
-    PERSON_MERGE_MAP,
     TYPE_ALIASES,
+    _looks_like_sentence,
     is_role_not_person,
     is_valid_entity_name,
     normalize_entity_type,
     normalize_person_name,
-    _looks_like_sentence,
 )
-
 
 # ---------------------------------------------------------------------------
 # normalize_entity_type
@@ -295,7 +291,7 @@ class TestConfluenceGraphSync:
         )
 
         # Simulate what pipeline does for each doc type
-        from metatron.ingestion.pipeline import _write_jira_to_graph, _write_doc_to_graph
+        from metatron.ingestion.pipeline import _write_doc_to_graph, _write_jira_to_graph
 
         if jira_doc.source_type == "jira":
             _write_jira_to_graph(jira_doc, "WS")

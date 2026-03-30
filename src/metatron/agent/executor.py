@@ -162,7 +162,7 @@ class ToolExecutor:
                 output_length=len(output),
             )
             return output
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise ToolTimeoutError(
                 f"Command '{command}' exceeded {self._command_timeout}s timeout"
             )

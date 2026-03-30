@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, Dict, TypeVar
+from typing import Any, TypeVar
 
 import structlog
 
@@ -32,7 +33,7 @@ class OperationMetrics:
     def avg_duration(self) -> float:
         return self.total_duration / self.count if self.count > 0 else 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "count": self.count,
             "success_count": self.success_count,
@@ -56,7 +57,7 @@ class MetricsCollector:
     """Thread-safe metrics collector."""
 
     def __init__(self) -> None:
-        self._metrics: Dict[str, OperationMetrics] = defaultdict(OperationMetrics)
+        self._metrics: dict[str, OperationMetrics] = defaultdict(OperationMetrics)
         self._lock = threading.Lock()
         self._start_time = time.time()
 
@@ -79,7 +80,7 @@ class MetricsCollector:
             m.max_duration = max(m.max_duration, duration)
             m.last_error = error[:200]
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         with self._lock:
             uptime = time.time() - self._start_time
             return {
@@ -99,7 +100,7 @@ class MetricsCollector:
 _collector = MetricsCollector()
 
 
-def get_metrics() -> Dict[str, Any]:
+def get_metrics() -> dict[str, Any]:
     return _collector.get_metrics()
 
 

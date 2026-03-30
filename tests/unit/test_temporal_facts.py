@@ -10,8 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from metatron.connectors.jira_processing import process_jira_issue
 from metatron.core.models import Document

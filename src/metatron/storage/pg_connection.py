@@ -9,9 +9,9 @@ Provides SQLAlchemy engine and session with connection pooling.
 from __future__ import annotations
 
 import atexit
+from collections.abc import Generator
 from contextlib import contextmanager
 from threading import Lock
-from typing import Generator
 
 import structlog
 from sqlalchemy import create_engine
@@ -130,14 +130,13 @@ def store_query_trace_sync(
     Returns:
         ID of the stored trace.
     """
-    import json
     from datetime import UTC, datetime
     from uuid import uuid4
-    
+
     from metatron.storage.pg_models import QueryTraceRow
-    
+
     trace_id = uuid4().hex
-    
+
     try:
         with get_session() as session:
             trace_row = QueryTraceRow(
@@ -150,7 +149,7 @@ def store_query_trace_sync(
             )
             session.add(trace_row)
             session.commit()
-            
+
         logger.info(
             "postgres.query_trace.stored",
             trace_id=trace_id,
@@ -164,7 +163,7 @@ def store_query_trace_sync(
             error=str(e),
         )
         # Don't fail the query if trace storage fails
-    
+
     return trace_id
 
 

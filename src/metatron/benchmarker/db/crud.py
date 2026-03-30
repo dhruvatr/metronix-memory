@@ -7,14 +7,11 @@ All BenchmarkSet queries are scoped by workspace_id.
 
 from __future__ import annotations
 
-import structlog
 from datetime import datetime
-from typing import Optional
 from uuid import uuid4
 
+import structlog
 from sqlalchemy.orm import Session, joinedload
-
-from metatron.storage.pg_connection import get_session
 
 from .models import (
     BenchmarkQuestionRow,
@@ -67,9 +64,9 @@ def upsert_benchmark_set(
     workspace_id: str,
     connection_id: str,
     questions: list[dict],
-    benchmark_id: Optional[str] = None,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
+    benchmark_id: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
     tokens_used: int = 0,
 ) -> BenchmarkSetRow:
     """Create or update a benchmark set (upsert).
@@ -164,7 +161,7 @@ def create_benchmark_set(
     workspace_id: str,
     connection_id: str,
     name: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     tokens_used: int = 0,
     question_count: int = 0,
 ) -> BenchmarkSetRow:
@@ -199,7 +196,7 @@ def get_benchmark_set(
     session: Session,
     benchmark_set_id: str,
     workspace_id: str,
-) -> Optional[BenchmarkSetRow]:
+) -> BenchmarkSetRow | None:
     """Return a single benchmark set by id, filtered by workspace_id."""
     return (
         session.query(BenchmarkSetRow)
@@ -216,7 +213,7 @@ def update_benchmark_set(
     benchmark_set_id: str,
     workspace_id: str,
     **kwargs,
-) -> Optional[BenchmarkSetRow]:
+) -> BenchmarkSetRow | None:
     """Update fields on an existing benchmark set.
 
     Only the supplied keyword arguments are applied.
@@ -255,7 +252,7 @@ def clone_benchmark_set(
     session: Session,
     benchmark_set_id: str,
     workspace_id: str,
-) -> Optional[BenchmarkSetRow]:
+) -> BenchmarkSetRow | None:
     """Clone a benchmark set with all its questions.
 
     Creates a new set with name ``"<original> copy"`` and fresh UUIDs for
@@ -361,14 +358,14 @@ def create_test_run(
     session: Session,
     benchmark_set_id: str,
     name: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     total_tests: int = 0,
-    avg_correctness: Optional[float] = None,
-    avg_answer_relevancy: Optional[float] = None,
-    avg_faithfulness: Optional[float] = None,
-    avg_context_precision: Optional[float] = None,
-    avg_context_recall: Optional[float] = None,
-    avg_confidence: Optional[float] = None,
+    avg_correctness: float | None = None,
+    avg_answer_relevancy: float | None = None,
+    avg_faithfulness: float | None = None,
+    avg_context_precision: float | None = None,
+    avg_context_recall: float | None = None,
+    avg_confidence: float | None = None,
 ) -> TestRunRow:
     """Create a new test run with pre-computed average metrics."""
     run = TestRunRow(
@@ -406,7 +403,7 @@ def get_test_run(
     session: Session,
     test_run_id: str,
     workspace_id: str,
-) -> Optional[TestRunRow]:
+) -> TestRunRow | None:
     """Return a test run by id with test_results eagerly loaded.
 
     Filters through benchmark_sets.workspace_id for tenant isolation.

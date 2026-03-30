@@ -11,7 +11,6 @@ from metatron.api.app import create_app
 from metatron.auth.jwt import create_token
 from metatron.core.config import Settings
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

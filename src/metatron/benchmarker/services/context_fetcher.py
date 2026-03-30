@@ -10,10 +10,10 @@ so that metric calculators have the raw content available.
 from __future__ import annotations
 
 import asyncio
-import structlog
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING
 
 import httpx
+import structlog
 
 from metatron.benchmarker.schemas.test_context import ChunkData
 
@@ -43,7 +43,7 @@ class ContextFetcher:
         )
 
     @classmethod
-    def from_settings(cls, settings: "Settings") -> "ContextFetcher":
+    def from_settings(cls, settings: Settings) -> ContextFetcher:
         """Create a ContextFetcher from Metatron Settings."""
         qdrant_url = f"http://{settings.qdrant_host}:{settings.qdrant_http_port}"
         return cls(qdrant_url=qdrant_url)
@@ -88,7 +88,7 @@ class ContextFetcher:
             return []
 
         # Build a score lookup from source_results
-        score_map: Dict[str, Optional[float]] = {}
+        score_map: dict[str, float | None] = {}
         for sr in source_results:
             did = sr.get("id")
             if did:
@@ -108,8 +108,8 @@ class ContextFetcher:
     # ------------------------------------------------------------------
 
     async def _fetch_points_batch(
-        self, doc_ids: List[str],
-    ) -> List[Optional[Dict]]:
+        self, doc_ids: list[str],
+    ) -> list[dict | None]:
         """Fetch multiple points from Qdrant in parallel."""
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             tasks = [
@@ -120,7 +120,7 @@ class ContextFetcher:
             ]
             responses = await asyncio.gather(*tasks, return_exceptions=True)
 
-        results: List[Optional[Dict]] = []
+        results: list[dict | None] = []
         for doc_id, response in zip(doc_ids, responses):
             if isinstance(response, Exception):
                 logger.error("Error fetching chunk %s: %s", doc_id, response)
@@ -142,7 +142,7 @@ class ContextFetcher:
 
     @staticmethod
     def _parse_chunk(
-        point_data: Dict, score: Optional[float] = None,
+        point_data: dict, score: float | None = None,
     ) -> ChunkData:
         """Convert raw Qdrant point data into a :class:`ChunkData`."""
         payload = point_data.get("payload", {})

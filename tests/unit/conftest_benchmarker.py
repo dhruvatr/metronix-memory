@@ -9,23 +9,16 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from metatron.benchmarker.db.models import (
-    BenchmarkQuestionRow,
-    BenchmarkSetRow,
-    TestResultRow,
-    TestRunRow,
-)
 from metatron.core.config import Settings
 from metatron.storage.pg_models import Base
-
 
 # ============================================================================
 # In-memory SQLite engine & session

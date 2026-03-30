@@ -5,7 +5,6 @@ Migrated from PoC: get_data_from_rabbitmq.py (process_jira_message, jira_to_mark
 from __future__ import annotations
 
 import json
-from typing import Union
 
 import structlog
 
@@ -36,7 +35,7 @@ def extract_adf_text(adf_node) -> str:  # noqa: ANN001
     return ""
 
 
-def process_jira_issue(data: Union[dict, bytes, str]) -> dict:
+def process_jira_issue(data: dict | bytes | str) -> dict:
     """Parse a Jira API issue response into a structured dict.
 
     Handles both raw JSON (bytes/str) and pre-parsed dict input.

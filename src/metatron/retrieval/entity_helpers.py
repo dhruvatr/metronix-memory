@@ -1,10 +1,8 @@
 """Entity resolution helpers - DB-interacting and typed-matching functions."""
 
-from typing import List, Optional, Tuple
 
 import structlog
 
-from metatron.storage.memgraph import _esc
 from metatron.retrieval.entity_resolver import (
     ENABLE_SEMANTIC_MATCHING,
     _is_person_type,
@@ -12,11 +10,12 @@ from metatron.retrieval.entity_resolver import (
     find_semantic_match,
     find_typo_match,
 )
+from metatron.storage.memgraph import _esc
 
 logger = structlog.get_logger()
 
 
-def get_all_entities(session, workspace_id: Optional[str] = None) -> list[str]:  # type: ignore[type-arg]
+def get_all_entities(session, workspace_id: str | None = None) -> list[str]:  # type: ignore[type-arg]
     """Get all entity names from the graph."""
     # TODO: async migration
     if workspace_id:
@@ -33,8 +32,8 @@ def find_semantic_match_typed(
     name: str,
     existing: list[str],
     threshold: float = 0.88,
-    entity_type: Optional[str] = None,
-) -> Optional[str]:
+    entity_type: str | None = None,
+) -> str | None:
     """Typed wrapper that reduces candidate set before semantic matching."""
     if not ENABLE_SEMANTIC_MATCHING or not existing:
         return None
@@ -62,11 +61,11 @@ def find_semantic_match_typed(
 
 def resolve_entity_with_existing(
     name: str,
-    existing: List[str],
-    entity_type: Optional[str] = None,
+    existing: list[str],
+    entity_type: str | None = None,
     typo_threshold: float = 90,
     semantic_threshold: float = 0.88,
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """Resolve entity against a pre-fetched list (no DB query).
 
     Returns (canonical_name, alias_to).
@@ -96,11 +95,11 @@ def resolve_entity_with_existing(
 def resolve_entity(
     name: str,
     session,  # type: ignore[type-arg]
-    workspace_id: Optional[str] = None,
-    entity_type: Optional[str] = None,
+    workspace_id: str | None = None,
+    entity_type: str | None = None,
     typo_threshold: float = 90,
     semantic_threshold: float = 0.88,
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """Resolve an entity: check for typos and synonyms.
 
     Returns (canonical_name, alias_to). Resolution order:
@@ -139,7 +138,7 @@ def resolve_entity(
 
 
 def create_alias(
-    session, entity1: str, entity2: str, workspace_id: Optional[str] = None,  # type: ignore[type-arg]
+    session, entity1: str, entity2: str, workspace_id: str | None = None,  # type: ignore[type-arg]
 ) -> None:
     """Create a bidirectional ALIAS relationship between entities."""
     # TODO: async migration

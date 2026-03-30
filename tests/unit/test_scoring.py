@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from metatron.retrieval.scoring import (
     compute_final_score,
@@ -15,24 +15,24 @@ from metatron.retrieval.scoring import (
 
 class TestRecencyScore:
     def test_just_now(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         score = recency_score(now, now)
         assert abs(score - 1.0) < 0.01
 
     def test_half_life(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         past = now - timedelta(days=30)
         score = recency_score(past, now, half_life_days=30)
         assert abs(score - 0.5) < 0.01
 
     def test_very_old(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         past = now - timedelta(days=365)
         score = recency_score(past, now, half_life_days=30)
         assert score < 0.01
 
     def test_score_between_zero_and_one(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         past = now - timedelta(days=15)
         score = recency_score(past, now)
         assert 0.0 < score <= 1.0

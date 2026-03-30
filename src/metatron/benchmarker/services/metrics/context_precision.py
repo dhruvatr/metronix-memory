@@ -9,11 +9,10 @@ an overall precision score.
 from __future__ import annotations
 
 import json
-import structlog
 from dataclasses import dataclass, field
-from typing import List
 
 import httpx
+import structlog
 
 logger = structlog.get_logger()
 
@@ -40,7 +39,7 @@ class ContextPrecisionResult:
     """Result of the Context Precision metric evaluation."""
 
     score: float
-    chunk_scores: List[float] = field(default_factory=list)
+    chunk_scores: list[float] = field(default_factory=list)
 
 
 class ContextPrecisionMetric:
@@ -83,9 +82,9 @@ class ContextPrecisionMetric:
 
     async def calculate_batch(
         self,
-        questions: List[str],
-        chunks_per_question: List[List[str]],
-    ) -> List[ContextPrecisionResult]:
+        questions: list[str],
+        chunks_per_question: list[list[str]],
+    ) -> list[ContextPrecisionResult]:
         """Calculate context precision for a batch of questions.
 
         Args:
@@ -95,7 +94,7 @@ class ContextPrecisionMetric:
         Returns:
             List of :class:`ContextPrecisionResult` with scores and per-chunk scores.
         """
-        results: List[ContextPrecisionResult] = []
+        results: list[ContextPrecisionResult] = []
 
         for question, chunks in zip(questions, chunks_per_question):
             try:
@@ -112,13 +111,13 @@ class ContextPrecisionMetric:
         return results
 
     async def _evaluate_single(
-        self, question: str, chunks: List[str],
+        self, question: str, chunks: list[str],
     ) -> ContextPrecisionResult:
         """Evaluate context precision for a single question and its chunks."""
         if not chunks:
             return ContextPrecisionResult(score=0.0, chunk_scores=[])
 
-        chunk_scores: List[float] = []
+        chunk_scores: list[float] = []
         for chunk in chunks:
             score = await self._evaluate_chunk(question, chunk)
             chunk_scores.append(score)

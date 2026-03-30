@@ -26,7 +26,9 @@ except ImportError:  # pragma: no cover
     HttpxConnectError = None  # type: ignore[assignment,misc]
 
 try:
-    from qdrant_client.http.exceptions import ResponseHandlingException as QdrantResponseHandlingException
+    from qdrant_client.http.exceptions import (
+        ResponseHandlingException as QdrantResponseHandlingException,
+    )
 except ImportError:  # pragma: no cover
     QdrantResponseHandlingException = None  # type: ignore[assignment,misc]
 

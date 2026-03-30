@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from io import BytesIO
 from unittest.mock import MagicMock, patch
 
@@ -11,8 +10,7 @@ from fastapi.testclient import TestClient
 
 from metatron.api.app import create_app
 from metatron.core.config import Settings
-from metatron.workspaces.models import Workspace, WorkspaceStats
-
+from metatron.workspaces.models import Workspace
 
 # ---------------------------------------------------------------------------
 # Fixtures

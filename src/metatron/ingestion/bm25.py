@@ -8,7 +8,6 @@ Migrated from PoC: metatron_experiments/metatron/indexers/bm25.py
 """
 import re
 from collections import Counter
-from typing import Dict, List, Tuple
 
 import structlog
 
@@ -19,7 +18,7 @@ DEFAULT_VOCAB_SIZE = 30000
 
 
 # Simple tokenizer that handles English and transliterated text
-def tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> list[str]:
     """
     Tokenize text into words.
     Handles English text, removes punctuation, lowercases.
@@ -57,7 +56,7 @@ def compute_bm25_sparse_vector(
     b: float = 0.75,
     avgdl: float = 256.0,
     vocab_size: int = DEFAULT_VOCAB_SIZE,
-) -> Tuple[List[int], List[float]]:
+) -> tuple[list[int], list[float]]:
     """
     Compute BM25 sparse vector for a document.
 
@@ -82,7 +81,7 @@ def compute_bm25_sparse_vector(
     values = []
 
     # Use dict to aggregate values for hash collisions
-    index_values: Dict[int, float] = {}
+    index_values: dict[int, float] = {}
 
     for term, freq in term_freqs.items():
         # BM25 term frequency component
@@ -105,7 +104,7 @@ def compute_bm25_sparse_vector(
 def compute_query_sparse_vector(
     query: str,
     vocab_size: int = DEFAULT_VOCAB_SIZE,
-) -> Tuple[List[int], List[float]]:
+) -> tuple[list[int], list[float]]:
     """
     Compute sparse vector for a query.
     Queries use simpler weighting (just presence).
@@ -125,7 +124,7 @@ def compute_query_sparse_vector(
     term_freqs = Counter(tokens)
 
     # Use dict to aggregate values for hash collisions
-    index_values: Dict[int, float] = {}
+    index_values: dict[int, float] = {}
 
     for term, freq in term_freqs.items():
         idx = word_to_index(term, vocab_size)
@@ -140,6 +139,6 @@ def compute_query_sparse_vector(
 
 
 # For Qdrant SparseVector format
-def to_qdrant_sparse(indices: List[int], values: List[float]) -> dict:
+def to_qdrant_sparse(indices: list[int], values: list[float]) -> dict:
     """Convert to Qdrant SparseVector format."""
     return {"indices": indices, "values": values}

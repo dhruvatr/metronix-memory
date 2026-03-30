@@ -8,7 +8,6 @@ and returns the test run with per-question metrics.
 from __future__ import annotations
 
 import structlog
-
 from fastapi import APIRouter, HTTPException
 
 from metatron.benchmarker.db import crud

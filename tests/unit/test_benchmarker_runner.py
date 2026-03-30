@@ -11,7 +11,7 @@ from metatron.benchmarker.schemas.benchmark import (
     Claim,
     QuestionAttributes,
 )
-from metatron.benchmarker.schemas.test_context import ChunkData, TestContext
+from metatron.benchmarker.schemas.test_context import ChunkData
 from metatron.benchmarker.schemas.test_result import MetricsResult
 from metatron.benchmarker.services.runner import TestRunner
 

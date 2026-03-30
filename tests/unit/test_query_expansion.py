@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-from metatron.retrieval.query_expansion import expand_query, _build_expansion_prompt
+from metatron.retrieval.query_expansion import _build_expansion_prompt, expand_query
 
 
 class TestExpandQuery:

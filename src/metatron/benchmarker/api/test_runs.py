@@ -8,8 +8,6 @@ The POST endpoint accepts results from the frontend and saves them to the DB.
 from __future__ import annotations
 
 import structlog
-from typing import List, Optional
-
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
@@ -28,16 +26,16 @@ router = APIRouter(prefix="/test-runs", tags=["benchmarker-test-runs"])
 
 class TestResultData(BaseModel):
     """Single test result payload for saving."""
-    question: Optional[dict] = None
+    question: dict | None = None
     actual_answer: str
-    correctness: Optional[float] = None
-    answer_relevancy: Optional[float] = None
-    faithfulness: Optional[float] = None
-    context_precision: Optional[float] = None
-    context_recall: Optional[float] = None
-    confidence: Optional[float] = None
-    claim_scores: Optional[list] = None
-    context: Optional[dict] = None
+    correctness: float | None = None
+    answer_relevancy: float | None = None
+    faithfulness: float | None = None
+    context_precision: float | None = None
+    context_recall: float | None = None
+    confidence: float | None = None
+    claim_scores: list | None = None
+    context: dict | None = None
 
 
 class SaveTestRunRequest(BaseModel):
@@ -45,8 +43,8 @@ class SaveTestRunRequest(BaseModel):
     benchmark_set_id: str
     workspace_id: str
     name: str
-    description: Optional[str] = None
-    results: List[TestResultData]
+    description: str | None = None
+    results: list[TestResultData]
 
 
 # ============================================================================

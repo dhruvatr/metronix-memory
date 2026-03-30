@@ -19,10 +19,9 @@ from metatron.benchmarker.schemas.benchmark import (
     QuestionAttributes,
 )
 from metatron.benchmarker.schemas.test_context import TestContext
-from metatron.benchmarker.schemas.test_result import ConfidenceResult, MetricsResult
+from metatron.benchmarker.schemas.test_result import MetricsResult
 from metatron.benchmarker.services.metrics.controller import MetricsController
 from metatron.core.config import Settings
-
 
 # ---------------------------------------------------------------------------
 # Helpers

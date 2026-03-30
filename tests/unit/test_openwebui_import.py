@@ -1,9 +1,10 @@
 """Tests for Open WebUI user import endpoint."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
-from httpx import AsyncClient, ASGITransport
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from metatron.api.app import create_app

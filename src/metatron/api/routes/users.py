@@ -1,8 +1,6 @@
 """User management API — admin only."""
 from __future__ import annotations
 
-from typing import Optional
-
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -36,11 +34,11 @@ class CreateUserRequest(BaseModel):
 
 
 class UpdateUserRequest(BaseModel):
-    email: Optional[str] = None
-    password: Optional[str] = None
-    display_name: Optional[str] = None
-    role: Optional[str] = None
-    is_active: Optional[bool] = None
+    email: str | None = None
+    password: str | None = None
+    display_name: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
 
 
 

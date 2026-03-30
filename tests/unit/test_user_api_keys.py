@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
-from httpx import AsyncClient, ASGITransport
 
 from metatron.api.app import create_app
 from metatron.auth.api_key_store import ApiKeyStore

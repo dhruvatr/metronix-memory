@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import structlog
-from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-
-from typing import Any
+from slack_bolt.async_app import AsyncApp
 
 from metatron.agent.router import AgentRouter
 

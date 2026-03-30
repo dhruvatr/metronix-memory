@@ -5,19 +5,18 @@ such as vLLM, text-generation-webui, LocalAI, etc.
 """
 
 import os
-from typing import List, Optional
 
 import requests
 import structlog
 
 from metatron.core.http import get_http_session
 from metatron.llm.base import (
+    LLMAuthenticationError,
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
-    LLMAuthenticationError,
 )
 
 logger = structlog.get_logger()
@@ -30,9 +29,9 @@ class CustomProvider(LLMProvider):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        api_url: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model: str | None = None,
+        api_url: str | None = None,
+        api_key: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize Custom provider.
@@ -56,9 +55,9 @@ class CustomProvider(LLMProvider):
 
     def chat_completion(  # TODO: async migration
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 60,
         **kwargs,

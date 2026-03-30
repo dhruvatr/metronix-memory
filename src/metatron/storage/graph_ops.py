@@ -13,19 +13,22 @@ Memgraph 2.18.1 + neo4j driver 5.28 Cypher constraints:
 """
 # TODO: async migration
 from __future__ import annotations
-from typing import Dict, List, Optional
 
 import structlog
 
 from metatron.storage.memgraph import (
-    get_memgraph_driver, memgraph_retry, DEFAULT_WORKSPACE_ID, _esc, _esc_list,
+    DEFAULT_WORKSPACE_ID,
+    _esc,
+    _esc_list,
+    get_memgraph_driver,
+    memgraph_retry,
 )
 
 logger = structlog.get_logger()
 
 
-def _alias_query(entity_name: str, workspace_id: Optional[str] = None,
-                  ws_esc: Optional[str] = None) -> str:
+def _alias_query(entity_name: str, workspace_id: str | None = None,
+                  ws_esc: str | None = None) -> str:
     """Build Cypher query for ALIAS edges in both directions.
 
     ``ALIAS`` is a reserved keyword in Memgraph, so we avoid it in MATCH
@@ -55,7 +58,7 @@ def _alias_query(entity_name: str, workspace_id: Optional[str] = None,
     )
 
 
-def _acl_clause(user_groups: Optional[List[str]], node_alias: str = "d") -> str:
+def _acl_clause(user_groups: list[str] | None, node_alias: str = "d") -> str:
     """Build Cypher WHERE fragment for access_groups filtering.
 
     Returns empty string when user_groups is None (standalone / no RBAC).
@@ -72,15 +75,15 @@ def _acl_clause(user_groups: Optional[List[str]], node_alias: str = "d") -> str:
     return f"AND {node_alias}.`access_groups` IS NULL"
 
 
-def _normalize_workspace_id(workspace_id: Optional[str]) -> str:
+def _normalize_workspace_id(workspace_id: str | None) -> str:
     if workspace_id is None or workspace_id == "default":
         return DEFAULT_WORKSPACE_ID
     return workspace_id.strip()
 
 
 @memgraph_retry()
-def get_graph_entities(texts: List[str],
-                       workspace_id: Optional[str] = None) -> List[Dict]:
+def get_graph_entities(texts: list[str],
+                       workspace_id: str | None = None) -> list[dict]:
     """Get entities mentioned in documents matching given texts."""
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
@@ -131,9 +134,9 @@ def get_graph_entities(texts: List[str],
 
 
 @memgraph_retry()
-def get_entities_by_doc_labels(doc_labels: List[str],
-                               workspace_id: Optional[str] = None,
-                               ) -> List[Dict]:
+def get_entities_by_doc_labels(doc_labels: list[str],
+                               workspace_id: str | None = None,
+                               ) -> list[dict]:
     """Get entities mentioned in documents by doc_label."""
     labels = [l for l in doc_labels if l]
     if not labels:
@@ -188,8 +191,8 @@ def get_entities_by_doc_labels(doc_labels: List[str],
 
 
 @memgraph_retry()
-def get_all_workspace_entities(workspace_id: Optional[str] = None,
-                               limit: int = 100) -> List[Dict]:
+def get_all_workspace_entities(workspace_id: str | None = None,
+                               limit: int = 100) -> list[dict]:
     """Get all entities in a workspace."""
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
@@ -213,10 +216,10 @@ def get_all_workspace_entities(workspace_id: Optional[str] = None,
 
 
 @memgraph_retry()
-def get_graph_relationships(entity_names: List[str],
-                            workspace_id: Optional[str] = None,
+def get_graph_relationships(entity_names: list[str],
+                            workspace_id: str | None = None,
                             max_depth: int = 5,
-                            active_only: bool = False) -> List[Dict]:
+                            active_only: bool = False) -> list[dict]:
     """Get relationships for entities (variable depth traversal).
 
     Args:
@@ -226,7 +229,7 @@ def get_graph_relationships(entity_names: List[str],
     workspace_id = _normalize_workspace_id(workspace_id)
     depth = max(1, min(max_depth, 5))
     driver = get_memgraph_driver()
-    results: list[Dict] = []
+    results: list[dict] = []
     seen: set[tuple] = set()
     with driver.session() as s:
         # For each entity, get RELATION edges (both directions)
@@ -283,10 +286,10 @@ def get_graph_relationships(entity_names: List[str],
 
 
 @memgraph_retry()
-def get_relationships_at_date(entity_names: List[str],
+def get_relationships_at_date(entity_names: list[str],
                               target_date: str,
-                              workspace_id: Optional[str] = None,
-                              max_depth: int = 5) -> List[Dict]:
+                              workspace_id: str | None = None,
+                              max_depth: int = 5) -> list[dict]:
     """Get relationships valid at a specific date (ISO format YYYY-MM-DD).
 
     Returns relationships where:
@@ -295,7 +298,7 @@ def get_relationships_at_date(entity_names: List[str],
     """
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
-    results: list[Dict] = []
+    results: list[dict] = []
     seen: set[tuple] = set()
     with driver.session() as s:
         for name in entity_names:
@@ -352,16 +355,16 @@ def get_relationships_at_date(entity_names: List[str],
 
 
 @memgraph_retry()
-def get_doc_labels_by_entities(entity_names: List[str],
-                               workspace_id: Optional[str] = None,
-                               user_groups: Optional[List[str]] = None,
-                               ) -> List[Dict]:
+def get_doc_labels_by_entities(entity_names: list[str],
+                               workspace_id: str | None = None,
+                               user_groups: list[str] | None = None,
+                               ) -> list[dict]:
     """Get document labels for documents linked to given entities."""
     if not entity_names:
         return []
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
-    results: list[Dict] = []
+    results: list[dict] = []
     seen_labels: set[str] = set()
     with driver.session() as s:
         ws = _esc(workspace_id)
@@ -430,7 +433,7 @@ def get_doc_labels_by_entities(entity_names: List[str],
 
 @memgraph_retry()
 def delete_document_node(doc_label: str,
-                         workspace_id: Optional[str] = None) -> None:
+                         workspace_id: str | None = None) -> None:
     """Delete a document/issue node and its MENTIONS edges.
 
     Keeps entity nodes (they may be shared across documents).
@@ -450,10 +453,10 @@ def delete_document_node(doc_label: str,
 
 
 @memgraph_retry()
-def get_related_documents(texts: List[str],
-                          workspace_id: Optional[str] = None,
-                          user_groups: Optional[List[str]] = None,
-                          ) -> List[Dict]:
+def get_related_documents(texts: list[str],
+                          workspace_id: str | None = None,
+                          user_groups: list[str] | None = None,
+                          ) -> list[dict]:
     """Get documents linked through shared entities."""
     workspace_id = _normalize_workspace_id(workspace_id)
     driver = get_memgraph_driver()
@@ -490,7 +493,7 @@ def get_related_documents(texts: List[str],
 
         # Step 3: find documents mentioning those entities
         acl = _acl_clause(user_groups, "m")
-        results: list[Dict] = []
+        results: list[dict] = []
         seen: set[str] = set()
         for ename in expanded_names:
             if workspace_id == DEFAULT_WORKSPACE_ID:
@@ -521,9 +524,9 @@ def get_related_documents(texts: List[str],
 
 
 @memgraph_retry()
-def get_graph_overview(workspace_id: Optional[str] = None,
+def get_graph_overview(workspace_id: str | None = None,
                        limit: int = 100,
-                       user_groups: Optional[List[str]] = None) -> Dict:
+                       user_groups: list[str] | None = None) -> dict:
     """Get top-N most connected entities with edges between them.
 
     Returns nodes sorted by connection count (degree) and all edges
@@ -554,8 +557,8 @@ def get_graph_overview(workspace_id: Optional[str] = None,
             "RETURN a, r, b"
         )
         logger.debug("graph_overview.edges", query=q_edges)
-        all_edges: list[Dict] = []
-        node_map: dict[int, Dict] = {}  # id → node dict
+        all_edges: list[dict] = []
+        node_map: dict[int, dict] = {}  # id → node dict
         try:
             for rec in s.run(q_edges):
                 src_node = rec[0]
@@ -631,7 +634,7 @@ def get_graph_overview(workspace_id: Optional[str] = None,
         node_ids: set[int] = {n["id"] for n in nodes}
 
         # 4. Filter edges to only those between returned nodes
-        edges: list[Dict] = []
+        edges: list[dict] = []
         seen_edges: set[tuple] = set()
         for e in all_edges:
             if e["source"] in node_ids and e["target"] in node_ids:
@@ -648,10 +651,10 @@ def get_graph_overview(workspace_id: Optional[str] = None,
 
 @memgraph_retry()
 def get_graph_expand(entity_id: int,
-                     workspace_id: Optional[str] = None,
+                     workspace_id: str | None = None,
                      depth: int = 2,
                      limit: int = 50,
-                     user_groups: Optional[List[str]] = None) -> Dict:
+                     user_groups: list[str] | None = None) -> dict:
     """Expand a single entity by Memgraph internal ID.
 
     Uses the same single-query approach as get_graph_overview:
@@ -685,8 +688,8 @@ def get_graph_expand(entity_id: int,
         )
         logger.debug("graph_expand.edges", query=q_edges)
 
-        all_edges: list[Dict] = []
-        node_map: dict[int, Dict] = {}  # id → node dict
+        all_edges: list[dict] = []
+        node_map: dict[int, dict] = {}  # id → node dict
         # adjacency: node_id → set of neighbor node_ids
         adj: dict[int, set[int]] = {}
         try:
@@ -758,7 +761,7 @@ def get_graph_expand(entity_id: int,
             final_ids.add(n["id"])
 
         # 4. Filter edges to final node set, deduplicate
-        edges: list[Dict] = []
+        edges: list[dict] = []
         seen_edges: set[tuple] = set()
         for e in all_edges:
             if e["source"] in final_ids and e["target"] in final_ids:

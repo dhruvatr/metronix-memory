@@ -1,22 +1,21 @@
 """LLM provider factory with fallback support."""
 
-from typing import Dict, Optional, Type
 
 import structlog
 
 from metatron.core.config import Settings
 from metatron.llm.base import LLMProvider
 from metatron.llm.providers import (
-    DeepSeekProvider,
-    OpenRouterProvider,
-    OllamaProvider,
     CustomProvider,
+    DeepSeekProvider,
+    OllamaProvider,
+    OpenRouterProvider,
 )
 
 logger = structlog.get_logger()
 
 # Registry of available providers
-PROVIDERS: Dict[str, Type[LLMProvider]] = {
+PROVIDERS: dict[str, type[LLMProvider]] = {
     "deepseek": DeepSeekProvider,
     "openrouter": OpenRouterProvider,
     "ollama": OllamaProvider,
@@ -37,7 +36,7 @@ def _settings_for_provider(name: str, settings: Settings) -> dict:
     return {}
 
 
-def get_provider_class(name: str) -> Type[LLMProvider]:
+def get_provider_class(name: str) -> type[LLMProvider]:
     """Get provider class by name."""
     provider_class = PROVIDERS.get(name.lower())
     if not provider_class:
@@ -47,8 +46,8 @@ def get_provider_class(name: str) -> Type[LLMProvider]:
 
 
 def create_provider(
-    provider_name: Optional[str] = None,
-    model: Optional[str] = None,
+    provider_name: str | None = None,
+    model: str | None = None,
     **kwargs,
 ) -> LLMProvider:
     """Create an LLM provider instance from Settings."""
@@ -65,7 +64,7 @@ def create_provider(
     return provider_class(**defaults)
 
 
-def get_fallback_provider() -> Optional[LLMProvider]:
+def get_fallback_provider() -> LLMProvider | None:
     """Get fallback provider if configured."""
     settings = Settings()
     fallback_name = settings.llm_fallback_provider
@@ -84,13 +83,13 @@ def get_fallback_provider() -> Optional[LLMProvider]:
 
 
 # Cached primary and fallback providers
-_primary_provider: Optional[LLMProvider] = None
-_fallback_provider: Optional[LLMProvider] = None
+_primary_provider: LLMProvider | None = None
+_fallback_provider: LLMProvider | None = None
 
 
 def get_llm(
-    provider_name: Optional[str] = None,
-    model: Optional[str] = None,
+    provider_name: str | None = None,
+    model: str | None = None,
     use_cache: bool = True,
     **kwargs,
 ) -> LLMProvider:
@@ -128,7 +127,7 @@ def get_llm(
     return provider
 
 
-def _get_cached_fallback() -> Optional[LLMProvider]:
+def _get_cached_fallback() -> LLMProvider | None:
     """Get cached fallback provider."""
     global _fallback_provider
 

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from metatron.channels.discord import DiscordChannel, _split_message
-
 
 # ---------------------------------------------------------------------------
 # TestSplitMessage — pure function tests

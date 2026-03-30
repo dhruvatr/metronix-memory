@@ -6,13 +6,12 @@ ConfidenceResult with the same length as the input, with scores in [0, 1].
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from metatron.benchmarker.schemas.test_result import ConfidenceResult
 from metatron.benchmarker.services.metrics.confidence import ConfidenceMetric
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,8 +1,6 @@
 """Auth API — login and session endpoints."""
 from __future__ import annotations
 
-from typing import Optional
-
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -17,7 +15,7 @@ router = APIRouter(tags=["auth"])
 
 
 class LoginRequest(BaseModel):
-    email: Optional[str] = None
+    email: str | None = None
     password: str
 
 

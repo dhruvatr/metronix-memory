@@ -13,11 +13,8 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import sys
-from typing import Any, Optional
 
 import structlog
-
 from mcp.server import FastMCP
 from mcp.server.streamable_http import TransportSecuritySettings
 
@@ -165,7 +162,7 @@ async def run_http(
     await server.serve()
 
 
-async def main(transport: Optional[str] = None) -> None:
+async def main(transport: str | None = None) -> None:
     """Main entry point that selects transport.
 
     Args:

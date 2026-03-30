@@ -7,9 +7,9 @@ and details fields for proper error handling and debugging.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ErrorCode(str, Enum):
@@ -39,8 +39,8 @@ class MCPError(BaseModel):
 
     code: ErrorCode
     message: str
-    hint: Optional[str] = None
-    details: Optional[dict[str, Any]] = None
+    hint: str | None = None
+    details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON-RPC response."""
@@ -70,7 +70,7 @@ _ERROR_HINTS: dict[ErrorCode, str] = {
 def handle_tool_error(
     tool_name: str,
     exception: Exception,
-    details: Optional[dict[str, Any]] = None,
+    details: dict[str, Any] | None = None,
 ) -> MCPError:
     """Convert an exception to a structured MCPError.
 

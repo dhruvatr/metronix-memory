@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 from metatron.mcp.errors import handle_tool_error
 from metatron.mcp.server import mcp
@@ -25,9 +25,9 @@ from metatron.mcp.tools.models import StoreResponse
 )
 async def metatron_store(
     content: str,
-    title: Optional[str] = None,
-    workspace_id: Optional[str] = None,
-    doc_label: Optional[str] = None,
+    title: str | None = None,
+    workspace_id: str | None = None,
+    doc_label: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Store a new document in the knowledge base."""

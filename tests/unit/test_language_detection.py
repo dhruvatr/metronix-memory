@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from metatron.retrieval.search import detect_response_language, _has_cyrillic
+from metatron.retrieval.search import _has_cyrillic, detect_response_language
 
 
 class TestDetectResponseLanguage:

@@ -10,8 +10,8 @@ Thread-safe with lock protection on cache reads and writes.
 from __future__ import annotations
 
 import re
-import time
 import threading
+import time
 
 import structlog
 from cachetools import TTLCache

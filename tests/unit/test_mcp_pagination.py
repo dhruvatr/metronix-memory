@@ -6,7 +6,6 @@ import pytest
 
 from metatron.mcp.pagination import (
     CursorPager,
-    PaginationResult,
     decode_cursor,
     encode_cursor,
 )

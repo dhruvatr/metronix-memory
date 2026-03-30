@@ -1,8 +1,9 @@
 """Tests for Open WebUI sync on user CRUD."""
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, patch
 
 from metatron.auth.openwebui_sync import OpenWebUISync
 

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from metatron.core.models import Document
 from metatron.connectors.confluence import ConfluenceConnector
 from metatron.connectors.jira import JiraConnector
+from metatron.core.models import Document
 
 
 class TestConfluenceDateMetadata:

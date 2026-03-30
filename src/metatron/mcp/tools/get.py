@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from metatron.mcp.errors import ErrorCode, MCPError, handle_tool_error
 from metatron.mcp.server import mcp
@@ -20,7 +20,7 @@ from metatron.mcp.tools.models import DocumentResponse
 )
 async def metatron_get(
     doc_label: str,
-    workspace_id: Optional[str] = None,
+    workspace_id: str | None = None,
 ) -> dict[str, Any]:
     """Retrieve a specific document by label."""
     try:

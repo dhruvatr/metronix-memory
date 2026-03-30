@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 
@@ -41,10 +42,10 @@ async def check_and_version_document(
     """
     if not postgres_store or not hasattr(postgres_store, "store_document_version"):
         return None
-    
+
     # Calculate content hash
     content_hash = hashlib.sha256(document.content.encode()).hexdigest()
-    
+
     # Get latest version (this will be None until store_document_version is implemented)
     try:
         latest = await postgres_store.get_latest_version(document.id)
@@ -55,7 +56,7 @@ async def check_and_version_document(
             error=str(e),
         )
         latest = None
-    
+
     # If no previous version or content changed, create new version
     if not latest or latest.content_hash != content_hash:
         changed_fields = {}
@@ -65,7 +66,7 @@ async def check_and_version_document(
                 changed_fields["content"] = ["<previous>", "<current>"]
             if getattr(latest, "title", "") != document.title:
                 changed_fields["title"] = [getattr(latest, "title", ""), document.title]
-        
+
         try:
             version = await postgres_store.store_document_version(
                 document_id=document.id,

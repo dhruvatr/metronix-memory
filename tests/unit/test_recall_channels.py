@@ -1,7 +1,6 @@
 from unittest.mock import MagicMock, patch
 
 from metatron.retrieval.channels import (
-    MergedResult,
     RecallContext,
     ScoredResult,
     merge_channels,

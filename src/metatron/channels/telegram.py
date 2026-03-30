@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+from typing import Any
 
 import structlog
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatAction, ParseMode
-
-from typing import Any
 
 from metatron.agent.router import AgentRouter
 

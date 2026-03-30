@@ -6,10 +6,9 @@ to avoid circular imports and keep tool files focused.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
-
 
 # --- Search ---
 
@@ -20,7 +19,7 @@ class SearchResultItem(BaseModel):
     title: str
     content: str
     source_type: str
-    timestamp: Optional[str] = None
+    timestamp: str | None = None
     score: float = 0.0
 
 
@@ -29,7 +28,7 @@ class SearchResponse(BaseModel):
 
     results: list[SearchResultItem]
     has_more: bool
-    next_cursor: Optional[str] = None
+    next_cursor: str | None = None
     total: int
 
 
@@ -42,7 +41,7 @@ class DocumentResponse(BaseModel):
     title: str
     content: str
     source_type: str
-    timestamp: Optional[str] = None
+    timestamp: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -63,7 +62,7 @@ class StatusResponse(BaseModel):
 
     status: str
     documents: dict[str, int]
-    last_sync: Optional[str] = None
+    last_sync: str | None = None
     embedding_model: str
 
 

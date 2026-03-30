@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from metatron.mcp.tools.models import (
-    DocumentResponse,
     SearchResponse,
     SearchResultItem,
     StatusResponse,
@@ -15,7 +14,6 @@ from metatron.mcp.tools.models import (
     SyncResponse,
     SyncSourceResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Model tests

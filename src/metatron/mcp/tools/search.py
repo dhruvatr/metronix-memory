@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from metatron.mcp.errors import handle_tool_error
-from metatron.mcp.pagination import CursorPager
 from metatron.mcp.server import mcp
 from metatron.mcp.tools.models import SearchResponse, SearchResultItem
 
@@ -26,9 +25,9 @@ from metatron.mcp.tools.models import SearchResponse, SearchResultItem
 )
 async def metatron_search(
     query: str,
-    workspace_id: Optional[str] = None,
+    workspace_id: str | None = None,
     limit: int = 10,
-    cursor: Optional[str] = None,
+    cursor: str | None = None,
     include_graph: bool = False,
 ) -> dict[str, Any]:
     """Search the knowledge base using hybrid search."""

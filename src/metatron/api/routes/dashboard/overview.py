@@ -63,9 +63,9 @@ async def get_overview_kpi(
         Overview metrics: documents, jira_issues, active_connectors, last_upload.
     """
     from metatron.storage.dashboard_queries import get_overview_stats
-    
+
     stats = await asyncio.to_thread(get_overview_stats, workspace.workspace_id)
-    
+
     return OverviewKPIResponse(
         documents=stats["documents"],
         jira_issues=stats["jira_issues"],
@@ -96,11 +96,11 @@ async def get_query_trend(
         Query trend with date labels and query counts.
     """
     from metatron.storage.dashboard_queries import get_query_trend_data
-    
+
     labels, values = await asyncio.to_thread(
         get_query_trend_data,
         workspace.workspace_id,
         days,
     )
-    
+
     return QueryTrendResponse(labels=labels, values=values)

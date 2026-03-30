@@ -17,7 +17,6 @@ from metatron.benchmarker.schemas.benchmark import QEDDocument
 from metatron.benchmarker.services.generator import BenchmarkGenerator
 from metatron.core.config import Settings
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

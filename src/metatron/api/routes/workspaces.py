@@ -5,7 +5,7 @@ Migrated from PoC metatron/api_workspaces.py.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query
@@ -22,19 +22,19 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 class WorkspaceCreate(BaseModel):
     model_config = ConfigDict(strict=True)
     name: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=500)
     user_id: str = Field("user")
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
 
 
 class WorkspaceResponse(BaseModel):
     workspace_id: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     created_at: str
     user_id: str
     is_active: bool
-    config: Optional[dict[str, Any]] = None
+    config: dict[str, Any] | None = None
 
 
 class WorkspaceListResponse(BaseModel):
@@ -49,7 +49,7 @@ class WorkspaceStatsResponse(BaseModel):
     chunk_count: int = 0
     entity_count: int = 0
     jira_issue_count: int = 0
-    last_upload_time: Optional[str] = None
+    last_upload_time: str | None = None
 
 
 class ActivateResponse(BaseModel):
@@ -59,22 +59,22 @@ class ActivateResponse(BaseModel):
 
 
 @router.get("/", response_model=WorkspaceListResponse)
-def list_workspaces(user_id: Optional[str] = Query("user")) -> WorkspaceListResponse:
+def list_workspaces(user_id: str | None = Query("user")) -> WorkspaceListResponse:
     """List all workspaces."""
     manager = get_workspace_manager()
     workspaces = manager.list_workspaces(user_id=user_id)
-    
+
     # Get active workspace for this user
     active_workspace = manager.get_active_workspace(user_id or "user")
     active_workspace_id = active_workspace.workspace_id
-    
+
     # Mark only the active workspace as is_active=True
     workspace_responses = []
     for ws in workspaces:
         ws_dict = ws.to_dict()
         ws_dict["is_active"] = (ws.workspace_id == active_workspace_id)
         workspace_responses.append(WorkspaceResponse(**ws_dict))
-    
+
     return WorkspaceListResponse(
         workspaces=workspace_responses,
         count=len(workspaces),

@@ -9,7 +9,6 @@ returns the result.
 from __future__ import annotations
 
 import structlog
-
 from fastapi import APIRouter, HTTPException
 
 from metatron.benchmarker.db import crud

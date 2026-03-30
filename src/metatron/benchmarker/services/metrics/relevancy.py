@@ -8,12 +8,11 @@ are obtained from the Embedding Proxy HTTP API (OpenAI-compatible).
 
 from __future__ import annotations
 
-import structlog
 from dataclasses import dataclass
-from typing import List, Optional
 
 import httpx
 import numpy as np
+import structlog
 
 logger = structlog.get_logger()
 
@@ -52,9 +51,9 @@ class AnswerRelevancyMetric:
 
     async def calculate_batch(
         self,
-        questions: List[str],
-        answers: List[str],
-    ) -> List[RelevancyResult]:
+        questions: list[str],
+        answers: list[str],
+    ) -> list[RelevancyResult]:
         """Calculate answer relevancy for a batch of question/answer pairs.
 
         For each pair, computes cosine similarity between the question
@@ -68,7 +67,7 @@ class AnswerRelevancyMetric:
         Returns:
             List of :class:`RelevancyResult` with similarity scores.
         """
-        results: List[RelevancyResult] = []
+        results: list[RelevancyResult] = []
 
         for question, answer in zip(questions, answers):
             try:
@@ -98,7 +97,7 @@ class AnswerRelevancyMetric:
         # Normalize from [-1, 1] to [0, 1]
         return (similarity + 1.0) / 2.0
 
-    async def _get_embedding(self, text: str) -> Optional[List[float]]:
+    async def _get_embedding(self, text: str) -> list[float] | None:
         """Get embedding vector from the Embedding Proxy API."""
         url = f"{self.embedding_base_url}/v1/embeddings"
         payload = {
@@ -120,7 +119,7 @@ class AnswerRelevancyMetric:
             return None
 
     @staticmethod
-    def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
+    def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
         """Compute cosine similarity between two vectors.
 
         Returns a value in [-1, 1].

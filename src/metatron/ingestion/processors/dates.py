@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
 
 import structlog
 
@@ -46,7 +45,7 @@ def _fmt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
-def _this_week() -> Tuple[str, str]:
+def _this_week() -> tuple[str, str]:
     """Monday through Sunday of the current week."""
     now = datetime.now()
     monday = now - timedelta(days=now.weekday())
@@ -54,7 +53,7 @@ def _this_week() -> Tuple[str, str]:
     return (_fmt(monday), _fmt(sunday))
 
 
-def _last_week() -> Tuple[str, str]:
+def _last_week() -> tuple[str, str]:
     """Monday through Sunday of the previous week."""
     now = datetime.now()
     last_monday = now - timedelta(days=now.weekday() + 7)
@@ -62,7 +61,7 @@ def _last_week() -> Tuple[str, str]:
     return (_fmt(last_monday), _fmt(last_sunday))
 
 
-def _this_month() -> Tuple[str, str]:
+def _this_month() -> tuple[str, str]:
     """First through last day of the current month."""
     now = datetime.now()
     first = now.replace(day=1)
@@ -71,7 +70,7 @@ def _this_month() -> Tuple[str, str]:
     return (_fmt(first), _fmt(last))
 
 
-def _last_month() -> Tuple[str, str]:
+def _last_month() -> tuple[str, str]:
     """First through last day of the previous month."""
     now = datetime.now()
     first_this = now.replace(day=1)
@@ -82,7 +81,7 @@ def _last_month() -> Tuple[str, str]:
 
 # -- Single-date extraction -------------------------------------------------
 
-def extract_date_from_text(text: str, fallback_year: int | None = None) -> Optional[str]:  # TODO: async migration
+def extract_date_from_text(text: str, fallback_year: int | None = None) -> str | None:  # TODO: async migration
     """Extract a single ISO date (YYYY-MM-DD) from *text*.
 
     Supports ISO (``2025-12-25``), European (``25.12.2025``),
@@ -147,7 +146,7 @@ def extract_date_from_text(text: str, fallback_year: int | None = None) -> Optio
 
 # -- Date-range extraction ---------------------------------------------------
 
-def extract_date_range(text: str) -> Optional[Tuple[str, str]]:  # TODO: async migration
+def extract_date_range(text: str) -> tuple[str, str] | None:  # TODO: async migration
     """Extract a date range from *text*.
 
     Supports relative expressions in Russian and English (``this week``,
@@ -244,11 +243,11 @@ def extract_date_range(text: str) -> Optional[Tuple[str, str]]:  # TODO: async m
 
 # -- Helpers -----------------------------------------------------------------
 
-def get_dates_in_range(start_date: str, end_date: str) -> List[str]:
+def get_dates_in_range(start_date: str, end_date: str) -> list[str]:
     """Generate a list of ISO dates between *start_date* and *end_date* (inclusive)."""
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
-    dates: List[str] = []
+    dates: list[str] = []
     current = start
     while current <= end:
         dates.append(current.strftime("%Y-%m-%d"))
