@@ -10,3 +10,5 @@
 - fix: verify Memgraph connection liveness before reuse (eliminates 30s timeout on defunct connections)
 - fix: reduce GRAPH_EXTRACTION_WORKERS default to 1 (prevents Memgraph transaction conflicts)
 - feat: clear graph entity cache on SYNC_COMPLETED event
+- feat: two-phase grid search with caching — reduces runtime from months to minutes (MTRNIX-261)
+- fix: update eval testset with current data (stale expected docs)

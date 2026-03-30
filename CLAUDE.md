@@ -17,7 +17,9 @@ make docker-up        # start postgres + qdrant + memgraph
 make docker-down
 make eval             # run search quality eval (needs live services)
 make eval-compare     # run eval + compare with last saved result
-make grid-search      # grid search for optimal scoring weights
+make grid-search-cache # cache recall+reranker scores for grid search (~12 min)
+make grid-search      # grid search for optimal scoring weights (uses cache, fast)
+make grid-search-fine # grid search with finer step (0.05)
 make graph-rebuild    # rebuild Memgraph from Qdrant data (after graph loss)
 make graph-rebuild-dry # preview what graph-rebuild would process
 ```
