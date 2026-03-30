@@ -76,6 +76,12 @@ Details:
   were relevant. Low P@10 with high MRR means the system finds the right docs but also
   returns noise/duplicates.
 
+  **Note on P@K interpretation**: P@K is structurally low when most queries have 1-3
+  expected documents and K=10. With 1 expected doc found, P@10 = 1/10 = 0.10 regardless
+  of ranking quality. For our test set, **MRR and NDCG are more informative metrics**.
+  P@K is useful primarily for tracking relative changes between runs, not as an absolute
+  quality indicator.
+
 - **MRR (Mean Reciprocal Rank)**: `1 / rank_of_first_relevant`. If the first relevant doc
   is at position 1, MRR = 1.0. At position 3, MRR = 0.33. Measures how fast the user sees
   something useful.
@@ -232,25 +238,30 @@ Use `pipeline_stages` to debug where a query goes wrong:
   should reduce duplicates from the same source.
 - **Context too short/long?** Check `fragment_count` and `token_budget_used`.
 
-## Baseline (2026-03-25)
+## Baseline (2026-03-30)
 
-Measured on the MTRNIX workspace with 16 positive queries (v1.0 test set), k=10.
+Measured on the MTRNIX workspace with 29 positive queries (v1.2 test set, stable only), k=10.
+Retrieved doc_labels are deduplicated before metric computation.
 
-| Metric | Score |
-|--------|-------|
-| Avg Precision@10 | 0.4861 |
-| Avg MRR | 0.9688 |
-| Avg NDCG@10 | 0.9636 |
+| Metric | Score | Notes |
+|--------|-------|-------|
+| Avg Precision@10 | 0.14 | Structurally low — most queries have 1-3 expected docs vs K=10 |
+| Avg MRR | 0.66 | Primary quality metric — first relevant result at ~position 1-2 |
+| Avg NDCG@10 | 0.64 | Primary quality metric — relevant docs ranked near the top |
 
 ### Interpretation
 
-- **MRR = 0.97**: The system almost always places a relevant document at position 1.
-- **NDCG@10 = 0.96**: Relevant docs are ranked near the top.
-- **P@10 = 0.49**: Only half of top-10 results are relevant — main area for improvement
-  (deduplication, stricter relevance thresholds, pool size reduction).
+- **MRR = 0.66**: The first relevant document typically appears in position 1-2.
+- **NDCG@10 = 0.64**: Good ranking quality — relevant docs are near the top.
+- **P@10 = 0.14**: Low by design — with 1-3 expected docs and K=10, the theoretical
+  maximum is 0.10-0.30. Use MRR and NDCG to assess quality, use P@K for relative deltas.
 
-Run `make eval-save` after upgrading to v1.2 test set to capture a new baseline with
-all 48 queries (33 positive + 15 negative).
+### Historical note
+
+Earlier baselines (v1.0 test set, 2026-03-25) showed P@10 ≈ 0.49, MRR ≈ 0.97, NDCG ≈ 0.96.
+These were measured on 75K chunks where duplicate chunks from the same document inflated
+all metrics. After deduplication fix and test set update (v1.2), metrics reflect actual
+retrieval quality without duplication artifacts.
 
 ## Before/After Workflow
 
