@@ -22,10 +22,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # Table may already exist (created by ensure_schema at startup).
+    # Drop old table if it exists with wrong schema (missing workspace_id, created_at).
+    # Safe: table only contains auto-created mappings that will be re-created on next message.
     conn = op.get_bind()
     if conn.dialect.has_table(conn, "user_platform_mappings"):
-        return
+        op.drop_table("user_platform_mappings")
 
     op.create_table(
         "user_platform_mappings",
