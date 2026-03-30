@@ -22,6 +22,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Table may already exist (created by ensure_schema at startup).
+    conn = op.get_bind()
+    if conn.dialect.has_table(conn, "user_platform_mappings"):
+        return
+
     op.create_table(
         "user_platform_mappings",
         sa.Column("channel", sa.Text, nullable=False),
