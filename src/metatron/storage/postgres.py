@@ -781,7 +781,7 @@ class PostgresStore:
                             VALUES
                             (:id, :workspace_id, :connector_type, :connection_id,
                              :source_id, :title, :content, :url, :author,
-                             :content_hash, :metadata::jsonb, :source_role,
+                             :content_hash, CAST(:metadata AS jsonb), :source_role,
                              false, false,
                              :now, :now, :now,
                              :source_created_at, :source_updated_at)
@@ -815,7 +815,7 @@ class PostgresStore:
                                 url = :url,
                                 author = :author,
                                 content_hash = :content_hash,
-                                metadata = :metadata::jsonb,
+                                metadata = CAST(:metadata AS jsonb),
                                 source_role = :source_role,
                                 qdrant_synced = false,
                                 graph_synced = false,
