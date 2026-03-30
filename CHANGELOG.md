@@ -19,3 +19,4 @@
 - feat: async ingestion pipeline with AsyncQdrantVectorStore (MTRNIX-262 Phase 3)
 - feat: document store layer — PostgreSQL as source of truth for ingestion (MTRNIX-265)
 - feat: decouple graph extraction from sync — process from PostgreSQL separately (MTRNIX-266)
+- feat: adaptive RRF fusion constant based on dense/sparse overlap (MTRNIX-211)
