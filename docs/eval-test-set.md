@@ -167,6 +167,23 @@ source document:
 
 ## How to Update the Test Set
 
+### Ground truth methodology
+
+Expected documents (`expected_doc_labels`) are **manually labeled by a domain expert**:
+
+1. Run the query against the live system: `hybrid_search_and_answer(query, workspace, 10, None, None, return_trace=True)`
+2. Inspect `retrieved_doc_labels` — what the system returned
+3. **Human decides** which returned documents are genuinely relevant to the query
+4. Record those as `expected_doc_labels` in the YAML test set
+
+This is standard practice in Information Retrieval evaluation. Ground truth cannot be
+automated because "relevance" is a subjective judgment. Multiple documents may be equally
+valid answers — include all of them in `expected_doc_labels`.
+
+**Maintenance:** Expected docs can become stale when source data changes (e.g., Jira ticket
+status changes from "In Progress" to "Done"). Review and update periodically, especially
+after major reindexing.
+
 ### When to add queries
 
 - You added a new connector or source type
@@ -326,7 +343,54 @@ make eval-history
 - **P@10 improvement without MRR/NDCG drop**: Good -- you reduced noise without hurting ranking.
 - **Neg Acc drop**: Greetings or irrelevant queries started returning docs -- check query expansion.
 
-### 6. Investigate regressions with pipeline trace
+### 6. Optimize scoring weights (grid search)
+
+The search pipeline uses a multi-signal scoring formula with configurable weights:
+
+```
+signal_score = dense × W_dense + graph × W_graph + metadata × W_metadata
+             + recency × W_recency + balance × W_balance
+
+final_score = signal_score × (1 - blend) + reranker_score × blend
+```
+
+Weights are set per query profile (execution, documentation, user_file, relationship,
+temporal, mixed) in `QUERY_PROFILE_WEIGHTS` in `src/metatron/retrieval/query_classifier.py`.
+
+**Two-phase grid search** finds optimal weights without running the full pipeline
+for each combination:
+
+```bash
+# Phase 1: Cache recall + reranker scores (needs live services, ~12 min)
+make grid-search-cache
+
+# Phase 2: Iterate weight combinations offline (~seconds)
+make grid-search          # step 0.10 (coarse, 1125 combos per profile)
+make grid-search-fine     # step 0.05 (fine, more combos)
+```
+
+**How it works:**
+1. Phase 1 runs the pipeline for each eval query up through reranking, caches raw signals
+   (channel scores, recency, balance, reranker score) per candidate chunk to JSON.
+2. Phase 2 loads the cache and for each weight combination: recomputes signal_score,
+   re-sorts candidates, normalizes reranker scores, computes final_score, measures
+   P@K/MRR/NDCG against ground truth. The optimization target is `combined = (MRR + NDCG) / 2`.
+3. Output: recommended weights per profile with best MRR/NDCG scores.
+
+**After finding optimal weights:**
+1. Update `QUERY_PROFILE_WEIGHTS` in `query_classifier.py` with the recommended values
+2. Run `make eval-compare` to verify improvement on the live pipeline
+3. Commit the updated weights
+
+**When to re-run grid search:**
+- After reindexing data (chunk distribution changes)
+- After changing recall channels or reranker
+- After updating the eval test set
+
+Cache files are stored in `eval_results/grid_cache_*.json` and can be reused as long as
+the indexed data hasn't changed.
+
+### 7. Investigate regressions with pipeline trace
 
 If a specific query regressed, inspect its trace:
 
