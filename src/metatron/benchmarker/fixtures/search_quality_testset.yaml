@@ -5,7 +5,7 @@ description: >
   doc_labels match the doc_label field in Qdrant payloads.
   Categories with expected_doc_labels: [] are negative tests —
   the system should NOT return relevant results for these.
-  Based on real MTRNIX workspace data as of 2026-03-25.
+  Based on real MTRNIX workspace data. Last updated 2026-03-30.
 
 queries:
   # --- Category: execution/status-heavy (Jira primary) ---
@@ -20,10 +20,10 @@ queries:
     text: "What tasks are currently in progress?"
     category: "execution/status-heavy"
     expected_doc_labels:
-      - "MTRNIX-116"
-      - "MTRNIX-154"
-      - "MTRNIX-54"
-    notes: "Status-based query — should find In Progress tickets"
+      - "MTRNIX-255"
+      - "MTRNIX-224"
+      - "MTRNIX-164"
+    notes: "Status-based query — should find In Progress tickets (updated 2026-03-30)"
 
   - id: "exec-03"
     text: "What is MTRNIX-116?"
@@ -38,7 +38,9 @@ queries:
     category: "documentation-heavy"
     expected_doc_labels:
       - "285343747"
-    notes: "Should find 'Metatron: A Unified Knowledge Fabric' confluence page"
+      - "361398273"
+      - "285409288"
+    notes: "Should find Metatron overview pages: Unified Knowledge Fabric, PRD v2.0, Enterprise Knowledge Core"
 
   - id: "doc-02"
     text: "What are the coding standards and development rules?"
@@ -141,9 +143,10 @@ queries:
     text: "What tickets were created this month?"
     category: "temporal"
     expected_doc_labels:
-      - "MTRNIX-154"
-      - "MTRNIX-116"
-    notes: "Recent tickets created in March 2026 — tests recency understanding"
+      - "MTRNIX-255"
+      - "MTRNIX-253"
+      - "MTRNIX-254"
+    notes: "Recent tickets created in late March 2026 — tests recency understanding (updated 2026-03-30)"
 
   - id: "time-02"
     text: "What was the latest update on RBAC?"
@@ -175,10 +178,10 @@ queries:
     text: "What was done last sprint?"
     category: "temporal"
     expected_doc_labels:
-      - "MTRNIX-116"
-      - "MTRNIX-154"
-      - "MTRNIX-54"
-    notes: "Sprint-based temporal query — should find recently active tickets"
+      - "MTRNIX-255"
+      - "MTRNIX-224"
+      - "MTRNIX-253"
+    notes: "Sprint-based temporal query — should find recently active tickets (updated 2026-03-30)"
 
   # --- Category: russian (queries in Russian — tests translation pipeline) ---
   - id: "ru-01"
@@ -186,16 +189,18 @@ queries:
     category: "russian"
     expected_doc_labels:
       - "285343747"
-    notes: "Russian version of doc-01 — should find same Metatron overview page"
+      - "361398273"
+      - "285409288"
+    notes: "Russian version of doc-01 — should find Metatron overview pages"
 
   - id: "ru-02"
     text: "Какие задачи сейчас в работе?"
     category: "russian"
     expected_doc_labels:
-      - "MTRNIX-116"
-      - "MTRNIX-154"
-      - "MTRNIX-54"
-    notes: "Russian version of exec-02 — same In Progress tickets expected"
+      - "MTRNIX-255"
+      - "MTRNIX-224"
+      - "MTRNIX-164"
+    notes: "Russian version of exec-02 — current In Progress tickets (updated 2026-03-30)"
 
   - id: "ru-03"
     text: "Расскажи про план внедрения RBAC"
@@ -228,7 +233,9 @@ queries:
     category: "typo"
     expected_doc_labels:
       - "285343747"
-    notes: "Misspelling of 'Metatron' — should still find the right page"
+      - "361398273"
+      - "285409288"
+    notes: "Misspelling of 'Metatron' — should still find Metatron overview pages"
 
   - id: "typo-02"
     text: "Status of MTRNIK-104"
@@ -289,10 +296,10 @@ queries:
     text: "How many tasks are in the current sprint?"
     category: "aggregation"
     expected_doc_labels:
-      - "MTRNIX-116"
-      - "MTRNIX-154"
-      - "MTRNIX-54"
-    notes: "Aggregation query — should find active sprint tickets even if can't count"
+      - "MTRNIX-255"
+      - "MTRNIX-224"
+      - "MTRNIX-253"
+    notes: "Aggregation query — should find active sprint tickets (updated 2026-03-30)"
 
   - id: "agg-02"
     text: "List all confluence pages about RBAC"
