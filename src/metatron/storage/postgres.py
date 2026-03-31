@@ -763,7 +763,7 @@ class PostgresStore:
                 # Check if document already exists
                 result = await conn.execute(
                     text("""
-                        SELECT id, content_hash
+                        SELECT id, content_hash, qdrant_synced
                         FROM raw_documents
                         WHERE workspace_id = :workspace_id
                           AND connector_type = :connector_type
@@ -863,6 +863,9 @@ class PostgresStore:
                         {"id": existing._mapping["id"], "now": now},
                     )
                     counts["unchanged"] += 1
+                    # If not yet synced to Qdrant (e.g. reindex), still needs processing
+                    if not existing._mapping.get("qdrant_synced", True):
+                        counts["changed_source_ids"].append(doc.source_id)
 
         return counts
 
