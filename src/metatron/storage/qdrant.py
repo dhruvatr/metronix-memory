@@ -68,11 +68,15 @@ def get_collection_name(workspace_id: str | None = None) -> str:
 
 def _compute_doc_sparse(text: str) -> tuple[list[int], list[float]]:
     """Dispatch document sparse vector computation to SPLADE or BM25."""
-    if get_settings().splade_enabled:
+    splade_on = get_settings().splade_enabled
+    logger.debug("sparse.dispatch", splade_enabled=splade_on, text_len=len(text))
+    if splade_on:
         try:
             from metatron.ingestion.splade import compute_splade_sparse_vector
 
-            return compute_splade_sparse_vector(text)
+            result = compute_splade_sparse_vector(text)
+            logger.debug("sparse.splade.ok", indices=len(result[0]))
+            return result
         except Exception as e:
             logger.warning("splade.doc.fallback_to_bm25", error=str(e)[:200])
     return compute_bm25_sparse_vector(text)
