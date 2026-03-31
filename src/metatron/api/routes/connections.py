@@ -682,6 +682,7 @@ async def _run_connection_sync(
         )
 
         # Phase 1: Persist raw documents to PostgreSQL (source of truth)
+        upsert_result = None
         try:
             upsert_result = await store.upsert_raw_documents(
                 workspace_id=workspace_id,
@@ -699,10 +700,22 @@ async def _run_connection_sync(
             logger.warning("sync.raw_documents.error", error=str(e))
             # Non-fatal: continue with ingestion even if PG persist fails
 
-        # Phase 2: Ingest into Qdrant + Memgraph
-        if documents:
+        # Phase 2: Ingest into Qdrant (only new/updated docs, skip unchanged)
+        if upsert_result and upsert_result.get("changed_source_ids"):
+            changed_ids = set(upsert_result["changed_source_ids"])
+            docs_to_ingest = [d for d in documents if d.source_id in changed_ids]
+            logger.info(
+                "sync.filtering_unchanged",
+                total=len(documents),
+                changed=len(docs_to_ingest),
+                skipped=len(documents) - len(docs_to_ingest),
+            )
+        else:
+            docs_to_ingest = documents  # PG persist failed, process all
+
+        if docs_to_ingest:
             result = await ingest_documents(
-                documents,
+                docs_to_ingest,
                 workspace_id,
                 connector_type,
                 source_role=connector.source_role,

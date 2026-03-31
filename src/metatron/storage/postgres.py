@@ -743,7 +743,7 @@ class PostgresStore:
             workspace_id=workspace_id,
             count=len(documents),
         )
-        counts = {"new": 0, "updated": 0, "unchanged": 0}
+        counts = {"new": 0, "updated": 0, "unchanged": 0, "changed_source_ids": []}
         now = datetime.now(UTC)
 
         async with self._engine.begin() as conn:
@@ -805,6 +805,7 @@ class PostgresStore:
                         },
                     )
                     counts["new"] += 1
+                    counts["changed_source_ids"].append(doc.source_id)
                 elif existing._mapping["content_hash"] != content_hash:
                     # Content changed — update and reset sync flags
                     await conn.execute(
@@ -840,6 +841,7 @@ class PostgresStore:
                         },
                     )
                     counts["updated"] += 1
+                    counts["changed_source_ids"].append(doc.source_id)
                 else:
                     # Content unchanged — just bump fetched_at
                     await conn.execute(
