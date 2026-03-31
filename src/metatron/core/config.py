@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     # --- Retrieval tuning ---
     embedding_dim: int = 768
     rrf_k: int = 60
-    adaptive_rrf_enabled: bool = Field(True, alias="ADAPTIVE_RRF_ENABLED")
+    adaptive_rrf_enabled: bool = Field(False, alias="ADAPTIVE_RRF_ENABLED")
     rrf_k_low: int = Field(20, alias="RRF_K_LOW")
     rrf_k_high: int = Field(80, alias="RRF_K_HIGH")
     rrf_overlap_threshold_low: float = Field(0.2, alias="RRF_OVERLAP_THRESHOLD_LOW")
