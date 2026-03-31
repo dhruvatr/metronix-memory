@@ -22,3 +22,4 @@
 - feat: adaptive RRF fusion constant based on dense/sparse overlap (MTRNIX-211, default off — needs tuning)
 - feat: transitive alias resolution via graph — 1..3 hop BFS over ALIAS edges (MTRNIX-212)
 - feat: persistent deduplication index — SimHash fingerprints in PostgreSQL (MTRNIX-213)
+- feat: push temporal filtering into Cypher queries + Memgraph indexes (MTRNIX-214)
