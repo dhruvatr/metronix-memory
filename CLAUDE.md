@@ -408,29 +408,29 @@ Push: git push
 To run the complete Jira-to-merge flow, use this prompt with the team lead:
 
 ```
-Возьми задачу MTRNIX-XXX из Jira.
-Создай agent team из 4 teammates: architect, coder, reviewer, documenter.
+Take task MTRNIX-XXX from Jira.
+Create agent team with 4 teammates: architect, coder, reviewer, documenter.
 
 Flow:
-1. Обнови develop и создай ветку:
+1. Update develop and create branch:
    git checkout develop && git pull && git checkout -b feature/MTRNIX-XXX
-2. architect: получи задачу из Jira (включая parent story/epic),
-   прочитай docs/superpowers/ для контекста предыдущих задач,
-   прочитай metatron-arch-guard skill для product vision,
-   просканируй .claude/CLAUDE.md файлы в затронутых директориях,
-   проанализируй затронутые слои, создай план реализации
-3. coder: реализуй план, напиши тесты, прогони lint/typecheck/test, закоммить и запушь
-4. Создай PR в develop: gh pr create --base develop --title "feat(MTRNIX-XXX): краткое описание"
-5. reviewer: проверь diff, прогони make test-all, если есть BLOCKERs — верни coder
-   на исправление. Цикл пока zero BLOCKERs.
-6. ⏸️ ПАУЗА — покажи мне summary: что сделано, какие файлы изменены, результаты тестов.
-   Жди моего подтверждения перед продолжением.
-7. После моего "ок": documenter обновляет документацию (CLAUDE.md, README, CHANGELOG,
-   затронутые .claude/CLAUDE.md), коммитит, пушит
-8. Когда все проверки пройдены — замержь PR: gh pr merge --squash
-9. Переведи задачу MTRNIX-XXX в статус Done в Jira
+2. architect: fetch task from Jira (including parent story/epic),
+   read docs/superpowers/ for context from previous tasks,
+   read metatron-arch-guard skill for product vision,
+   scan .claude/CLAUDE.md files in affected directories,
+   analyze affected layers, create implementation plan
+3. coder: implement plan, write tests, run lint/typecheck/test, commit and push
+4. Create PR to develop: gh pr create --base develop --title "feat(MTRNIX-XXX): short description"
+5. reviewer: review diff, run make test-all, if BLOCKERs found — send back to coder
+   for fixes. Loop until zero BLOCKERs.
+6. ⏸️ PAUSE — show summary: what was done, changed files, test results.
+   Wait for human confirmation before proceeding.
+7. After human "ok": documenter updates documentation (CLAUDE.md, README, CHANGELOG,
+   affected .claude/CLAUDE.md files), commits, pushes
+8. When all checks pass — merge PR: gh pr merge --squash
+9. Transition task MTRNIX-XXX to Done in Jira
 
-Качество: высокий стандарт кода, все тесты зелёные, zero BLOCKERs от reviewer.
+Quality: high code standards, all tests green, zero BLOCKERs from reviewer.
 ```
 
 ### Team Composition Notes
