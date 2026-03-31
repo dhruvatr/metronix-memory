@@ -38,7 +38,12 @@ def with_retry(max_attempts: int = 3):
                 except (ServiceUnavailable, SessionExpired, BrokenPipeError, ConnectionError) as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        logger.warning("persistence.retry", func=func.__name__, attempt=attempt + 1, error=str(e))
+                        logger.warning(
+                            "persistence.retry",
+                            func=func.__name__,
+                            attempt=attempt + 1,
+                            error=str(e),
+                        )
                         self._close()
                 except Exception as e:
                     if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
@@ -65,10 +70,13 @@ class MemgraphWorkspacePersistence:
     def _get_driver(self):
         if self._driver is None:
             from metatron.core.config import Settings
+
             settings = Settings()
             self._driver = GraphDatabase.driver(
                 settings.memgraph_uri,
-                auth=(settings.memgraph_user, settings.memgraph_password) if settings.memgraph_user else None,
+                auth=(settings.memgraph_user, settings.memgraph_password)
+                if settings.memgraph_user
+                else None,
             )
         return self._driver
 
@@ -152,6 +160,11 @@ class MemgraphWorkspacePersistence:
 
     @with_retry()
     def load_workspace_stats(self, workspace_id: str) -> WorkspaceStats | None:
+        from metatron.storage.memgraph import is_graph_writing
+
+        if is_graph_writing():
+            return None  # Skip Memgraph reads during graph writes
+
         driver = self._get_driver()
         with driver.session() as session:
             result = session.run(

@@ -2,6 +2,7 @@
 
 Migrated from PoC: db/memgraph.py (driver) + indexers/memgraph_workspace.py (write ops)
 """
+
 # TODO: async migration
 from __future__ import annotations
 
@@ -44,8 +45,24 @@ def _esc_list(values) -> str:
     """Escape a list for inline use in Cypher."""
     return "[" + ", ".join(_esc(v) for v in values) + "]"
 
+
 _driver = None
 _driver_lock = Lock()
+
+# Graph write lock — prevents concurrent reads (dashboard) during writes (graph-process).
+# Memgraph 2.18.1 crashes on concurrent read + write operations.
+_graph_writing = False
+
+
+def is_graph_writing() -> bool:
+    """Check if graph write operation is in progress."""
+    return _graph_writing
+
+
+def set_graph_writing(active: bool) -> None:
+    """Set graph write lock state."""
+    global _graph_writing
+    _graph_writing = active
 
 
 def _normalize_workspace_id(workspace_id: str | None) -> str:
@@ -54,9 +71,9 @@ def _normalize_workspace_id(workspace_id: str | None) -> str:
     return workspace_id.strip()
 
 
-def get_memgraph_driver(uri: str | None = None,
-                        user: str | None = None,
-                        password: str | None = None):
+def get_memgraph_driver(
+    uri: str | None = None, user: str | None = None, password: str | None = None
+):
     """Get shared Memgraph/Neo4j driver instance (singleton).
 
     Parameters default to values from Settings (env vars) when not provided.
@@ -81,13 +98,15 @@ def get_memgraph_driver(uri: str | None = None,
         if _driver is None:
             if uri is None or user is None or password is None:
                 from metatron.core.config import get_settings
+
                 s = get_settings()
                 uri = uri or s.memgraph_uri
                 user = user if user is not None else s.memgraph_user
                 password = password if password is not None else s.memgraph_password
             auth = (user, password) if user else None
             _driver = GraphDatabase.driver(
-                uri, auth=auth,
+                uri,
+                auth=auth,
                 max_connection_pool_size=50,
                 connection_acquisition_timeout=30,
             )
@@ -117,6 +136,7 @@ def memgraph_retry(max_attempts: int = 3):
     BrokenPipeError, ConnectionError, and generic errors with connection-
     related messages.
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -124,25 +144,31 @@ def memgraph_retry(max_attempts: int = 3):
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
-                except (ServiceUnavailable, SessionExpired,
-                        BrokenPipeError, ConnectionError) as e:
+                except (ServiceUnavailable, SessionExpired, BrokenPipeError, ConnectionError) as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        logger.warning("memgraph.retry", func=func.__name__,
-                                       attempt=attempt + 1, error=str(e))
+                        logger.warning(
+                            "memgraph.retry", func=func.__name__, attempt=attempt + 1, error=str(e)
+                        )
                         close_memgraph_driver()
                 except Exception as e:
                     if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
                         last_error = e
                         if attempt < max_attempts - 1:
-                            logger.warning("memgraph.retry", func=func.__name__,
-                                           attempt=attempt + 1, error=str(e))
+                            logger.warning(
+                                "memgraph.retry",
+                                func=func.__name__,
+                                attempt=attempt + 1,
+                                error=str(e),
+                            )
                             close_memgraph_driver()
                             continue
                     raise
             if last_error:
                 raise last_error
+
         return wrapper
+
     return decorator
 
 
@@ -175,20 +201,26 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         try:
             content = chat_completion(
                 messages=[
-                    {"role": "system",
-                     "content": "You extract knowledge graphs from text. "
-                     "Return only valid JSON. Use only these entity types: "
-                     "Person, Organization, Project, Task, Technology, "
-                     "Document, Concept, Service, Event, Location."},
+                    {
+                        "role": "system",
+                        "content": "You extract knowledge graphs from text. "
+                        "Return only valid JSON. Use only these entity types: "
+                        "Person, Organization, Project, Task, Technology, "
+                        "Document, Concept, Service, Event, Location.",
+                    },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.1, json_mode=True, timeout=120,
+                temperature=0.1,
+                json_mode=True,
+                timeout=120,
             )
             break
         except Exception as e:
             if attempt < 2:
                 wait = 2 * (attempt + 1)
-                logger.warning("memgraph.extract.retry", attempt=attempt + 1, wait=wait, error=str(e))
+                logger.warning(
+                    "memgraph.extract.retry", attempt=attempt + 1, wait=wait, error=str(e)
+                )
                 time.sleep(wait)
             else:
                 logger.error("memgraph.extract.failed", error=str(e))
@@ -200,13 +232,13 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         if len(parts) > 1:
             content = parts[-1].strip()
     if "```" in content:
-        m = re.search(r'```(?:json)?\s*([\s\S]*?)```', content)
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
         if m:
             content = m.group(1).strip()
     if not content.startswith("{"):
         s, e = content.find("{"), content.rfind("}")
         if s != -1 and e != -1 and e > s:
-            content = content[s:e + 1]
+            content = content[s : e + 1]
     if not content:
         return {"entities": [], "relationships": []}
 
@@ -234,8 +266,7 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
 
             # Reclassify roles/groups from Person → Organization
             if is_role_not_person(name, ent_type):
-                logger.debug("memgraph.extract.role_reclassified",
-                             name=name, old_type=ent_type)
+                logger.debug("memgraph.extract.role_reclassified", name=name, old_type=ent_type)
                 ent_type = "Organization"
 
             # Merge person name variants to canonical form
@@ -243,8 +274,9 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
                 canonical = normalize_person_name(name, ent_type)
                 if canonical != name:
                     merged_aliases[name] = canonical
-                    logger.debug("memgraph.extract.person_merged",
-                                 original=name, canonical=canonical)
+                    logger.debug(
+                        "memgraph.extract.person_merged", original=name, canonical=canonical
+                    )
                     name = canonical
 
             ent["name"] = name
@@ -274,10 +306,13 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
                 rel["target"] = tgt
                 relationships.append(rel)
 
-        logger.info("memgraph.extract.ok",
-                     entities=len(entities), rels=len(relationships),
-                     filtered=len(raw_entities) - len(entities),
-                     merged=len(merged_aliases))
+        logger.info(
+            "memgraph.extract.ok",
+            entities=len(entities),
+            rels=len(relationships),
+            filtered=len(raw_entities) - len(entities),
+            merged=len(merged_aliases),
+        )
         return {
             "entities": entities,
             "relationships": relationships,
@@ -290,9 +325,12 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
 
 @memgraph_retry()
 def write_doc_graph_to_memgraph(
-    text: str, file_name: str, user_id: str = "user",
+    text: str,
+    file_name: str,
+    user_id: str = "user",
     workspace_id: str | None = None,
-    doc_label: str | None = None, upload_time: str | None = None,
+    doc_label: str | None = None,
+    upload_time: str | None = None,
     doc_date: str | None = None,
     metadata: dict | None = None,
 ) -> None:

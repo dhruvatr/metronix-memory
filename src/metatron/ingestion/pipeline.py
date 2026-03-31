@@ -389,11 +389,14 @@ async def process_unsynced_graphs(
     consecutive_errors = 0
     max_consecutive_errors = 3  # Stop if Memgraph is down
 
+    from metatron.storage.memgraph import set_graph_writing
+
     rows = await store.get_unsynced_documents(workspace_id, target="graph", limit=batch_size)
 
     if not rows:
         return {"ok": 0, "errors": 0, "skipped": 0}
 
+    set_graph_writing(True)
     logger.info(
         "process_unsynced_graphs.start",
         workspace_id=workspace_id,
@@ -476,6 +479,8 @@ async def process_unsynced_graphs(
                 error=str(e)[:200],
                 consecutive_errors=consecutive_errors,
             )
+
+    set_graph_writing(False)
 
     logger.info(
         "process_unsynced_graphs.done",
