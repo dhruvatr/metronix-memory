@@ -26,7 +26,7 @@ def main() -> None:
     print(
         f"Graph processing: {result['ok']} ok, "
         f"{result['errors']} errors, "
-        f"{result['skipped']} skipped"
+        f"{result.get('rounds', 1)} rounds"
     )
 
 
