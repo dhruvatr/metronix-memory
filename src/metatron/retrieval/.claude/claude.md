@@ -2,45 +2,54 @@
 
 ## Overview
 L2 — the full search pipeline from raw query to LLM answer with sources.
-Entry point: `hybrid_search_and_answer()` in `search.py`. Currently sync
-(TODO: async migration), runs via `asyncio.to_thread()` from API layer.
+Entry point: `hybrid_search_and_answer()` in `search.py`. Fully async pipeline.
 
 ## Pipeline (current)
 ```
-Query → expansion → classify(profile) → weight_preset
-     → recall_dense + recall_exact + recall_metadata + recall_graph  (parallel ThreadPoolExecutor)
+Query → [HyDE (optional, short/vague queries)] → expansion → classify(profile) → weight_preset
+     → recall_dense + recall_exact + recall_metadata + recall_graph  (parallel via asyncio.gather)
      → merge_channels → compute_signal_score(6 weighted signals, normalized [0,1])
      → confidence filter (min_signal_score, default disabled)
      → top-35 pool → cross-encoder rerank (bge-reranker-v2-m3)
      → compute_final_score(blend: 30% signal + 70% reranker)
+     → _prepend_root_context (fetch root chunks for child results)
      → _collect_frags(dict) → _mark_evidence_role(PRIMARY/SUPPORTING)
      → _build_ctx(grouped markdown) → LLM(evidence rules) → _append_sources → answer
+
+Sparse search uses SPLADE learned representations (SPLADE_ENABLED=true, default ON).
+Falls back to BM25 when SPLADE_ENABLED=false.
+HyDE generates hypothetical document for short queries (HYDE_ENABLED=false, default OFF).
+Adaptive RRF adjusts rrf_k based on dense/sparse overlap (ADAPTIVE_RRF_ENABLED=false, default OFF).
+Transitive alias resolution: recall_graph resolves aliases via 1..3 hop BFS over ALIAS edges.
 ```
 
 ## Files
 
 ### `search.py`
-Main pipeline — `hybrid_search_and_answer()`.
-Orchestrates: language detection → translation → query expansion → classification →
-recall channels (parallel) → scoring → reranking → fragment collection → evidence roles → LLM.
+Main pipeline — `async def hybrid_search_and_answer()`.
+Orchestrates: language detection → translation → [HyDE] → query expansion → classification →
+recall channels (parallel via asyncio.gather) → scoring → reranking → fragment collection →
+evidence roles → LLM.
 
 Key functions:
-- `_run_recall_channels(ctx)` — parallel dispatch of 4 recall channels via `ThreadPoolExecutor`
+- `_run_recall_channels_async(ctx)` — parallel dispatch of 4 recall channels via `asyncio.gather`
+- `_prepend_root_context()` — fetch root chunks for child results, prepend as context
 - `_collect_frags()` — extract text, deduplicate, respect `_MAX_TOTAL`/`_MAX_FRAG`
 - `_mark_evidence_role()` — assigns PRIMARY/SUPPORTING based on query profile
 - `_build_ctx()` — assembles grouped markdown context for LLM
 - `_append_sources()` — citation formatting (max 5 sources)
 
 ### `channels.py`
-4 independent recall channels + merge logic:
-- `recall_dense(ctx)` — RRF hybrid search (dense + sparse vectors via Qdrant)
-- `recall_exact(ctx)` — Jira key lookup + title entity search
-- `recall_metadata(ctx)` — date filters, person/assignee, activity status
-- `recall_graph(ctx)` — entity graph traversal (BFS hop expansion via Memgraph)
+4 independent recall channels (sync + async variants) + merge logic:
+- `recall_dense(ctx)` / `recall_dense_async(ctx)` — RRF hybrid search (dense + SPLADE/BM25 sparse via Qdrant). Supports HyDE embedding path and adaptive RRF.
+- `recall_exact(ctx)` / `recall_exact_async(ctx)` — Jira key lookup + title entity search
+- `recall_metadata(ctx)` / `recall_metadata_async(ctx)` — date filters, person/assignee, activity status
+- `recall_graph(ctx)` / `recall_graph_async(ctx)` — entity graph traversal (BFS hop expansion via Memgraph) with transitive alias resolution (1..3 hop BFS over ALIAS edges)
 - `merge_channels()` — merges results, preserves all channel scores
 - `_cached_get_graph_entities()` — LRU cache (maxsize=128) for graph entity lookups
+- `on_sync_completed()` — event handler clearing graph entity LRU cache
 
-Types: `ScoredResult`, `MergedResult`, `RecallContext`
+Types: `ScoredResult`, `MergedResult`, `RecallContext` (includes `hyde_embedding` field)
 
 ### `scoring.py`
 Multi-signal scoring formula:
@@ -73,6 +82,8 @@ Disabled when `QUERY_EXPANSION_ENABLED=False`. Returns original query on failure
 ### `hybrid.py`
 `HybridSearcher` — wraps dense + sparse search with RRF fusion.
 RRF formula: `score = Σ 1/(rrf_k + rank)` where `rrf_k=60`.
+When `ADAPTIVE_RRF_ENABLED=true`, rrf_k adjusts between `RRF_K_LOW` and `RRF_K_HIGH`
+based on dense/sparse overlap ratio.
 
 ### `context.py`
 `_build_ctx(query, lang, frags, g_ents, g_rels, g_docs) -> str`
@@ -81,14 +92,22 @@ Assembles LLM context from fragments + graph data, grouped by evidence role.
 ### `prompts.py`
 System prompts with atomic evidence rules for LLM.
 
+### `fallback.py`
+Graceful retrieval — `_safe_call` pattern. If a retrieval component fails (graph down,
+Qdrant timeout), the retriever skips that signal and continues with available data.
+
+### `graph_enrichment.py`
+Graph-based enrichment for search results.
+
 ### Other files
-- `alias_registry.py` — person alias store for entity resolution
+- `alias_registry.py` — file-based person alias store for entity resolution
+- `aliases.py` — hardcoded `NAME_ALIASES` + transitive alias resolution helpers
 - `routing.py` — query type heuristics (jira, team workflow)
-- `entity_resolver.py`, `entity_helpers.py` — entity extraction and resolution
+- `entity_resolver.py`, `entity_helpers.py` — entity extraction and resolution; includes `create_alias_relationship()` for bidirectional ALIAS edges in Memgraph
 
 ## Key Patterns
-- **Sync-first with thread offload** — `hybrid_search_and_answer()` is sync; called via `asyncio.to_thread()`
-- **Parallel recall** — 4 channels run in ThreadPoolExecutor (max_workers=4)
+- **Fully async** — `hybrid_search_and_answer()` is `async def`; recall channels dispatched via `asyncio.gather`
+- **Parallel recall** — 4 async channels run concurrently via `asyncio.gather`
 - **Score isolation** — scores stored in `score_map: dict[str, float]`, not in memory dicts
 - **Graceful degradation** — graph/reranker failures are caught; search continues
 - **LRU cache** — graph entity lookups cached (maxsize=128)

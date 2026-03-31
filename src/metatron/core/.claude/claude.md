@@ -23,11 +23,22 @@ Key search-tuning constants:
 - `rrf_k=60`, `embedding_dim=768`
 - `search_pool_multiplier=3`, `search_pool_min=15`
 
+Feature flags:
+- `hierarchical_chunking_enabled=True` — root-child chunking pattern
+- `adaptive_rrf_enabled=False` — adaptive RRF fusion (regresses metrics)
+- `rrf_k_low=20`, `rrf_k_high=80` — adaptive RRF k range
+- `rrf_overlap_threshold_low=0.2`, `rrf_overlap_threshold_high=0.7` — adaptive RRF overlap thresholds
+- `hyde_enabled=False` — HyDE for short/vague queries
+- `hyde_max_words=4`, `hyde_timeout=8` — HyDE parameters
+- `splade_enabled=True` — SPLADE learned sparse representations (replaces BM25)
+- `splade_model="naver/splade-cocondenser-ensembledistil"`, `splade_max_length=256`
+
 ### `models.py`
 Pure dataclasses — no ORM, no Pydantic, no business logic. These shapes flow between all layers.
 
 - `Document` — fetched from connector before chunking (id, workspace_id, source_type, source_id, title, content, url, tags, metadata)
 - `Chunk` — post-chunking unit for embedding (chunk_type: ROOT/CHILD/STANDALONE, parent_id, content, token_count, simhash, embedding)
+- `RawDocument` — source of truth stored in PostgreSQL (workspace_id, source_type, source_id, title, content, content_hash, url, metadata, synced_at, graph_synced_at)
 - `DocumentVersion` — temporal tracking with content_hash and changed_fields
 - `IncomingMessage` / `OutgoingMessage` — channel messaging shapes
 - `Skill` — Markdown document teaching LLM tool usage (name, content, triggers, builtin flag)

@@ -58,7 +58,7 @@ Shared `Depends()` functions:
 Password validated against `Settings.auth_password`. Issues token for `"admin"` user with `workspace_ids=["*"]`.
 
 ### `routes/chat.py`
-`POST /api/v1/chat` — main Q&A endpoint. Calls `hybrid_search_and_answer()` via `asyncio.to_thread()`.
+`POST /api/v1/chat` — main Q&A endpoint. Calls `await hybrid_search_and_answer()` (async).
 `POST /api/v1/chat/stream` — SSE streaming via `EventSourceResponse`.
 `POST /api/v1/upload` — file upload + immediate ingestion into workspace.
 In-memory conversation history keyed by `user_id` (thread-safe with `threading.Lock`).
@@ -80,7 +80,7 @@ Full CRUD for DB-based connections + sync trigger. Uses `PostgresStore` for pers
 - `PUT /api/v1/connections/{id}` — update name/config/enabled (handles `***` secret merge)
 - `DELETE /api/v1/connections/{id}` — delete (204, workspace-scoped)
 - `POST /api/v1/connections/{id}/test` — test connection via `connector.configure()`. Updates error_message on failure
-- `POST /api/v1/connections/{id}/sync` — trigger background sync from DB config (connectors only, not channels)
+- `POST /api/v1/connections/{id}/sync` — trigger background sync from DB config (connectors only, not channels). After sync, triggers `process_all_unsynced_graphs()` for decoupled graph extraction.
 
 **Helpers:**
 - `_get_workspace_id(request)` — extracts from `request.state.user` or falls back to `settings.default_workspace_id`
@@ -113,12 +113,30 @@ Uses Memgraph directly (neo4j driver). Handles `ServiceUnavailable`/`SessionExpi
 `GET/PUT/DELETE /api/v1/workspaces/{id}` — read / update / delete
 Uses `get_workspace_manager()` singleton.
 
+### `routes/users.py`
+`GET /api/v1/users/platform-mappings` — list all platform mappings
+`GET /api/v1/users/{user_id}/platform-mappings` — mappings for a specific user
+`PUT /api/v1/users/{user_id}/platform-mappings` — update platform mapping
+`DELETE /api/v1/users/{user_id}/platform-mappings/{platform}/{platform_user_id}` — delete mapping
+
 ### `routes/sync.py`
 `GET /api/v1/sync/status` — sync status per connection (TODO stub)
 `GET /api/v1/sync/logs` — recent sync log entries (TODO stub)
 
 ### `routes/benchmarker.py`
 `POST /api/v1/query/trace` — run query with 7-step timing trace for benchmarking.
+
+### `routes/openai_compat.py`
+OpenAI-compatible API endpoints for Open WebUI integration:
+- `GET /v1/models` — list models (one per workspace)
+- `POST /v1/chat/completions` — chat completions (streaming + non-streaming)
+- `GET /v1/openapi.json` — stub for connection verification
+
+### `routes/openwebui_import.py`
+`POST /api/v1/admin/import-openwebui-users` — import users from existing Open WebUI instance.
+
+### `routes/config.py`
+`GET /api/v1/config/features` — feature flag status for UI.
 
 ### `routes/finops.py`
 `GET /api/v1/finops/time-savings` — time savings metrics.

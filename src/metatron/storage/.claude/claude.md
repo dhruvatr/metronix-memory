@@ -21,6 +21,11 @@ SQLAlchemy ORM models (sync, psycopg2-based).
 | `ConfigRow` | `config` | workspace_id→FK, key, value (JSON) |
 | `SyncLogRow` | `sync_logs` | workspace_id→FK, connection_id→FK, status, documents_fetched/new/updated/skipped, errors (JSONB), duration_ms, qdrant_chunks |
 | `QueryTraceRow` | `query_traces` | workspace_id, query, trace (JSONB), total_ms, created_at |
+| `UserPlatformMappingRow` | `user_platform_mappings` | user_id→FK, platform, platform_user_id, display_name (migration 010) |
+
+Tables managed by migrations (no ORM model):
+- `raw_documents` — source of truth for document content (migration 011): workspace_id, source_type, source_id, title, content, content_hash, url, metadata (JSONB), synced_at, graph_synced_at
+- `dedup_fingerprints` — persistent SimHash fingerprints (migration 012): workspace_id, doc_label, fingerprint (bigint), chunk_index
 
 All FKs use `ondelete="CASCADE"`.
 `QueryTraceRow.trace` JSONB stores `source_word_count` and other retrieval metadata (see `retrieval/.claude/finops.md`).
@@ -33,17 +38,31 @@ Sync SQLAlchemy engine + session factory (psycopg2). **TODO: async migration**.
 `store_query_trace_sync(workspace_id, query, trace_data, total_ms)` — writes `QueryTraceRow` in a new session.
 
 ### `postgres.py`
-`PostgresStore` — higher-level PostgreSQL operations.
+`PostgresStore` — higher-level PostgreSQL operations (async, uses asyncpg/aiosqlite).
 CRUD for workspaces, users, connections, sync logs, config entries.
 Used by workspaces manager, auth user_mapping, connections API.
 
+Raw document methods:
+- `upsert_raw_documents(workspace_id, documents)` — insert/update with content_hash comparison
+- `get_unsynced_raw_documents(workspace_id)` — documents not yet graph-processed
+- `mark_raw_documents_synced(workspace_id, source_ids)` — set graph_synced_at timestamp
+- `get_raw_document(workspace_id, source_type, source_id)` — fetch single raw document
+
+Dedup fingerprint methods:
+- `batch_load_fingerprints(workspace_id) -> dict[int, str]` — load all fingerprints
+- `save_fingerprints(workspace_id, fingerprints)` — batch-insert new fingerprints
+
 ### `qdrant.py`
-`QdrantVectorStore` — wraps qdrant-client.
+Two vector store implementations:
+
+**`QdrantVectorStore`** — sync wrapper around qdrant-client.
 
 `get_collection_name(workspace_id) -> str` — `f"metatron_{normalize_workspace_id(workspace_id)}"`.
 
 Key methods:
-- `hybrid_search(query, limit, filter_conditions) -> list[dict]` — dense + sparse (BM25) search
+- `hybrid_search(query, limit, filter_conditions) -> list[dict]` — dense + sparse (BM25/SPLADE) search
+- `dense_search_raw(embedding, limit, filter_conditions) -> list[dict]` — dense-only search
+- `sparse_search_raw(sparse_vector, limit, filter_conditions) -> list[dict]` — sparse-only search
 - `search_by_doc_labels(labels, limit) -> list[dict]` — fetch chunks by doc label filter
 - `upsert_chunks(chunks)` — batch upsert with vectors
 - `delete_by_workspace(workspace_id)` — cleanup
@@ -51,14 +70,28 @@ Key methods:
 `get_hybrid_store(workspace_id) -> QdrantVectorStore` — module-level cache keyed by workspace_id.
 `clear_store_cache()` — invalidates store cache (used in tests).
 
+**`AsyncQdrantVectorStore`** — async wrapper using `AsyncQdrantClient`.
+
+Same API surface as sync version but all methods are `async def`.
+Key methods: `hybrid_search`, `dense_search`, `keyword_search`, `dense_search_raw`,
+`sparse_search_raw`, `add_document`, `search_by_date`, `search_by_type`,
+`search_by_doc_labels`, `search_by_status`, `search_by_assignee`, `scroll_by_title`,
+`fetch_by_chunk_ids`, `delete_by_doc_labels`, `get_stats`, `close`.
+
+Auto-creates Qdrant collection before first ingestion via `_ensure_collection()`.
+
 ### `memgraph.py`
 Memgraph (bolt/neo4j driver) connection and graph operations.
 
-`get_memgraph_driver(uri, user, password)` — singleton bolt driver.
+`get_memgraph_driver(uri, user, password)` — singleton bolt driver with `verify_connectivity()`.
 `memgraph_retry(max_attempts=3)` — decorator for reconnect on `ServiceUnavailable`.
+`is_graph_writing() -> bool` — lock flag preventing dashboard reads during graph writes.
 `extract_graph_from_text(text, max_text_length=8000) -> dict` — LLM-based NER extraction → `{entities: [], relations: []}`.
-`write_doc_graph_to_memgraph(doc, workspace_id)` — writes Document → Chunk → Entity nodes + relationships.
+`write_doc_graph_to_memgraph(doc, workspace_id)` — writes Document → Chunk → Entity nodes + relationships. Closes connection before each write for resilience.
 `delete_workspace_graph(workspace_id)` — removes all nodes for workspace.
+
+Connection resilience: `verify_connectivity()` on driver init, close before each write
+operation, `is_graph_writing` lock prevents concurrent dashboard reads.
 
 ### `graph_ops.py`
 High-level graph query functions used by retrieval.
@@ -120,7 +153,7 @@ Auto-run Alembic migrations on startup with PostgreSQL advisory lock.
 See [migrations.md](./migrations.md) for full documentation.
 
 ## Key Patterns
-- **Sync everything** — all storage clients are synchronous (psycopg2, qdrant-client sync, neo4j bolt). Called via `asyncio.to_thread()` from async layers. TODO: async migration.
+- **Async + sync** — PostgresStore is async (asyncpg/aiosqlite), Qdrant has both sync `QdrantVectorStore` and async `AsyncQdrantVectorStore`, Memgraph is sync (neo4j bolt, called via `asyncio.to_thread()`)
 - **Module-level singletons** — `get_engine()`, `get_hybrid_store()`, `get_memgraph_driver()` all use lazy module-level caches with thread locks
 - **Workspace isolation** — every query scoped by `workspace_id`; Qdrant uses per-workspace collections
 - **Fernet encryption** — connector `config_encrypted` is always encrypted before storage, never stored plaintext
