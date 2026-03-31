@@ -671,7 +671,13 @@ async def _run_connection_sync(
         )
 
         await connector.configure(connection_obj, config)
-        documents = await connector.fetch(workspace_id)
+
+        # Incremental sync: pass last sync timestamp so connector fetches only changed docs
+        from metatron.connectors.sync_state import SyncState
+
+        sync_state = SyncState()
+        since = sync_state.get_last_sync(workspace_id, connector_type)
+        documents = await connector.fetch(workspace_id, since=since)
         documents_fetched = len(documents)
 
         logger.info(
