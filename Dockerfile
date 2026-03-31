@@ -27,8 +27,10 @@ COPY src/ src/
 COPY migrations/ migrations/
 COPY alembic.ini .
 
-# Pre-download ML models so they're cached in the image (no internet needed at runtime)
-RUN python -c "from transformers import AutoModelForMaskedLM, AutoTokenizer; \
+# Pre-download ML models into a shared cache dir accessible by metatron user
+ENV HF_HOME=/app/.cache/huggingface
+RUN mkdir -p /app/.cache/huggingface && \
+    python -c "from transformers import AutoModelForMaskedLM, AutoTokenizer; \
     AutoTokenizer.from_pretrained('naver/splade-cocondenser-ensembledistil'); \
     AutoModelForMaskedLM.from_pretrained('naver/splade-cocondenser-ensembledistil')" \
     && python -c "from sentence_transformers import CrossEncoder; \
