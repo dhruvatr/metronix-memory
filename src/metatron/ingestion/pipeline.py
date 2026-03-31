@@ -479,6 +479,10 @@ async def process_unsynced_graphs(
                 error=str(e)[:200],
                 consecutive_errors=consecutive_errors,
             )
+            # Wait for Memgraph to recover (Docker auto-restarts it)
+            if consecutive_errors < max_consecutive_errors:
+                logger.info("process_unsynced_graphs.waiting_for_recovery", seconds=30)
+                await asyncio.sleep(30)
 
     set_graph_writing(False)
 
