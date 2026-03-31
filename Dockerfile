@@ -27,6 +27,14 @@ COPY src/ src/
 COPY migrations/ migrations/
 COPY alembic.ini .
 
+# Pre-download ML models so they're cached in the image (no internet needed at runtime)
+RUN python -c "from transformers import AutoModelForMaskedLM, AutoTokenizer; \
+    AutoTokenizer.from_pretrained('naver/splade-cocondenser-ensembledistil'); \
+    AutoModelForMaskedLM.from_pretrained('naver/splade-cocondenser-ensembledistil')" \
+    && python -c "from sentence_transformers import CrossEncoder; \
+    CrossEncoder('BAAI/bge-reranker-v2-m3')" \
+    || true
+
 RUN chown -R metatron:metatron /app
 USER metatron
 
