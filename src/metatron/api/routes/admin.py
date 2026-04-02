@@ -90,6 +90,97 @@ def cleanup_all_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ReindexResponse(BaseModel):
+    status: str
+    docs_reset: int
+    graph_cleared: bool
+    sync_state_cleared: bool
+
+
+@router.post("/reindex", response_model=ReindexResponse)
+async def trigger_reindex(
+    x_confirm_reindex: str | None = Header(None),
+) -> ReindexResponse:
+    """Trigger full reindex: reset sync flags and clear Neo4j graph.
+
+    Does NOT require ALLOW_CLEANUP. After calling this, trigger sync from UI
+    to re-ingest all documents with current settings (e.g. SPLADE vectors).
+
+    Steps:
+    1. Reset sync state (forces full fetch from connectors)
+    2. Reset qdrant_synced=false for all raw_documents
+    3. Reset graph_synced=false for all raw_documents
+    4. Clear Neo4j graph (DETACH DELETE all nodes)
+
+    Requires header X-Confirm-Reindex: yes
+    """
+    if x_confirm_reindex != "yes":
+        raise HTTPException(
+            status_code=400,
+            detail="Requires header 'X-Confirm-Reindex: yes'",
+        )
+
+    docs_reset = 0
+    graph_cleared = False
+    sync_state_cleared = False
+
+    # 1. Reset sync state
+    try:
+        from metatron.connectors.sync_state import SyncState
+
+        ss = SyncState()
+        # Clear all known workspace+connector combos
+        for key in list(ss._state.keys()):
+            parts = key.split(":", 1)
+            if len(parts) == 2:
+                ss.clear(parts[0], parts[1])
+        sync_state_cleared = True
+        logger.info("admin.reindex.sync_state_cleared")
+    except Exception as e:
+        logger.warning("admin.reindex.sync_state_error", error=str(e))
+
+    # 2. Reset qdrant_synced + graph_synced in raw_documents
+    try:
+        from metatron.core.config import Settings
+        from metatron.storage.postgres import PostgresStore
+        from sqlalchemy import text
+
+        s = Settings()
+        store = PostgresStore(s.postgres_dsn)
+        async with store._engine.begin() as conn:
+            r = await conn.execute(
+                text(
+                    "UPDATE raw_documents "
+                    "SET qdrant_synced = false, qdrant_synced_at = NULL, "
+                    "    graph_synced = false, graph_synced_at = NULL"
+                )
+            )
+            docs_reset = r.rowcount
+        await store.close()
+        logger.info("admin.reindex.docs_reset", count=docs_reset)
+    except Exception as e:
+        logger.warning("admin.reindex.docs_reset_error", error=str(e))
+
+    # 3. Clear Neo4j graph
+    try:
+        from metatron.storage.neo4j_graph import get_graph_driver
+
+        driver = get_graph_driver()
+        with driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+        graph_cleared = True
+        logger.info("admin.reindex.graph_cleared")
+    except Exception as e:
+        logger.warning("admin.reindex.graph_error", error=str(e))
+
+    return ReindexResponse(
+        status="reindex_ready",
+        docs_reset=docs_reset,
+        graph_cleared=graph_cleared,
+        sync_state_cleared=sync_state_cleared,
+    )
+
+
 @router.get("/status")
 def admin_status() -> dict[str, Any]:
     """Get admin/system status."""

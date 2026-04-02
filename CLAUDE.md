@@ -20,8 +20,9 @@ make eval-compare     # run eval + compare with last saved result
 make grid-search-cache # cache recall+reranker scores for grid search (~12 min)
 make grid-search      # grid search for optimal scoring weights (uses cache, fast)
 make grid-search-fine # grid search with finer step (0.05)
-make graph-rebuild    # rebuild Neo4j graph from Qdrant data (after graph loss)
+make graph-rebuild    # rebuild Neo4j graph from PG raw_documents (after graph loss)
 make graph-rebuild-dry # preview what graph-rebuild would process
+make graph-process    # process unsynced documents for graph extraction
 ```
 
 Direct commands:
@@ -56,7 +57,8 @@ src/metatron/
 │   ├── jwt.py                 # HS256, create_token/verify_token, 24h default
 │   ├── rbac.py                # Role hierarchy: viewer(0) < editor(1) < admin(2)
 │   ├── dependencies.py        # get_current_user → plugin auth → fallback JWT
-│   └── user_mapping.py        # TODO: NotImplementedError
+│   ├── user_mapping.py        # Platform identity → internal User (Telegram/Slack/Discord)
+│   └── user_store.py          # User CRUD against PostgreSQL
 ├── core/                      # L0 — ZERO dependencies on anything above
 │   ├── config.py              # Settings (pydantic-settings), all METATRON_* env vars
 │   ├── interfaces.py          # ABCs: Connector, Channel, LLM, VectorStore, GraphStore,
@@ -69,23 +71,25 @@ src/metatron/
 │   ├── http.py, logging.py, utils.py
 │   └── __init__.py
 ├── agent/                     # L4 — router.py, sessions.py, commands.py, executor.py, tools.py
-├── channels/                  # L5 — telegram.py, discord.py, slack.py
+├── channels/                  # L5 — telegram.py, discord.py, slack.py, manager.py
 ├── connectors/                # L3 — confluence, jira, notion, github, gdrive, slack_history, files
 │   └── registry.py            # Connector registry (independent from PluginManager)
-├── ingestion/                 # L2 — pipeline.py, chunking.py, dedup.py, bm25.py, sync.py
+├── ingestion/                 # L2 — pipeline.py, chunking.py, dedup.py, bm25.py, splade.py, sync.py
 │   └── processors/            # pdf, html, office, text, tabular, dates, titles, translation
 ├── llm/                       # L3 — provider.py, embeddings.py, base.py
 │   └── providers/             # ollama, deepseek, openrouter, custom
 ├── mcp/                       # L3 — server.py, client.py, adapter.py, registry.py
 │   └── tools/                 # search, sync, get, store, status
 ├── retrieval/                 # L2 — search.py, channels.py, scoring.py, query_classifier.py,
-│                              #   hybrid.py, query_expansion.py, reranker.py, token_budget.py
-├── storage/                   # L1 — postgres.py, qdrant.py, neo4j_graph.py, encryption.py
+│                              #   hybrid.py, query_expansion.py, reranker.py, token_budget.py,
+│                              #   fallback.py, graph_enrichment.py, aliases.py, alias_registry.py
+├── storage/                   # L1 — postgres.py, qdrant.py (sync+async), neo4j_graph.py, encryption.py
 ├── observability/             # health.py, metrics.py, tracer.py
 ├── workspaces/                # L3 — manager.py, models.py, persistence.py
 ├── skills/                    # L3 — engine.py
 ├── benchmarker/               # L2 — api/, db/, schemas/, services/metrics/
-└── scripts/                   # graph_audit.py, run_eval.py, grid_search_weights.py
+└── scripts/                   # graph_audit.py, run_eval.py, grid_search_weights.py,
+                               # graph_rebuild.py, graph_process.py
 ```
 
 ## Plugin System
@@ -131,8 +135,8 @@ Request → OptionalAuthMiddleware (if AUTH_ENABLED)
 
 ## Search Pipeline
 ```
-Query → expansion → classify(profile) → weight_preset
-     → recall_dense + recall_exact + recall_metadata + recall_graph  (parallel via ThreadPoolExecutor)
+Query → [HyDE (optional, short/vague queries)] → expansion → classify(profile) → weight_preset
+     → recall_dense + recall_exact + recall_metadata + recall_graph  (parallel via asyncio.gather)
      → merge_channels → compute_signal_score(6 weighted signals, normalized [0,1])
      → top-35 pool → cross-encoder rerank (bge-reranker-v2-m3)
      → compute_final_score(blend: 30% signal + 70% reranker)
@@ -140,9 +144,24 @@ Query → expansion → classify(profile) → weight_preset
      → _collect_frags(dict) → _mark_evidence_role(PRIMARY/SUPPORTING)
      → _build_ctx(grouped markdown) → LLM(evidence rules) → _append_sources → answer
 
+Pipeline is fully async (hybrid_search_and_answer is async def).
+Recall channels have both sync and async variants; async versions use asyncio.gather.
+
+Sparse search: SPLADE learned representations (default ON) replace BM25 for sparse vectors.
+When SPLADE_ENABLED=false, falls back to BM25.
+
+HyDE: for short/vague queries (<=HYDE_MAX_WORDS words), generates hypothetical document
+via LLM and embeds it for dense search. Feature flag HYDE_ENABLED (default OFF).
+
+Adaptive RRF: adjusts rrf_k based on dense/sparse overlap ratio. Feature flag
+ADAPTIVE_RRF_ENABLED (default OFF — regresses metrics in current eval).
+
+Transitive alias resolution: recall_graph resolves entity aliases via 1..3 hop BFS
+over ALIAS edges in Neo4j before entity-based document retrieval.
+
 Scoring signals: dense, graph, metadata, recency, source_balance (smooth gradient).
 Weights configurable per query profile (execution, documentation, user_file, relationship, temporal, mixed).
-Grid search script: `make grid-search` for weight optimization.
+Grid search script: `make grid-search` for weight optimization (two-phase with caching).
 
 Source citation format: `"{icon} {title} — {url}"` (em-dash separator).
 Icons: 📄 confluence, 📋 jira, 📎 upload, 📓 notion.
@@ -150,10 +169,14 @@ Frontend splits on `" — "` to extract URL; no URL → title only.
 ```
 
 ## Databases
-- **PostgreSQL 16** — metadata, users, BM25 index, logs (port 5432)
-- **Qdrant v1.16** — vector embeddings 768-dim (port 6333/6334)
-- **Neo4j CE v5** — knowledge graph Document→Chunk→Entity (port 7687 bolt, 7474 browser)
+- **PostgreSQL 16** — metadata, users, raw_documents (source of truth), dedup_fingerprints, user_platform_mappings, BM25 index, logs (port 5432)
+- **Qdrant v1.16** — vector embeddings 768-dim, SPLADE sparse vectors (port 6333/6334)
+- **Neo4j CE v5** — knowledge graph Document→Chunk→Entity, ALIAS edges for transitive resolution (port 7687 bolt, 7474 browser)
 - **Ollama** (optional) — local LLM + embeddings (port 11434)
+
+Document flow: Connector → PostgreSQL (raw_documents) → Qdrant + Neo4j.
+PostgreSQL raw_documents table is the source of truth; Qdrant/Neo4j are derived stores.
+Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-process CLI).
 
 ## Key Config (env vars, prefix METATRON_)
 - AUTH_ENABLED (false) — JWT gate on /api/v1/*
@@ -164,6 +187,15 @@ Frontend splits on `" — "` to extract URL; no URL → title only.
 - GRAPH_EXTRACTION_WORKERS (1) — parallel workers for graph extraction
 - QUERY_CLASSIFIER_ENABLED (true) — hybrid rule+LLM query classifier
 - HIERARCHICAL_CHUNKING_ENABLED (true) — root-child chunking in ingestion pipeline
+- ADAPTIVE_RRF_ENABLED (false) — adaptive RRF fusion (regresses metrics, off by default)
+- RRF_K_LOW (20), RRF_K_HIGH (80) — adaptive RRF k range
+- RRF_OVERLAP_THRESHOLD_LOW (0.2), RRF_OVERLAP_THRESHOLD_HIGH (0.7) — adaptive RRF overlap thresholds
+- HYDE_ENABLED (false) — HyDE for short/vague queries
+- HYDE_MAX_WORDS (4) — max query word count to trigger HyDE
+- HYDE_TIMEOUT (8) — HyDE LLM timeout in seconds
+- SPLADE_ENABLED (true) — SPLADE learned sparse representations (replaces BM25)
+- SPLADE_MODEL (naver/splade-cocondenser-ensembledistil) — SPLADE model name
+- SPLADE_MAX_LENGTH (256) — max token length for SPLADE encoding
 - DENSE_WEIGHT (0.35), GRAPH_WEIGHT (0.15), METADATA_WEIGHT (0.20), RECENCY_WEIGHT (0.10), BALANCE_WEIGHT (0.05), BLEND_WEIGHT (0.3) — scoring formula weights
 - RERANK_POOL_SIZE (35) — candidates sent to cross-encoder
 - MIN_SIGNAL_SCORE (0.0) — confidence threshold (0=disabled)
@@ -376,29 +408,29 @@ Push: git push
 To run the complete Jira-to-merge flow, use this prompt with the team lead:
 
 ```
-Возьми задачу MTRNIX-XXX из Jira.
-Создай agent team из 4 teammates: architect, coder, reviewer, documenter.
+Take task MTRNIX-XXX from Jira.
+Create agent team with 4 teammates: architect, coder, reviewer, documenter.
 
 Flow:
-1. Обнови develop и создай ветку:
+1. Update develop and create branch:
    git checkout develop && git pull && git checkout -b feature/MTRNIX-XXX
-2. architect: получи задачу из Jira (включая parent story/epic),
-   прочитай docs/superpowers/ для контекста предыдущих задач,
-   прочитай metatron-arch-guard skill для product vision,
-   просканируй .claude/CLAUDE.md файлы в затронутых директориях,
-   проанализируй затронутые слои, создай план реализации
-3. coder: реализуй план, напиши тесты, прогони lint/typecheck/test, закоммить и запушь
-4. Создай PR в develop: gh pr create --base develop --title "feat(MTRNIX-XXX): краткое описание"
-5. reviewer: проверь diff, прогони make test-all, если есть BLOCKERs — верни coder
-   на исправление. Цикл пока zero BLOCKERs.
-6. ⏸️ ПАУЗА — покажи мне summary: что сделано, какие файлы изменены, результаты тестов.
-   Жди моего подтверждения перед продолжением.
-7. После моего "ок": documenter обновляет документацию (CLAUDE.md, README, CHANGELOG,
-   затронутые .claude/CLAUDE.md), коммитит, пушит
-8. Когда все проверки пройдены — замержь PR: gh pr merge --squash
-9. Переведи задачу MTRNIX-XXX в статус Done в Jira
+2. architect: fetch task from Jira (including parent story/epic),
+   read docs/superpowers/ for context from previous tasks,
+   read metatron-arch-guard skill for product vision,
+   scan .claude/CLAUDE.md files in affected directories,
+   analyze affected layers, create implementation plan
+3. coder: implement plan, write tests, run lint/typecheck/test, commit and push
+4. Create PR to develop: gh pr create --base develop --title "feat(MTRNIX-XXX): short description"
+5. reviewer: review diff, run make test-all, if BLOCKERs found — send back to coder
+   for fixes. Loop until zero BLOCKERs.
+6. ⏸️ PAUSE — show summary: what was done, changed files, test results.
+   Wait for human confirmation before proceeding.
+7. After human "ok": documenter updates documentation (CLAUDE.md, README, CHANGELOG,
+   affected .claude/CLAUDE.md files), commits, pushes
+8. When all checks pass — merge PR: gh pr merge --squash
+9. Transition task MTRNIX-XXX to Done in Jira
 
-Качество: высокий стандарт кода, все тесты зелёные, zero BLOCKERs от reviewer.
+Quality: high code standards, all tests green, zero BLOCKERs from reviewer.
 ```
 
 ### Team Composition Notes

@@ -58,6 +58,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         json_output=settings.env != "development",
     )
     logger.info("app.startup", env=settings.env, port=settings.port)
+    logger.info(
+        "app.feature_flags",
+        splade_enabled=settings.splade_enabled,
+        hyde_enabled=settings.hyde_enabled,
+        adaptive_rrf_enabled=settings.adaptive_rrf_enabled,
+        hierarchical_chunking_enabled=settings.hierarchical_chunking_enabled,
+        reranker_enabled=settings.reranker_enabled,
+        graph_extraction_enabled=settings.graph_extraction_enabled,
+    )
 
     # Apply pending database migrations before serving traffic.
     # Advisory lock ensures only one replica runs migrations when several
