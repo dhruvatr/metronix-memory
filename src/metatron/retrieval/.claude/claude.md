@@ -44,7 +44,7 @@ Key functions:
 - `recall_dense(ctx)` / `recall_dense_async(ctx)` — RRF hybrid search (dense + SPLADE/BM25 sparse via Qdrant). Supports HyDE embedding path and adaptive RRF.
 - `recall_exact(ctx)` / `recall_exact_async(ctx)` — Jira key lookup + title entity search
 - `recall_metadata(ctx)` / `recall_metadata_async(ctx)` — date filters, person/assignee, activity status
-- `recall_graph(ctx)` / `recall_graph_async(ctx)` — entity graph traversal (BFS hop expansion via Memgraph) with transitive alias resolution (1..3 hop BFS over ALIAS edges)
+- `recall_graph(ctx)` / `recall_graph_async(ctx)` — entity graph traversal (BFS hop expansion via Neo4j) with transitive alias resolution (1..3 hop BFS over ALIAS edges)
 - `merge_channels()` — merges results, preserves all channel scores
 - `_cached_get_graph_entities()` — LRU cache (maxsize=128) for graph entity lookups
 - `on_sync_completed()` — event handler clearing graph entity LRU cache
@@ -103,7 +103,7 @@ Graph-based enrichment for search results.
 - `alias_registry.py` — file-based person alias store for entity resolution
 - `aliases.py` — hardcoded `NAME_ALIASES` + transitive alias resolution helpers
 - `routing.py` — query type heuristics (jira, team workflow)
-- `entity_resolver.py`, `entity_helpers.py` — entity extraction and resolution; includes `create_alias_relationship()` for bidirectional ALIAS edges in Memgraph
+- `entity_resolver.py`, `entity_helpers.py` — entity extraction and resolution; includes `create_alias_relationship()` for bidirectional ALIAS edges in Neo4j
 
 ## Key Patterns
 - **Fully async** — `hybrid_search_and_answer()` is `async def`; recall channels dispatched via `asyncio.gather`

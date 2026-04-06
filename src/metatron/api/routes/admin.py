@@ -28,13 +28,15 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 class CleanupPreviewResponse(BaseModel):
     cleanup_allowed: bool
     qdrant: dict[str, Any]
-    memgraph: dict[str, Any]
+    memgraph: dict[str, Any]  # deprecated, use neo4j
+    neo4j: dict[str, Any] | None = None
 
 
 class CleanupResponse(BaseModel):
     status: str
     qdrant: dict[str, Any] | None = None
-    memgraph: dict[str, Any] | None = None
+    memgraph: dict[str, Any] | None = None  # deprecated, use neo4j
+    neo4j: dict[str, Any] | None = None
     workspace_id: str | None = None
 
 
@@ -91,7 +93,7 @@ def cleanup_all_endpoint(
 class ReindexResponse(BaseModel):
     status: str
     docs_reset: int
-    memgraph_cleared: bool
+    graph_cleared: bool
     sync_state_cleared: bool
 
 
@@ -99,7 +101,7 @@ class ReindexResponse(BaseModel):
 async def trigger_reindex(
     x_confirm_reindex: str | None = Header(None),
 ) -> ReindexResponse:
-    """Trigger full reindex: reset sync flags and clear Memgraph.
+    """Trigger full reindex: reset sync flags and clear Neo4j graph.
 
     Does NOT require ALLOW_CLEANUP. After calling this, trigger sync from UI
     to re-ingest all documents with current settings (e.g. SPLADE vectors).
@@ -108,7 +110,7 @@ async def trigger_reindex(
     1. Reset sync state (forces full fetch from connectors)
     2. Reset qdrant_synced=false for all raw_documents
     3. Reset graph_synced=false for all raw_documents
-    4. Clear Memgraph (DETACH DELETE all nodes)
+    4. Clear Neo4j graph (DETACH DELETE all nodes)
 
     Requires header X-Confirm-Reindex: yes
     """
@@ -119,7 +121,7 @@ async def trigger_reindex(
         )
 
     docs_reset = 0
-    memgraph_cleared = False
+    graph_cleared = False
     sync_state_cleared = False
 
     # 1. Reset sync state
@@ -159,22 +161,22 @@ async def trigger_reindex(
     except Exception as e:
         logger.warning("admin.reindex.docs_reset_error", error=str(e))
 
-    # 3. Clear Memgraph
+    # 3. Clear Neo4j graph
     try:
-        from metatron.storage.memgraph import get_memgraph_driver
+        from metatron.storage.neo4j_graph import get_graph_driver
 
-        driver = get_memgraph_driver()
+        driver = get_graph_driver()
         with driver.session() as session:
             session.run("MATCH (n) DETACH DELETE n")
-        memgraph_cleared = True
-        logger.info("admin.reindex.memgraph_cleared")
+        graph_cleared = True
+        logger.info("admin.reindex.graph_cleared")
     except Exception as e:
-        logger.warning("admin.reindex.memgraph_error", error=str(e))
+        logger.warning("admin.reindex.graph_error", error=str(e))
 
     return ReindexResponse(
         status="reindex_ready",
         docs_reset=docs_reset,
-        memgraph_cleared=memgraph_cleared,
+        graph_cleared=graph_cleared,
         sync_state_cleared=sync_state_cleared,
     )
 
@@ -196,13 +198,13 @@ def admin_status() -> dict[str, Any]:
         status["databases"]["qdrant"] = {"status": "error", "error": str(e)}
 
     try:
-        from metatron.storage.memgraph import get_memgraph_driver
+        from metatron.storage.neo4j_graph import get_graph_driver
 
-        driver = get_memgraph_driver()
+        driver = get_graph_driver()
         with driver.session() as session:
             session.run("RETURN 1 AS ok").single()
-        status["databases"]["memgraph"] = {"status": "connected"}
+        status["databases"]["neo4j"] = {"status": "connected"}
     except Exception as e:
-        status["databases"]["memgraph"] = {"status": "error", "error": str(e)}
+        status["databases"]["neo4j"] = {"status": "error", "error": str(e)}
 
     return status

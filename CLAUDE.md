@@ -13,14 +13,14 @@ make format           # ruff check --fix + format
 make typecheck        # mypy src/metatron/
 make migrate          # alembic upgrade head
 make migrate-new name="description"
-make docker-up        # start postgres + qdrant + memgraph
+make docker-up        # start postgres + qdrant + neo4j
 make docker-down
 make eval             # run search quality eval (needs live services)
 make eval-compare     # run eval + compare with last saved result
 make grid-search-cache # cache recall+reranker scores for grid search (~12 min)
 make grid-search      # grid search for optimal scoring weights (uses cache, fast)
 make grid-search-fine # grid search with finer step (0.05)
-make graph-rebuild    # rebuild Memgraph from PG raw_documents (after graph loss)
+make graph-rebuild    # rebuild Neo4j graph from PG raw_documents (after graph loss)
 make graph-rebuild-dry # preview what graph-rebuild would process
 make graph-process    # process unsynced documents for graph extraction
 ```
@@ -39,7 +39,7 @@ L5  channels/       Telegram, Discord, Slack bots
 L4  agent/          Intent router, sessions, commands, executor
 L3  services        connectors/, llm/, mcp/, skills/, auth/, workspaces/
 L2  processing      ingestion/, retrieval/, benchmarker/
-L1  storage/        PostgreSQL, Qdrant, Memgraph clients (no business logic)
+L1  storage/        PostgreSQL, Qdrant, Neo4j clients (no business logic)
 L0  core/           Config, Interfaces, Models, Events, Plugin (ZERO upward deps)
 ```
 
@@ -83,7 +83,7 @@ src/metatron/
 ├── retrieval/                 # L2 — search.py, channels.py, scoring.py, query_classifier.py,
 │                              #   hybrid.py, query_expansion.py, reranker.py, token_budget.py,
 │                              #   fallback.py, graph_enrichment.py, aliases.py, alias_registry.py
-├── storage/                   # L1 — postgres.py, qdrant.py (sync+async), memgraph.py, encryption.py
+├── storage/                   # L1 — postgres.py, qdrant.py (sync+async), neo4j_graph.py, encryption.py
 ├── observability/             # health.py, metrics.py, tracer.py
 ├── workspaces/                # L3 — manager.py, models.py, persistence.py
 ├── skills/                    # L3 — engine.py
@@ -157,7 +157,7 @@ Adaptive RRF: adjusts rrf_k based on dense/sparse overlap ratio. Feature flag
 ADAPTIVE_RRF_ENABLED (default OFF — regresses metrics in current eval).
 
 Transitive alias resolution: recall_graph resolves entity aliases via 1..3 hop BFS
-over ALIAS edges in Memgraph before entity-based document retrieval.
+over ALIAS edges in Neo4j before entity-based document retrieval.
 
 Scoring signals: dense, graph, metadata, recency, source_balance (smooth gradient).
 Weights configurable per query profile (execution, documentation, user_file, relationship, temporal, mixed).
@@ -171,11 +171,11 @@ Frontend splits on `" — "` to extract URL; no URL → title only.
 ## Databases
 - **PostgreSQL 16** — metadata, users, raw_documents (source of truth), dedup_fingerprints, user_platform_mappings, BM25 index, logs (port 5432)
 - **Qdrant v1.16** — vector embeddings 768-dim, SPLADE sparse vectors (port 6333/6334)
-- **Memgraph v2.18** — knowledge graph Document→Chunk→Entity, ALIAS edges for transitive resolution (port 7687)
+- **Neo4j CE v5** — knowledge graph Document→Chunk→Entity, ALIAS edges for transitive resolution (port 7687 bolt, 7474 browser)
 - **Ollama** (optional) — local LLM + embeddings (port 11434)
 
-Document flow: Connector → PostgreSQL (raw_documents) → Qdrant + Memgraph.
-PostgreSQL raw_documents table is the source of truth; Qdrant/Memgraph are derived stores.
+Document flow: Connector → PostgreSQL (raw_documents) → Qdrant + Neo4j.
+PostgreSQL raw_documents table is the source of truth; Qdrant/Neo4j are derived stores.
 Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-process CLI).
 
 ## Key Config (env vars, prefix METATRON_)
@@ -183,8 +183,8 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - LLM_PROVIDER (ollama) — ollama|deepseek|openrouter|custom
 - RERANKER_ENABLED (true) — bge-reranker-v2-m3
 - QUERY_EXPANSION_ENABLED (true) — LLM query expansion
-- GRAPH_EXTRACTION_ENABLED (true) — NER → Memgraph
-- GRAPH_EXTRACTION_WORKERS (1) — parallel workers for graph extraction (keep low to avoid Memgraph conflicts)
+- GRAPH_EXTRACTION_ENABLED (true) — NER → Neo4j
+- GRAPH_EXTRACTION_WORKERS (1) — parallel workers for graph extraction
 - QUERY_CLASSIFIER_ENABLED (true) — hybrid rule+LLM query classifier
 - HIERARCHICAL_CHUNKING_ENABLED (true) — root-child chunking in ingestion pipeline
 - ADAPTIVE_RRF_ENABLED (false) — adaptive RRF fusion (regresses metrics, off by default)
@@ -234,7 +234,7 @@ Docker: Open WebUI available in `docker-compose.full.yml` with profile `openwebu
 
 ## Docker
 ```
-docker compose up -d                 # postgres + qdrant + memgraph
+docker compose up -d                 # postgres + qdrant + neo4j
 docker compose --profile app up      # + API container
 docker compose --profile ollama up   # + Ollama
 ```
@@ -244,7 +244,7 @@ Upstream: metatron on port 8000, healthcheck at /health
 - Async everywhere: `async def` for handlers, DB calls, LLM calls
 - Config via pydantic-settings, env vars with METATRON_ prefix
 - Workspace isolation: all queries filtered by workspace_id (JWT claim)
-- Graceful degradation: `_safe_call()` — Memgraph down → search works without graph
+- Graceful degradation: `_safe_call()` — Neo4j down → search works without graph
 - Factory pattern: `create_app(settings)` for isolated testing
 - Logging: structlog
 - Line length: 99 (ruff)
@@ -278,7 +278,7 @@ Team lead orchestrates teammates through the full lifecycle: Jira → branch →
 - `docs/superpowers/` contains specs, implementation plans, and notes from previous tasks.
   This is the primary source of context about what has already been done, what is planned,
   and what remains to be finished. Architect must read relevant files before planning.
-- All required services (PostgreSQL, Qdrant, Memgraph) are assumed to be already running.
+- All required services (PostgreSQL, Qdrant, Neo4j) are assumed to be already running.
   Tests and eval access them directly, no API server needed.
 
 ### Teammate Roles
@@ -444,6 +444,6 @@ Quality: high code standards, all tests green, zero BLOCKERs from reviewer.
   conversation history. Task-specific context must be included in the spawn prompt.
 - The human approval pause (step 6) is mandatory. Do not skip it.
   Lead must present: changed files summary, test results, reviewer verdict.
-- All services (PostgreSQL, Qdrant, Memgraph) are assumed running.
+- All services (PostgreSQL, Qdrant, Neo4j) are assumed running.
   If a test fails due to connection errors, notify the human — do not attempt
   to start services autonomously.

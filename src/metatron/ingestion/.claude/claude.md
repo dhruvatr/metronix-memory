@@ -35,7 +35,7 @@ Used by `graph-process` CLI and connections sync endpoint.
 
 `_extract_graphs_parallel(docs, workspace_id)` — ThreadPoolExecutor for concurrent NER extraction.
 `_write_jira_to_graph(doc, workspace_id)` — Jira-specific graph schema (Issue → Sprint → Person).
-`_write_doc_to_graph(doc, workspace_id)` — generic document NER → Memgraph.
+`_write_doc_to_graph(doc, workspace_id)` — generic document NER → Neo4j.
 `_register_persons(doc)` — adds author/assignee names to `AliasRegistry`.
 
 ### `chunking.py`
@@ -107,15 +107,15 @@ File format processors implementing `ProcessorInterface`.
 
 ## Key Patterns
 - **Async pipeline** — ingestion is async, uses AsyncQdrantVectorStore
-- **Document store layer** — Connector → PostgreSQL (raw_documents) → Qdrant + Memgraph
+- **Document store layer** — Connector → PostgreSQL (raw_documents) → Qdrant + Neo4j
 - **Content hash skipping** — unchanged documents (same content_hash) are skipped on re-sync
 - **Graph extraction decoupled** — `skip_graph=True` during sync, `process_all_unsynced_graphs()` runs separately with sequential processing, fresh connections, and auto-retry
-- **Graph extraction workers** — `GRAPH_EXTRACTION_WORKERS=1` (default, keep low to avoid Memgraph conflicts)
+- **Graph extraction workers** — `GRAPH_EXTRACTION_WORKERS=1` (default, keep low to avoid graph conflicts)
 - **Persistent dedup** — `DeduplicationIndex` backed by PostgreSQL dedup_fingerprints table (migration 012)
 - **SimHash threshold** — hamming distance ≤ 3 treated as near-duplicate
 - **SPLADE by default** — SPLADE sparse vectors used when `SPLADE_ENABLED=true` (default), BM25 as fallback
 - **Date extraction priority** — title date > content date > connector timestamp (title date most reliable)
 
 ## Dependencies
-- **Depends on**: `core.models` (Document, Chunk, SyncResult), `core.interfaces` (LLMProviderInterface, VectorStoreInterface, ProcessorInterface), `storage.qdrant`, `storage.memgraph`, `storage.graph_ops`, `retrieval.alias_registry`
+- **Depends on**: `core.models` (Document, Chunk, SyncResult), `core.interfaces` (LLMProviderInterface, VectorStoreInterface, ProcessorInterface), `storage.qdrant`, `storage.neo4j_graph`, `storage.graph_ops`, `retrieval.alias_registry`
 - **Depended on by**: `api.routes.chat` (upload endpoint), `api.routes.connections` (sync trigger), `connectors` (pass documents to pipeline)
