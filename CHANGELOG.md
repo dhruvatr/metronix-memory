@@ -11,6 +11,7 @@
   - Removed Cypher syntax workarounds (keyword collisions, backtick escaping)
   - API: `/ready` response key changed from `memgraph` to `neo4j`
   - API: `/admin/status` response key changed from `memgraph` to `neo4j`
+- feat: add Redis local dev setup — docker-compose, config, async storage client
 - feat: activate root-child hierarchical chunking (MTRNIX-210)
 - fix: auto-create Qdrant collection before ingestion (prevents 404 after cleanup)
 - feat: graph-rebuild script for Memgraph recovery (`make graph-rebuild`)

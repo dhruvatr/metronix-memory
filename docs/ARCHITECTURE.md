@@ -37,7 +37,7 @@ This document describes the high-level architecture, data flows, and design deci
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ L1: STORAGE                                                      │
-│     Qdrant, Neo4j, PostgreSQL clients                         │
+│     Qdrant, Neo4j, PostgreSQL, Redis clients                     │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
                               ▼

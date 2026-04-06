@@ -69,6 +69,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("NEO4J_PASSWORD", "MEMGRAPH_PASSWORD"),
     )
 
+    # --- Redis ---
+    redis_host: str = Field("localhost", alias="REDIS_HOST")
+    redis_port: int = Field(6379, alias="REDIS_PORT")
+    redis_db: int = Field(0, alias="REDIS_DB")
+    redis_password: str = Field("", alias="REDIS_PASSWORD")
+
     # --- Ollama (embeddings) ---
     ollama_host: str = Field("http://localhost:11434", alias="OLLAMA_HOST")
     ollama_chat_model: str = Field("llama3.1:8b", alias="OLLAMA_CHAT_MODEL")
@@ -199,6 +205,12 @@ class Settings(BaseSettings):
     @property
     def neo4j_uri(self) -> str:
         return f"bolt://{self.neo4j_host}:{self.neo4j_port}"
+
+    @property
+    def redis_url(self) -> str:
+        if self.redis_password:
+            return f"redis://:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     @property
     def ollama_llm_url(self) -> str:
