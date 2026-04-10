@@ -210,6 +210,50 @@ class TestInvalidate:
         assert count == 0
 
 
+class TestDeleteRecord:
+    async def test_deletes_key_and_updates_index(self) -> None:
+        cache = _make_cache()
+        cache._store._client.delete.return_value = 1
+        cache._store._client.get.return_value = '["mem001", "mem002"]'
+
+        result = await cache.delete_record("ws1", "sess1", "mem001")
+
+        assert result is True
+        # Should delete the record key
+        cache._store._client.delete.assert_any_call("mem:ws1:sess1:mem001")
+        # Should update the index without mem001
+        set_calls = [
+            c for c in cache._store._client.set.call_args_list if "mem:ws1:sess1:_index" in c.args
+        ]
+        assert len(set_calls) == 1
+        import json
+
+        updated_ids = json.loads(set_calls[0].args[1])
+        assert "mem001" not in updated_ids
+        assert "mem002" in updated_ids
+
+    async def test_deletes_index_when_last_record(self) -> None:
+        cache = _make_cache()
+        cache._store._client.delete.return_value = 1
+        cache._store._client.get.return_value = '["mem001"]'
+
+        await cache.delete_record("ws1", "sess1", "mem001")
+
+        # Index should be deleted entirely (empty list)
+        delete_calls = cache._store._client.delete.call_args_list
+        deleted_keys = [c.args[0] for c in delete_calls]
+        assert "mem:ws1:sess1:_index" in deleted_keys
+
+    async def test_returns_false_when_key_missing(self) -> None:
+        cache = _make_cache()
+        cache._store._client.delete.return_value = 0
+        cache._store._client.get.return_value = None
+
+        result = await cache.delete_record("ws1", "sess1", "nonexistent")
+
+        assert result is False
+
+
 class TestExtendTtl:
     async def test_extends_all_keys(self) -> None:
         cache = _make_cache()

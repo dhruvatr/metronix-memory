@@ -1,13 +1,16 @@
 """MemoryService — orchestrates agent memory across stores (WS1).
 
 Sits at L4 (agent layer), composes L1 storage modules:
-  - RedisSessionCache  (session memory — hot cache with TTL)
-  - memory_graph.py    (Neo4j — relationships and graph queries)
-  - TODO: PostgreSQL   (source of truth — Stage 3)
-  - TODO: Qdrant       (embeddings + content — Qdrant stage)
+  - RedisSessionCache   (session memory — hot cache with TTL)
+  - MemoryQdrantStore   (content + embeddings — vector search)
+  - memory_graph.py     (Neo4j — relationships and graph queries)
+  - TODO: PostgreSQL    (source of truth — next stage)
 
 Write-through pattern for session memory:
   cache_session() → Redis (primary) + Neo4j (best-effort)
+
+Persistent memory:
+  save() → Qdrant (content + vectors) + Neo4j (graph, best-effort)
 
 Read pattern:
   get_session() → Redis first (fast path)
@@ -20,25 +23,48 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from metatron.core.exceptions import MemoryNotFoundError
 from metatron.core.models import MemoryRecord, MemoryScope
 from metatron.storage.memory_graph import save_memory_to_graph
 
 if TYPE_CHECKING:
+    from metatron.storage.memory_qdrant import MemoryQdrantStore
     from metatron.storage.memory_redis import RedisSessionCache
 
 logger = structlog.get_logger()
 
 
 class MemoryService:
-    """Orchestrates agent memory across Redis, Neo4j, (PG, Qdrant — TODO).
+    """Orchestrates agent memory across Redis, Qdrant, Neo4j (PG — TODO).
 
     Session memory: Redis is the primary store with auto-TTL.
-    Neo4j receives a best-effort copy for graph traversal.
-    PG and Qdrant integration is deferred to subsequent stages.
+    Persistent memory: Qdrant stores content + vectors, Neo4j stores graph.
+    Neo4j writes are best-effort — failures are logged, not raised.
+    PG (source of truth) integration is deferred to next stage.
     """
 
-    def __init__(self, redis_cache: RedisSessionCache) -> None:
+    def __init__(
+        self,
+        redis_cache: RedisSessionCache,
+        qdrant_store: MemoryQdrantStore,
+    ) -> None:
         self._redis = redis_cache
+        self._qdrant = qdrant_store
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _write_graph_best_effort(self, record: MemoryRecord) -> None:
+        """Write to Neo4j graph, swallowing errors (best-effort)."""
+        try:
+            await asyncio.to_thread(save_memory_to_graph, record)
+        except Exception:
+            logger.warning(
+                "memory_service.neo4j_write_failed",
+                record_id=record.id,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # Session memory (Redis + Neo4j write-through)
@@ -64,17 +90,7 @@ class MemoryService:
             ttl_seconds=ttl_seconds,
         )
 
-        # Best-effort Neo4j write (sync, via thread pool)
-        try:
-            await asyncio.to_thread(save_memory_to_graph, record)
-        except Exception:
-            logger.warning(
-                "memory_service.neo4j_write_failed",
-                record_id=record.id,
-                session_id=session_id,
-                exc_info=True,
-            )
-
+        await self._write_graph_best_effort(record)
         return result
 
     async def get_session(
@@ -115,7 +131,7 @@ class MemoryService:
         return await self._redis.extend_ttl(workspace_id, session_id, ttl_seconds)
 
     # ------------------------------------------------------------------
-    # Persistent memory (TODO — PG + Qdrant stages)
+    # Persistent memory (Qdrant + Neo4j; PG — TODO next stage)
     # ------------------------------------------------------------------
 
     async def save(
@@ -123,11 +139,14 @@ class MemoryService:
         workspace_id: str,
         record: MemoryRecord,
     ) -> MemoryRecord:
-        """Persist a memory record to all stores.
+        """Persist a memory record: Qdrant (content + vectors) + Neo4j (graph).
 
-        TODO: PG (source of truth) + Qdrant (embeddings) + Neo4j (graph).
+        Qdrant failure propagates (primary store). Neo4j is best-effort.
+        TODO: add PG as source of truth in next stage.
         """
-        raise NotImplementedError("save requires PG + Qdrant (next stages)")
+        await self._qdrant.upsert(record)
+        await self._write_graph_best_effort(record)
+        return record
 
     async def promote(
         self,
@@ -139,6 +158,17 @@ class MemoryService:
     ) -> MemoryRecord:
         """Promote a session record to persistent storage.
 
-        TODO: read from Redis → write to PG + Qdrant + Neo4j → remove from Redis.
+        Reads from Redis → changes scope → writes to Qdrant + Neo4j →
+        deletes record from Redis (key + index).
+        TODO: add PG write in next stage.
         """
-        raise NotImplementedError("promote requires PG + Qdrant (next stages)")
+        record = await self._redis.get(workspace_id, session_id, record_id)
+        if record is None:
+            msg = f"Record {record_id} not found in session {session_id}"
+            raise MemoryNotFoundError(msg)
+
+        record.scope = target_scope
+        await self.save(workspace_id, record)
+        await self._redis.delete_record(workspace_id, session_id, record_id)
+
+        return record

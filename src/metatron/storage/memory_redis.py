@@ -152,6 +152,34 @@ class RedisSessionCache:
         )
         return len(ids)
 
+    async def delete_record(
+        self,
+        workspace_id: str,
+        session_id: str,
+        record_id: str,
+    ) -> bool:
+        """Delete a single record from session cache and remove from index.
+
+        Returns True if the record key existed.
+        """
+        rkey = _record_key(workspace_id, session_id, record_id)
+        ikey = _index_key(workspace_id, session_id)
+
+        deleted = await self._store.delete(rkey)
+
+        # Update index — remove record ID
+        raw_index = await self._store.get(ikey)
+        if raw_index is not None:
+            ids: list[str] = json.loads(raw_index)
+            if record_id in ids:
+                ids.remove(record_id)
+                if ids:
+                    await self._store.set(ikey, json.dumps(ids))
+                else:
+                    await self._store.delete(ikey)
+
+        return deleted > 0
+
     async def extend_ttl(
         self,
         workspace_id: str,

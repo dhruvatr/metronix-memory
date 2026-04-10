@@ -155,6 +155,19 @@ Class: `RedisSessionCache(store, default_ttl=14400)`
 - `invalidate(workspace_id, session_id) -> int` — drop session, return count
 - `extend_ttl(workspace_id, session_id, ttl_seconds) -> bool` — refresh TTL
 
+### `memory_qdrant.py`
+Qdrant vector store for Agent Memory (WS1). Dedicated collection per workspace.
+
+Collection: `mem_agent_memory_{workspace_id}` (dense 768-dim + sparse SPLADE/BM25).
+Payload indexes: `agent_id` (keyword), `scope` (keyword).
+
+Class: `MemoryQdrantStore(workspace_id, host?, port?)`
+- `upsert(record)` — embed content + store with vectors and payload
+- `search(workspace_id, query, agent_id?, scope?, top_k?) -> list[dict]` — hybrid RRF search
+- `delete(record_id)` — delete single point
+- `delete_by_agent(agent_id)` — delete all points for agent
+- `close()` — close client
+
 ### `graph_ops.py`
 High-level graph query functions used by retrieval.
 
