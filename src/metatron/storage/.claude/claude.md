@@ -163,7 +163,7 @@ Payload indexes: `agent_id` (keyword), `scope` (keyword).
 
 Class: `MemoryQdrantStore(workspace_id, host?, port?)`
 - `upsert(record)` — embed content + store with vectors and payload
-- `search(workspace_id, query, agent_id?, scope?, top_k?) -> list[dict]` — hybrid RRF search
+- `search(query, agent_id?, scope?, top_k?) -> list[dict]` — hybrid RRF search (workspace scoped at init)
 - `delete(record_id)` — delete single point
 - `delete_by_agent(agent_id)` — delete all points for agent
 - `close()` — close client
