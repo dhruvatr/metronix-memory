@@ -89,12 +89,25 @@ class OllamaProvider(LLMProvider):
         **kwargs,
     ) -> LLMResponse:
         """Send chat completion request to Ollama."""
+        # num_ctx default in Ollama is 2048, which is too small for RAG —
+        # Metatron builds prompts of 4k–8k tokens and modern Qwen/Llama
+        # models support 128k+, so we default to 32k here. Override via
+        # OLLAMA_NUM_CTX if your hardware can't hold the KV cache.
+        num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
+        # Allow env override of the request timeout for slow local models.
+        env_timeout = os.getenv("OLLAMA_REQUEST_TIMEOUT")
+        if env_timeout:
+            try:
+                timeout = int(env_timeout)
+            except ValueError:
+                pass
         payload = {
             "model": self.model,
             "messages": self._messages_to_dicts(messages),
             "stream": False,
             "options": {
                 "temperature": temperature,
+                "num_ctx": num_ctx,
             },
         }
 

@@ -68,7 +68,11 @@ def _build_expansion_prompt(query: str) -> str:
 
 
 @timed("query_expansion")
-def expand_query(query: str, timeout: int = 10) -> str:
+def expand_query(query: str, timeout: int | None = None) -> str:
+    if timeout is None:
+        import os as _os
+
+        timeout = int(_os.getenv("METATRON_AUX_LLM_TIMEOUT", "10"))
     """Use LLM to expand user query with search-relevant keywords.
 
     Expands only in the query's language (EN or RU). The translation step

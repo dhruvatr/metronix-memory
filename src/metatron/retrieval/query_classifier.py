@@ -10,6 +10,7 @@ Any failure gracefully degrades to 'mixed' (current defaults).
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import TypedDict
 
@@ -186,7 +187,7 @@ def _llm_classify(query: str) -> QueryClassification:
             ],
             temperature=0.0,
             max_tokens=60,
-            timeout=10,
+            timeout=int(os.getenv("METATRON_AUX_LLM_TIMEOUT", "10")),
         )
         parsed = json.loads(raw.strip())
         profile = parsed.get("profile", "mixed")
