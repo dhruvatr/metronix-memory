@@ -1,5 +1,18 @@
 # Skills
 
+> **⚠️ DEPRECATED (2026-04):** This document describes the `src/metatron/skills/` engine,
+> which is scheduled for removal. The engine was never completed — `SkillEngine.load_skills()`,
+> `select_skills()`, and `seed_builtins()` all raise `NotImplementedError`, and no code
+> calls them.
+>
+> The Markdown-as-tool-docs approach predates MCP. Use MCP tool descriptions instead:
+> external runtimes such as Hermes get structured tool definitions from the Metatron
+> MCP server at `/mcp` — see `docs/HERMES_INTEGRATION.md`. For per-agent procedural
+> memory, use Hermes skills (`agentskills.io` standard).
+>
+> Kept here for historical reference. Do not build on top of it.
+> See `docs/LEGACY.md` for the full deprecation inventory.
+
 ## Overview
 
 Skills are Markdown documents that teach the LLM how to use tools. They contain instructions, examples, and structured tool call formats that the LLM reads at runtime to decide what actions to take.

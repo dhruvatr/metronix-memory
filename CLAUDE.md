@@ -1,7 +1,15 @@
 # CLAUDE.md — Metatron Core
 
 ## What is this
-Metatron Core (MTRNIX) — open-source self-hosted RAG system for corporate knowledge management. Python 3.12+, FastAPI + asyncio.
+Metatron Core (MTRNIX) — open-source memory + knowledge infrastructure for AI agents. Provides hybrid RAG over corporate documents AND persistent agent memory (WS1) through three consumer surfaces:
+
+- **MCP server** — primary integration path for agent runtimes (Hermes, Cursor, Claude Desktop, custom MCP clients)
+- **OpenAI-compatible API** (`/v1/chat/completions`) — for OpenWebUI, LibreChat and any OAI client
+- **REST API** (`/api/v1/*`) — raw access to documents, memory, workspaces, connectors
+
+Python 3.12+, FastAPI + asyncio. Product transitioned (2026-04) from "enterprise corporate KB" to open-core memory infra for AI-native companies. Commercial Control Center (separate repo, planned) layers agent registry, workflow, governance and observability on top.
+
+See `docs/HERMES_INTEGRATION.md` for the recommended external-agent setup and `docs/LEGACY.md` for modules being phased out.
 
 ## Quick Commands
 ```
@@ -27,21 +35,27 @@ make graph-process    # process unsynced documents for graph extraction
 
 Direct commands:
 ```
-python -m metatron          # API + all bots (Telegram/Discord/Slack)
-python -m metatron.api.app  # API only
+python -m metatron          # API + legacy channel bots (Telegram/Discord/Slack) — channels scheduled for removal
+python -m metatron.api.app  # API only — preferred entry for new deployments
+python -m metatron.mcp      # MCP server (stdio/streamable-http) — for Hermes / Cursor / Claude Desktop
 pytest tests/unit/test_search.py::test_name -v  # single test
 ```
 
 ## Architecture (6 layers — strict one-way dependencies, never import upward)
 ```
-L6  api/            REST API (FastAPI routes, middleware, dependencies)
-L5  channels/       Telegram, Discord, Slack bots
-L4  agent/          Intent router, sessions, commands, executor
-L3  services        connectors/, llm/, mcp/, skills/, auth/, workspaces/
-L2  processing      ingestion/, retrieval/, benchmarker/
-L1  storage/        PostgreSQL, Qdrant, Neo4j clients (no business logic)
+L6  api/            REST + OAI-compat + MCP HTTP mount (FastAPI routes, middleware)
+L5  channels/       [LEGACY] Telegram, Discord, Slack bots — moving out, do NOT extend
+L4  agent/          Intent router, memory_service, commands, executor
+L3  services        connectors/, llm/, mcp/, memory/, auth/, workspaces/
+                    [LEGACY] skills/ — unused engine, scheduled for removal
+L2  processing      ingestion/, retrieval/
+                    [OPTIONAL] benchmarker/ — dev-eval tool, may move out of core
+L1  storage/        PostgreSQL, Qdrant, Neo4j, Redis clients (no business logic)
 L0  core/           Config, Interfaces, Models, Events, Plugin (ZERO upward deps)
 ```
+
+`memory/` (L3) is the first-class new module built in WS1. See `src/metatron/memory/.claude/CLAUDE.md`.
+Legacy markers reflect the 2026-04 product transition — details and migration plan in `docs/LEGACY.md`.
 
 ## Source Layout
 ```
@@ -70,8 +84,8 @@ src/metatron/
 │   ├── exceptions.py          # MetatronError → ConnectorError, AuthenticationError, etc.
 │   ├── http.py, logging.py, utils.py
 │   └── __init__.py
-├── agent/                     # L4 — router.py, sessions.py, commands.py, executor.py, tools.py
-├── channels/                  # L5 — telegram.py, discord.py, slack.py, manager.py
+├── agent/                     # L4 — router.py, memory_service.py, sessions.py (legacy), commands.py, executor.py
+├── channels/                  # L5 — [LEGACY] telegram.py, discord.py, slack.py, manager.py (to be extracted)
 ├── connectors/                # L3 — confluence, jira, notion, github, gdrive, slack_history, files
 │   └── registry.py            # Connector registry (independent from PluginManager)
 ├── ingestion/                 # L2 — pipeline.py, chunking.py, dedup.py, bm25.py, splade.py, sync.py
@@ -85,11 +99,12 @@ src/metatron/
 │                              #   fallback.py, graph_enrichment.py, aliases.py, alias_registry.py
 ├── storage/                   # L1 — postgres.py, qdrant.py (sync+async), neo4j_graph.py, encryption.py
 ├── observability/             # health.py, metrics.py, tracer.py
-├── workspaces/                # L3 — manager.py, models.py, persistence.py
-├── skills/                    # L3 — engine.py
-├── memory/                    # L3 — search.py (hybrid MemorySearchService), serde.py (shared Qdrant payload deserializer)
+├── workspaces/                # L3 — manager.py, models.py, persistence.py (current "KB tenant" model; future agent-scoped)
+├── skills/                    # L3 — [LEGACY] engine.py — all NotImplementedError, scheduled for removal
+├── memory/                    # L3 — search.py (hybrid MemorySearchService), serde.py (Qdrant payload deserializer)
 │                              #   Orchestration lives in agent/memory_service.py (PG source of truth)
-├── benchmarker/               # L2 — api/, db/, schemas/, services/metrics/
+│                              #   First-class new module (WS1). Assertion lifecycle layer planned on top.
+├── benchmarker/               # L2 — [OPTIONAL] api/, db/, schemas/, services/metrics/ — dev eval tool
 └── scripts/                   # graph_audit.py, run_eval.py, grid_search_weights.py,
                                # graph_rebuild.py, graph_process.py
 ```
@@ -201,36 +216,57 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - DENSE_WEIGHT (0.35), GRAPH_WEIGHT (0.15), METADATA_WEIGHT (0.20), RECENCY_WEIGHT (0.10), BALANCE_WEIGHT (0.05), BLEND_WEIGHT (0.3) — scoring formula weights
 - RERANK_POOL_SIZE (35) — candidates sent to cross-encoder
 - MIN_SIGNAL_SCORE (0.0) — confidence threshold (0=disabled)
-- METATRON_OPENAI_COMPAT_ENABLED (true) — OpenAI-compatible API for Open WebUI
+- METATRON_OPENAI_COMPAT_ENABLED (true) — OpenAI-compatible API for OpenWebUI / LibreChat / Hermes OAI mode
 - METATRON_OPENAI_COMPAT_KEY ("") — static API key for OpenAI-compat endpoints (Home scenario)
-- METATRON_OPENWEBUI_URL ("") — Open WebUI URL for bundled user sync
-- METATRON_OPENWEBUI_METATRON_URL ("") — external Metatron URL written into Direct Connections
+- METATRON_MCP_API_KEY ("") — bearer token for MCP endpoint auth (required for Hermes/Cursor/OpenClaw integration)
+- METATRON_OPENWEBUI_URL ("") — [DEPRECATED] bundled OpenWebUI sync URL; legacy deployments only
+- METATRON_OPENWEBUI_METATRON_URL ("") — [DEPRECATED] external Metatron URL for OpenWebUI Direct Connections
 - MEMORY_SEARCH_DENSE_WEIGHT (0.6) — blend weight for normalized Qdrant dense score in memory hybrid search
 - MEMORY_SEARCH_GRAPH_WEIGHT (0.3) — blend weight for Neo4j graph-presence signal (scaled by importance_score)
 - MEMORY_SEARCH_SESSION_WEIGHT (0.1) — blend weight for Redis session-cache presence boost
 - MEMORY_SEARCH_TOP_K_MULTIPLIER (3) — per-leg fetch multiplier for dedup/filter headroom
 - See core/config.py for full list
 
-## Open WebUI Integration
-Metatron exposes OpenAI-compatible API at `/v1/` for use with Open WebUI or any OpenAI-compatible client.
+## External Agent Integration Surfaces
 
-Endpoints:
+Metatron exposes three consumer surfaces for external agent runtimes (Hermes, OpenClaw, Cursor,
+Claude Desktop, OpenWebUI, LibreChat, custom code). Built-in chat UI / channels are legacy;
+new integrations should target these surfaces.
+
+### 1. MCP Server — recommended for agent runtimes
+Mounted at `/mcp` (streamable-HTTP). Tools exposed:
+- `metatron_search` — hybrid RAG over documents
+- `metatron_get` — fetch document by id
+- `metatron_store` — index a new document
+- `metatron_sync` — trigger connector sync
+- `metatron_status` — workspace statistics
+
+Auth: bearer token via `METATRON_MCP_API_KEY`. Note: memory-specific MCP tools
+(`memory_search`, `memory_store`, `memory_delete`) are not yet exposed — tracked as a follow-up.
+
+See `docs/HERMES_INTEGRATION.md` and `docs/OPENCLAW_INTEGRATION.md`.
+
+### 2. OpenAI-Compatible API — for OAI clients
 - `GET /v1/models` — list models (one per workspace, format: `metatron-rag-{workspace_id}`)
-- `POST /v1/chat/completions` — chat completions (streaming + non-streaming)
-- `GET /v1/openapi.json` — stub for connection verification
+- `POST /v1/chat/completions` — RAG-backed completions (streaming + non-streaming). Note: this is
+  NOT a raw LLM proxy — it runs hybrid_search_and_answer over workspace documents.
+- `GET /v1/openapi.json` — connection verification stub
 
-Auth: personal API key (`mtk_...`) per user, or static `METATRON_OPENAI_COMPAT_KEY` fallback (Home scenario).
+Auth: personal API key (`mtk_...`) per user, or static `METATRON_OPENAI_COMPAT_KEY` fallback.
 
-Three deployment scenarios:
-1. **Home** — single user, no auth, static API key via global Open WebUI connection
-2. **Bundled** — multi-user, Metatron syncs users to Open WebUI, each gets personal API key + Direct Connection
-3. **External** — import users from existing Open WebUI via `POST /api/v1/admin/import-openwebui-users`
+Memory context injection into system prompt on this endpoint is planned (MTRNIX-275, backlog).
+Today agent memory is not automatically added to /v1/chat/completions context.
 
-In Bundled/External, `ENABLE_DIRECT_CONNECTIONS=true` is mandatory in Open WebUI. Without it users share a global API key and can spoof each other's identity.
+### 3. Raw REST API
+- `/api/v1/memory/*` — agent memory CRUD + hybrid search
+- `/api/v1/documents`, `/api/v1/search` — document CRUD + search
+- `/api/v1/workspaces`, `/api/v1/connections`, `/api/v1/sync` — admin surfaces
 
-Bundled sync: on startup Metatron auto-registers `admin@metatron.local` in Open WebUI. On user CRUD, changes are mirrored. OWUI admin password is the same as `AUTH_PASSWORD` (default: `metatron`).
-
-Docker: Open WebUI available in `docker-compose.full.yml` with profile `openwebui` on port 3080.
+### Legacy: OpenWebUI bundled mode
+The `METATRON_OPENWEBUI_*` env vars and `POST /api/v1/admin/import-openwebui-users` supported
+bundled OpenWebUI deployment with auto user sync. This mode is deprecated — the OAI-compat
+endpoint still works for OpenWebUI, but bundled user sync and the import route will be removed.
+See `docs/LEGACY.md`.
 
 ## Testing
 - 1150+ tests, `make test` runs unit only
@@ -266,6 +302,10 @@ Alembic in `migrations/`. Run `make migrate` after pulling. Create new: `make mi
 - Add dependencies to core/ on anything outside stdlib + pydantic
 - Modify interfaces.py protocols without coordinating with enterprise repo
 - Delete or rename event constants without checking enterprise subscribers
+- Build new features in `channels/`, `skills/`, `finops`, `api/routes/chat.py`, `openwebui_import`, `openwebui_sync` — all legacy, see `docs/LEGACY.md`
+- Add a built-in chat UI / session store — user-facing chat is the job of external runtimes (Hermes, OpenWebUI, LibreChat). Any new `/api/v1/chat/*` endpoint or in-memory session store is a red flag
+- Couple new work to current 3-role RBAC (viewer/editor/admin) — 5-role model (Viewer/Editor/Agent Admin/Company Admin/Super Admin) is the target; discuss before extending
+- Assume "workspace == KB tenant" forever — the agent-era model separates company from agent; `agent_id` is becoming a first-class field in memory records
 
 ## Agent Teams
 

@@ -1,5 +1,30 @@
 # Metatron Core Architecture
 
+> **⚠️ PARTIALLY OUTDATED (2026-04):** The layer diagram and most design decisions
+> still apply, but several specifics reflect the old product direction:
+>
+> - **L5 Channels** (Telegram/Discord/Slack) is **legacy** and being extracted to an
+>   optional plugin — see `docs/LEGACY.md`. New integrations target external agent
+>   runtimes (Hermes, OpenClaw) via MCP and OAI-compat surfaces, not bundled channels.
+> - **Data flow examples** below start with `User Message → Channel → Agent Router`.
+>   In the new direction the more common flow is `External Agent (Hermes) → MCP or
+>   /v1/chat/completions → retrieval pipeline`. Channels are optional, not the primary
+>   entry point.
+> - **`skills/` engine** referenced in the flow (`LLM-as-Router` + skill selection) is
+>   **deprecated** — see `docs/SKILLS.md`. MCP tool definitions replace it.
+> - **Agent memory (WS1)** is not reflected in this document yet — memory service,
+>   hybrid memory search, and planned assertion lifecycle live in `src/metatron/memory/`
+>   and `agent/memory_service.py`. See `src/metatron/memory/.claude/CLAUDE.md`.
+>
+> Authoritative sources for current architecture:
+> - `CLAUDE.md` (root) — current layer structure with legacy markers
+> - `docs/HERMES_INTEGRATION.md` — how external agents consume Core
+> - `docs/LEGACY.md` — what is going away and why
+> - metatron-arch-guard skill — product vision and cross-repo boundaries
+>
+> A rewrite of this document is pending. Use it for historical context, not as a
+> blueprint for new work.
+
 This document describes the high-level architecture, data flows, and design decisions for Metatron Core.
 
 ## Layer Dependency Diagram
