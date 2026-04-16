@@ -46,7 +46,7 @@ or REMOVE (if CC UI uses MCP directly).
 **Action:** Do not add new `/api/v1/chat/*` routes. Follow-up detection in
 `AgentRouter` can be replaced by stateless request-message inspection.
 
-### 2. OpenWebUI bundled sync
+### 2. OpenWebUI bundled sync — KEEP for now (active use)
 
 **Files:**
 - `src/metatron/api/routes/openwebui_import.py`
@@ -61,17 +61,19 @@ Metatron together with OpenWebUI. In Bundled mode Metatron auto-registers
 `admin@metatron.local` in OpenWebUI on startup, then mirrors user CRUD into OpenWebUI
 so each user gets a personal API key and Direct Connection.
 
-**Why legacy:** OpenWebUI is one of many OAI-compatible consumers — it should not have
-special bundled-install treatment. User management belongs to Control Center, not to
-an integration shim.
+**Status:** **In active use as the primary chat front-end.** Despite the new
+"external agents are the future" direction, OpenWebUI is today's working chat surface
+for end users. Removing bundled sync would regress current production behavior.
 
-**Severity:**
-- User sync: REMOVE.
-- Import route (`POST /api/v1/admin/import-openwebui-users`): REMOVE.
-- `/v1/chat/completions` endpoint itself: **keep** — it is the public OAI-compat surface
-  for any client, not OpenWebUI-specific.
-- `METATRON_OPENWEBUI_*` env vars: DEPRECATE (mark in Settings docstring; keep for
-  backward compat until a major bump).
+**Severity:** **DO NOT touch yet.** Re-evaluate when:
+- External agent runtimes (Hermes, LibreChat, custom MCP clients) become the primary
+  consumer pattern in our deployments, AND
+- A replacement chat surface is in place (Control Center UI or first-class Hermes setup),
+  AND
+- We can sunset OpenWebUI without breaking users.
+
+Until then: do not extend the bundled sync logic, but do not deprecate it either.
+`/v1/chat/completions` endpoint stays public and consumed by OpenWebUI today.
 
 ### 3. Multi-channel bots
 
@@ -97,7 +99,7 @@ registers via the existing plugin system. If no users adopt the plugin, retire i
 Any new messaging integration should be documented as "install Hermes (or similar),
 point its channel gateway at Metatron MCP."
 
-### 4. Skills engine
+### 4. Skills engine — INACTIVE, RESERVED
 
 **Files:** `src/metatron/skills/engine.py`, `src/metatron/skills/builtin/`,
 `src/metatron/api/routes/skills.py`, `docs/SKILLS.md`
@@ -106,15 +108,22 @@ point its channel gateway at Metatron MCP."
 tools. `SkillEngine.load_skills()`, `select_skills()`, `seed_builtins()` all raise
 `NotImplementedError`. Routes exist but storage is not implemented.
 
-**Why legacy:** The approach predates MCP. MCP tool descriptions provide the same
-capability in a standardized way, and Hermes has its own rich skills system
-(agentskills.io standard). Our skill engine was never completed and has no callers.
+**Status:** Currently inactive — engine never finished, no callers.
 
-**Severity:** REMOVE entirely. No backward compatibility concerns.
+**Why kept:** MCP tool descriptions cover most "tell the LLM how to use a tool"
+needs today, but a workspace-customizable, prompt-injectable skill catalog might
+become useful later (per-workspace tool documentation, custom playbooks beyond
+what MCP returns). Until that need is concrete, we leave the module alone.
 
-**Action:** Delete `skills/` module, `api/routes/skills.py`, `docs/SKILLS.md`
-(or leave docs/SKILLS.md with a deprecation banner pointing to MCP).
-Remove `seed_builtins` call sites (none active).
+**Severity:** **DO NOT remove.** Treat as reserved capability.
+
+**Action:**
+- Do not extend `skills/` without first checking whether MCP descriptions cover
+  the need.
+- Do not delete the module either — leave it dormant.
+- If at some point we decide to revive skills, the existing scaffolding is a starting
+  point. If we decide MCP is sufficient, then we delete — but only as an explicit
+  product decision, not silently.
 
 ### 5. FinOps (time-savings metric)
 
@@ -221,16 +230,20 @@ For clarity — the following are explicitly in-scope and NOT legacy:
 
 Legacy items should not be removed in one big PR. Suggested order:
 
-1. **Phase A (docs only, this audit):** add deprecation banners, LEGACY.md, update
-   CLAUDE.md and arch-guard skill. No code change. **← current step**
-2. **Phase B (safe deletions):** remove `skills/` module and route (items 4). Mark
-   env vars deprecated in docstring. Low risk.
-3. **Phase C (extractions):** move `channels/` into an optional plugin package. Move
-   FinOps to Control Center. Requires coordinating plugin install path.
-4. **Phase D (chat + OpenWebUI sync removal):** delete `/api/v1/chat/*`, SessionManager,
-   `openwebui_import.py`, `openwebui_sync.py`. Verify no UI/CC dependency remains.
-5. **Phase E (refactors):** RBAC 5-role rework (part of WS4). Workspace → company+agent
-   split (part of WS4).
+1. **Phase A (docs only, this audit):** add legacy banners, LEGACY.md, update
+   CLAUDE.md and arch-guard skill. No code change. **← done 2026-04-16**
+2. **Phase B (extractions, deferred):** move `channels/` into an optional plugin
+   package. Move FinOps to Control Center (or remove). Requires coordinating
+   plugin install path.
+3. **Phase C (chat removal, deferred):** delete `/api/v1/chat/*` and SessionManager.
+   Verify metatronui-kb does not depend on them.
+4. **Phase D (OpenWebUI sunset, NOT scheduled):** triggered only when external
+   agents become the primary chat surface AND a replacement is in place. Until
+   then, leave openwebui_sync / openwebui_import alone.
+5. **Phase E (skills decision, NOT scheduled):** explicit go/no-go on `skills/`
+   module — keep dormant or delete. Deferred until the question is concrete.
+6. **Phase F (refactors, part of WS4):** RBAC 5-role rework. Workspace → company+agent
+   split.
 
 Each phase should land as its own PR with tests and a CHANGELOG entry.
 

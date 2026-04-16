@@ -47,7 +47,7 @@ L6  api/            REST + OAI-compat + MCP HTTP mount (FastAPI routes, middlewa
 L5  channels/       [LEGACY] Telegram, Discord, Slack bots — moving out, do NOT extend
 L4  agent/          Intent router, memory_service, commands, executor
 L3  services        connectors/, llm/, mcp/, memory/, auth/, workspaces/
-                    [LEGACY] skills/ — unused engine, scheduled for removal
+                    [INACTIVE] skills/ — engine unimplemented, kept as reserved capability
 L2  processing      ingestion/, retrieval/
                     [OPTIONAL] benchmarker/ — dev-eval tool, may move out of core
 L1  storage/        PostgreSQL, Qdrant, Neo4j, Redis clients (no business logic)
@@ -100,7 +100,7 @@ src/metatron/
 ├── storage/                   # L1 — postgres.py, qdrant.py (sync+async), neo4j_graph.py, encryption.py
 ├── observability/             # health.py, metrics.py, tracer.py
 ├── workspaces/                # L3 — manager.py, models.py, persistence.py (current "KB tenant" model; future agent-scoped)
-├── skills/                    # L3 — [LEGACY] engine.py — all NotImplementedError, scheduled for removal
+├── skills/                    # L3 — [INACTIVE] engine.py — NotImplementedError; reserved for future declarative tool docs
 ├── memory/                    # L3 — search.py (hybrid MemorySearchService), serde.py (Qdrant payload deserializer)
 │                              #   Orchestration lives in agent/memory_service.py (PG source of truth)
 │                              #   First-class new module (WS1). Assertion lifecycle layer planned on top.
@@ -219,8 +219,8 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - METATRON_OPENAI_COMPAT_ENABLED (true) — OpenAI-compatible API for OpenWebUI / LibreChat / Hermes OAI mode
 - METATRON_OPENAI_COMPAT_KEY ("") — static API key for OpenAI-compat endpoints (Home scenario)
 - METATRON_MCP_API_KEY ("") — bearer token for MCP endpoint auth (required for Hermes/Cursor/OpenClaw integration)
-- METATRON_OPENWEBUI_URL ("") — [DEPRECATED] bundled OpenWebUI sync URL; legacy deployments only
-- METATRON_OPENWEBUI_METATRON_URL ("") — [DEPRECATED] external Metatron URL for OpenWebUI Direct Connections
+- METATRON_OPENWEBUI_URL ("") — bundled OpenWebUI sync URL (current chat front-end; revisit when Hermes/external agents become primary)
+- METATRON_OPENWEBUI_METATRON_URL ("") — external Metatron URL for OpenWebUI Direct Connections
 - MEMORY_SEARCH_DENSE_WEIGHT (0.6) — blend weight for normalized Qdrant dense score in memory hybrid search
 - MEMORY_SEARCH_GRAPH_WEIGHT (0.3) — blend weight for Neo4j graph-presence signal (scaled by importance_score)
 - MEMORY_SEARCH_SESSION_WEIGHT (0.1) — blend weight for Redis session-cache presence boost
@@ -262,11 +262,12 @@ Today agent memory is not automatically added to /v1/chat/completions context.
 - `/api/v1/documents`, `/api/v1/search` — document CRUD + search
 - `/api/v1/workspaces`, `/api/v1/connections`, `/api/v1/sync` — admin surfaces
 
-### Legacy: OpenWebUI bundled mode
-The `METATRON_OPENWEBUI_*` env vars and `POST /api/v1/admin/import-openwebui-users` supported
-bundled OpenWebUI deployment with auto user sync. This mode is deprecated — the OAI-compat
-endpoint still works for OpenWebUI, but bundled user sync and the import route will be removed.
-See `docs/LEGACY.md`.
+### Current chat front-end: OpenWebUI (bundled mode in active use)
+OpenWebUI is today's primary chat surface for end users. `METATRON_OPENWEBUI_*` env vars,
+`POST /api/v1/admin/import-openwebui-users`, and `auth/openwebui_sync.py` (auto user sync)
+all stay supported. Re-evaluate this surface only when external agent runtimes (Hermes,
+LibreChat, custom MCP clients) take over as the primary consumer pattern. See `docs/LEGACY.md`
+for the broader transition map.
 
 ## Testing
 - 1150+ tests, `make test` runs unit only
@@ -302,8 +303,9 @@ Alembic in `migrations/`. Run `make migrate` after pulling. Create new: `make mi
 - Add dependencies to core/ on anything outside stdlib + pydantic
 - Modify interfaces.py protocols without coordinating with enterprise repo
 - Delete or rename event constants without checking enterprise subscribers
-- Build new features in `channels/`, `skills/`, `finops`, `api/routes/chat.py`, `openwebui_import`, `openwebui_sync` — all legacy, see `docs/LEGACY.md`
-- Add a built-in chat UI / session store — user-facing chat is the job of external runtimes (Hermes, OpenWebUI, LibreChat). Any new `/api/v1/chat/*` endpoint or in-memory session store is a red flag
+- Build new features in `channels/`, `finops`, `api/routes/chat.py` — these are legacy, see `docs/LEGACY.md`
+- Extend `skills/` engine without first checking whether MCP tool descriptions cover the need (skills/ is currently inactive but reserved)
+- Add a built-in agent chat UI / in-memory session store — user-facing chat is the job of external runtimes (Hermes, OpenWebUI, LibreChat). Any new `/api/v1/chat/*` endpoint or in-memory session store is a red flag. (OpenWebUI bundled mode is supported as a packaged chat front-end — that is a separate concern from us building our own chat backend.)
 - Couple new work to current 3-role RBAC (viewer/editor/admin) — 5-role model (Viewer/Editor/Agent Admin/Company Admin/Super Admin) is the target; discuss before extending
 - Assume "workspace == KB tenant" forever — the agent-era model separates company from agent; `agent_id` is becoming a first-class field in memory records
 

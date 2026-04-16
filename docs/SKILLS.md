@@ -1,17 +1,18 @@
 # Skills
 
-> **⚠️ DEPRECATED (2026-04):** This document describes the `src/metatron/skills/` engine,
-> which is scheduled for removal. The engine was never completed — `SkillEngine.load_skills()`,
-> `select_skills()`, and `seed_builtins()` all raise `NotImplementedError`, and no code
-> calls them.
+> **ℹ️ INACTIVE (2026-04):** The `src/metatron/skills/` engine described below is
+> currently not implemented — `SkillEngine.load_skills()`, `select_skills()`, and
+> `seed_builtins()` all raise `NotImplementedError`, and no code calls them.
 >
-> The Markdown-as-tool-docs approach predates MCP. Use MCP tool descriptions instead:
-> external runtimes such as Hermes get structured tool definitions from the Metatron
-> MCP server at `/mcp` — see `docs/HERMES_INTEGRATION.md`. For per-agent procedural
-> memory, use Hermes skills (`agentskills.io` standard).
+> The module is **kept as reserved capability**, not slated for removal. MCP tool
+> descriptions cover most "tell the LLM how to use a tool" needs today (see
+> `docs/HERMES_INTEGRATION.md` and `docs/OPENCLAW_INTEGRATION.md`), but a
+> workspace-customizable, prompt-injectable skill catalog may become useful later
+> (per-workspace tool docs, custom playbooks beyond what MCP returns).
 >
-> Kept here for historical reference. Do not build on top of it.
-> See `docs/LEGACY.md` for the full deprecation inventory.
+> Do not build on top of `skills/` without first checking whether MCP covers the need.
+> Do not delete it either — that is an explicit product decision deferred to later.
+> See `docs/LEGACY.md` item 4 for context.
 
 ## Overview
 
