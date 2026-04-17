@@ -204,6 +204,18 @@ services:
       - metatron_full
     restart: unless-stopped
 
+  metatron-ui-cc:
+    image: ghcr.io/mtrnix/metatronui:ui-cc-develop
+    pull_policy: always
+    container_name: metatron-full-ui-cc
+    ports:
+      - "3001:3001"
+    depends_on:
+      metatron-core:
+        condition: service_healthy
+    networks:
+      - metatron_full
+
 volumes:
   full_pg_data:
   full_qdrant_data:
