@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     qdrant_http_port: int = Field(6333, alias="QDRANT_HTTP_PORT")
     qdrant_grpc_port: int = Field(6334, alias="QDRANT_GRPC_PORT")
     qdrant_api_key: str = Field("", alias="QDRANT_API_KEY")
+    qdrant_https: bool = Field(False, alias="QDRANT_HTTPS")
 
     # --- Neo4j (graph database) ---
     neo4j_host: str = Field(

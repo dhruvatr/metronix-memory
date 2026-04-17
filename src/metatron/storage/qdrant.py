@@ -153,10 +153,13 @@ class QdrantVectorStore:
         host: str = "localhost",
         port: int = 6333,
         api_key: str | None = None,
+        https: bool = False,
     ) -> None:
         self.workspace_id = _normalize_workspace_id(workspace_id)
         self.collection_name = get_collection_name(workspace_id)
-        self.client = QdrantClient(host=host, port=port, timeout=60, api_key=api_key or None)
+        self.client = QdrantClient(
+            host=host, port=port, timeout=60, api_key=api_key or None, https=https
+        )
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
@@ -630,10 +633,13 @@ class AsyncQdrantVectorStore:
         host: str = "localhost",
         port: int = 6333,
         api_key: str | None = None,
+        https: bool = False,
     ) -> None:
         self.workspace_id = _normalize_workspace_id(workspace_id)
         self.collection_name = get_collection_name(workspace_id)
-        self.client = AsyncQdrantClient(host=host, port=port, timeout=60, api_key=api_key or None)
+        self.client = AsyncQdrantClient(
+            host=host, port=port, timeout=60, api_key=api_key or None, https=https
+        )
         self._collection_ensured = False
 
     async def _ensure_collection(self) -> None:
@@ -1155,7 +1161,11 @@ def get_hybrid_store(
                 host = host or s.qdrant_host
                 port = port or s.qdrant_http_port
                 _hybrid_stores[ws] = QdrantVectorStore(
-                    workspace_id, host=host, port=port, api_key=s.qdrant_api_key
+                    workspace_id,
+                    host=host,
+                    port=port,
+                    api_key=s.qdrant_api_key,
+                    https=s.qdrant_https,
                 )
     return _hybrid_stores[ws]
 
@@ -1193,6 +1203,10 @@ async def get_async_hybrid_store(
                 host = host or s.qdrant_host
                 port = port or s.qdrant_http_port
                 _async_hybrid_stores[ws] = AsyncQdrantVectorStore(
-                    workspace_id, host=host, port=port, api_key=s.qdrant_api_key
+                    workspace_id,
+                    host=host,
+                    port=port,
+                    api_key=s.qdrant_api_key,
+                    https=s.qdrant_https,
                 )
     return _async_hybrid_stores[ws]

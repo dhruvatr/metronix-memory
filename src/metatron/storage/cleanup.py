@@ -43,6 +43,7 @@ def _get_qdrant_client() -> QdrantClient:
         port=settings.qdrant_http_port,
         timeout=60,
         api_key=settings.qdrant_api_key or None,
+        https=settings.qdrant_https,
     )
 
 
