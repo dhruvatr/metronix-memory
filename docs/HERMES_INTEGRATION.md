@@ -135,11 +135,14 @@ Hermes should call `metatron_search` with an appropriate query and `workspace_id
 | `metatron_search_fast` | Low-latency passage lookup (dense + optional metadata). No rerank, no LLM answer. Target P50 <800 ms |
 | `metatron_get` | Fetch full document by id |
 | `metatron_store` | Index a new document (the agent publishes its own knowledge to KB) |
-| `metatron_sync` | Trigger a connector sync |
+| `metatron_sync` | Trigger sync from registered MCP sources (not Jira/Confluence connectors) |
 | `metatron_status` | Workspace statistics (doc count, last sync, etc.) |
 | `metatron_memory_search` | Hybrid agent-memory search (Qdrant + Neo4j + Redis-session blend) |
 | `metatron_memory_store` | Persist an agent memory record (per-agent / global / session scopes) |
 | `metatron_memory_delete` | Delete a persistent memory record by id |
+
+For complete tool signatures, parameter tables, response schemas, and error codes
+see **[MCP_API.md](MCP_API.md)**.
 
 ### Routing patterns
 
