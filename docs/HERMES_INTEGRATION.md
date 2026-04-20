@@ -21,10 +21,11 @@ Level 1 is the right default today. Levels 2 and 3 layer on top.
 
 ## What works right now
 
-- ✅ MCP server at `/mcp` with nine tools — five document-oriented
+- ✅ MCP server at `/mcp` with twelve tools — five document-oriented
   (`metatron_search`, `metatron_get`, `metatron_store`, `metatron_sync`, `metatron_status`),
-  one fast-retrieval (`metatron_search_fast`), and three memory-oriented
-  (`metatron_memory_search`, `metatron_memory_store`, `metatron_memory_delete`).
+  one fast-retrieval (`metatron_search_fast`), and six memory-oriented
+  (`metatron_memory_search`, `metatron_memory_store`, `metatron_memory_batch_store`,
+  `metatron_memory_list`, `metatron_memory_update`, `metatron_memory_delete`).
 - ✅ OpenAI-compatible endpoint at `/v1/chat/completions` that answers by running
   `hybrid_search_and_answer` over a workspace.
 - ✅ Memory REST API at `/api/v1/memory/*` (create, search, list, delete records).
@@ -139,6 +140,9 @@ Hermes should call `metatron_search` with an appropriate query and `workspace_id
 | `metatron_status` | Workspace statistics (doc count, last sync, etc.) |
 | `metatron_memory_search` | Hybrid agent-memory search (Qdrant + Neo4j + Redis-session blend) |
 | `metatron_memory_store` | Persist an agent memory record (per-agent / global / session scopes) |
+| `metatron_memory_batch_store` | Persist multiple memory records in one call (max 100, sequential dedup) |
+| `metatron_memory_list` | List all memory records for an agent with pagination and filters |
+| `metatron_memory_update` | Update existing record in place (re-embeds only on content change) |
 | `metatron_memory_delete` | Delete a persistent memory record by id |
 
 For complete tool signatures, parameter tables, response schemas, and error codes
