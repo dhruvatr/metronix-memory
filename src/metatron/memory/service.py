@@ -61,6 +61,16 @@ class MemoryService:
         self._workspace_id = workspace_id
         self._search = search
 
+    @property
+    def pg_store(self) -> MemoryPostgresStore:
+        """Public access to PG store for list/update tools."""
+        return self._pg
+
+    @property
+    def qdrant_store(self) -> MemoryQdrantStore:
+        """Public access to Qdrant store for update tool."""
+        return self._qdrant
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

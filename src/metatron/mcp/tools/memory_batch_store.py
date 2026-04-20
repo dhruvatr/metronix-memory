@@ -130,7 +130,8 @@ async def metatron_memory_batch_store(
                 is_deduped = saved.id != new_id
                 if is_deduped:
                     deduped += 1
-                stored += 1
+                else:
+                    stored += 1
 
                 results.append(
                     MemoryBatchStoreResult(

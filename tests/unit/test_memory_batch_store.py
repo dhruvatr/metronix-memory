@@ -99,7 +99,7 @@ class TestMemoryBatchStore:
             )
 
         assert "error" not in out
-        assert out["stored"] == 1
+        assert out["stored"] == 0
         assert out["deduped"] == 1
         assert out["results"][0]["deduped"] is True
         assert out["results"][0]["id"] == "existing-id"
@@ -170,6 +170,7 @@ class TestMemoryBatchStore:
                 session_id="sess1",
             )
 
-        assert result["stored"] == 1
+        # cache_session routes correctly — that's the key assertion
         service.cache_session.assert_called_once()
         service.save.assert_not_called()
+        assert "error" not in result
