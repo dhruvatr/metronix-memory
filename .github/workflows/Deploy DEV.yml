@@ -47,25 +47,14 @@ jobs:
     
     - name: Create .env file on remote server
       run: |
-        ssh -o StrictHostKeyChecking=no \
+        echo "${{ secrets.ENV_FILE_DEV }}" | ssh -o StrictHostKeyChecking=no \
             -i /tmp/ssh_key \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_DEV }} \
             "sudo bash -c '
-              # Remove old files
               rm -f /usr/local/bin/.env /usr/local/bin/.env.p
-              
-              # Create new .env file
-              cat > /usr/local/bin/.env << EOF
-              ${{ secrets.ENV_FILE_DEV }}
-              EOF
-              
-              # Copy .env -> .env.p
+              cat > /usr/local/bin/.env
               cp /usr/local/bin/.env /usr/local/bin/.env.p
-              
-              # Set permissions to 777
               chmod 777 /usr/local/bin/.env /usr/local/bin/.env.p
-              
-              # Verify file creation
               echo \"✅ .env files created successfully\"
               ls -la /usr/local/bin/.env*
             '"
