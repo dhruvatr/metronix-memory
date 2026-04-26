@@ -102,6 +102,27 @@ A response (even an MCP protocol error) confirms the endpoint is reachable and t
 key is valid. A `401` means the key is wrong; a `405 Not Allowed` from nginx means
 the reverse proxy is not configured for `/mcp`.
 
+### Agent identification — `X-Agent-Id` header (WS4 S6)
+
+Metatron attributes observability events (activity log, future per-agent
+metrics) to the `agent_id` the caller declares. In addition to the `agent_id`
+tool parameter that memory tools already accept, the platform also honours a
+request header:
+
+- Header: `X-Agent-Id: <uuid>` (max 64 chars, printable ASCII).
+- Applies to every path: `/api/v1/*`, `/v1/*`, and `/mcp` (both the mounted
+  deployment and the standalone streamable-HTTP transport).
+- Read by the MCP tool wrapper, the hybrid search pipeline, and other
+  emission points that otherwise would not know which agent made the call.
+- **Not authenticated.** The header is a declaration, not a credential.
+  Any client with a valid `METATRON_MCP_API_KEY` can assert any `agent_id`.
+  Per-agent authentication (one bearer token per agent) is a separate
+  follow-up ticket; once shipped, the header becomes authoritative.
+- Invalid or missing header → the event is either dropped (if the emission
+  point can't resolve an `agent_id` from a tool parameter) or logged without
+  the header's help (when a tool parameter already carries `agent_id`, as
+  with the memory tools).
+
 ### 4. Add Metatron to Hermes
 
 Hermes supports MCP natively via its `MCP Integration` feature — see

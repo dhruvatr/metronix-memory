@@ -43,6 +43,7 @@ async def build_memory_service_for_workspace(workspace_id: str) -> MemoryService
 
         from sqlalchemy.ext.asyncio import create_async_engine
 
+        from metatron.mcp.server import get_activity_bus
         from metatron.memory.search import MemorySearchService
         from metatron.memory.service import MemoryService
         from metatron.storage.freshness_pg import FreshnessStore
@@ -81,10 +82,12 @@ async def build_memory_service_for_workspace(workspace_id: str) -> MemoryService
             workspace_id=workspace_id,
             search=search,
             freshness_store=freshness_store,
-            # MCP tools run outside the FastAPI request scope and have no
-            # PluginManager handle, so no EventBus is wired. Audit trail is
-            # still durable via the MachineEvent row written by resolve_review.
-            event_bus=None,
+            # MCP tools run outside FastAPI's request scope, but `mcp/server.py`
+            # exposes a getter that returns the PluginManager's EventBus when
+            # the FastAPI app has been built (mounted /mcp). In standalone
+            # stdio/http transport (`python -m metatron.mcp`) the getter
+            # returns None and emissions silently no-op.
+            event_bus=get_activity_bus(),
         )
 
         _SERVICES[workspace_id] = service

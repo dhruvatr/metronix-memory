@@ -21,7 +21,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from metatron.core.events import FRESHNESS_REVIEW_RESOLVED
+from metatron.core.events import (
+    FRESHNESS_REVIEW_RESOLVED,
+    MEMORY_DELETED,
+    MEMORY_PROMOTED,
+    MEMORY_RESET,
+    MEMORY_STORED,
+)
 from metatron.core.exceptions import MemoryNotFoundError
 from metatron.core.models import (
     LifecycleStatus,
@@ -129,6 +135,12 @@ class MemoryService:
     def _compute_content_hash(content: str) -> str:
         return hashlib.sha256(content.encode()).hexdigest()
 
+    async def _emit_bus(self, name: str, payload: dict[str, object]) -> None:
+        """Emit an event on the EventBus; no-op when bus is not wired."""
+        if self._event_bus is None:
+            return
+        await self._event_bus.emit(name, payload)
+
     # ------------------------------------------------------------------
     # Session memory (Redis + Neo4j write-through)
     # ------------------------------------------------------------------
@@ -156,6 +168,17 @@ class MemoryService:
 
         await self._write_graph_best_effort(record)
         await enqueue_if_enabled(workspace_id, result.id, "knowledge_changed")
+        await self._emit_bus(
+            MEMORY_STORED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": record.agent_id,
+                "record_id": result.id,
+                "scope": "session",
+                "source_type": record.source_type,
+                "session_id": session_id,
+            },
+        )
         return result
 
     async def get_session(
@@ -241,6 +264,18 @@ class MemoryService:
         await self._qdrant.upsert(record)
         await self._write_graph_best_effort(record)
         await enqueue_if_enabled(workspace_id, record.id, "knowledge_changed")
+        await self._emit_bus(
+            MEMORY_STORED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": record.agent_id,
+                "record_id": record.id,
+                "scope": record.scope.value if record.scope else None,
+                "source_type": record.source_type,
+                "content_hash": record.content_hash,
+                "session_id": record.session_id,
+            },
+        )
         return record
 
     async def get(
@@ -259,6 +294,9 @@ class MemoryService:
     ) -> bool:
         """Delete a record from all stores. Returns True if PG had it."""
         self._check_workspace(workspace_id)
+        # Pre-fetch to learn agent_id / session_id for the event payload
+        # before the record is removed.
+        existing = await self._pg.get(workspace_id, record_id)
         deleted = await self._pg.delete(workspace_id, record_id)
         if not deleted:
             return False
@@ -274,6 +312,16 @@ class MemoryService:
 
         await self._delete_graph_best_effort(workspace_id, record_id)
         await enqueue_if_enabled(workspace_id, record_id, "knowledge_deleted")
+        if existing is not None:
+            await self._emit_bus(
+                MEMORY_DELETED,
+                {
+                    "workspace_id": self._workspace_id,
+                    "agent_id": existing.agent_id,
+                    "record_id": record_id,
+                    "session_id": existing.session_id,
+                },
+            )
         return True
 
     async def list_records(
@@ -323,7 +371,24 @@ class MemoryService:
                     exc_info=True,
                 )
             await self._delete_graph_best_effort(workspace_id, record_id)
+            await self._emit_bus(
+                MEMORY_DELETED,
+                {
+                    "workspace_id": self._workspace_id,
+                    "agent_id": agent_id,
+                    "record_id": record_id,
+                },
+            )
 
+        await self._emit_bus(
+            MEMORY_RESET,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": agent_id,
+                "scope": scope.value if scope else None,
+                "count": count,
+            },
+        )
         return count
 
     async def promote(
@@ -378,6 +443,17 @@ class MemoryService:
                 exc_info=True,
             )
         await enqueue_if_enabled(workspace_id, result.id, "scope_changed")
+        await self._emit_bus(
+            MEMORY_PROMOTED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": result.agent_id,
+                "record_id": result.id,
+                "from_scope": "session",
+                "to_scope": target_scope.value,
+                "session_id": session_id,
+            },
+        )
         return result
 
     # ------------------------------------------------------------------

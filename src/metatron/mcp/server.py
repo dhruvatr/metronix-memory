@@ -11,12 +11,24 @@ Supports dual transport:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import time
+from functools import wraps
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from mcp.server import FastMCP
 from mcp.server.streamable_http import TransportSecuritySettings
+
+from metatron.activity.context import bind_agent_id, current_agent_id
+from metatron.core.events import ERROR_OCCURRED, TOOL_CALLED
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from metatron.core.events import EventBus
 
 # Configure structlog to write to stderr (stdout is reserved for JSON-RPC)
 # Set the root logger to WARNING to reduce noise from dependencies
@@ -60,6 +72,151 @@ mcp = FastMCP(
     debug=False,
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
+
+
+# ---------------------------------------------------------------------------
+# WS4 S6 — activity logging for MCP tool invocations
+# ---------------------------------------------------------------------------
+
+_MAX_ARG_BYTES = 8 * 1024  # 8 KiB
+_ACTIVITY_BUS_GETTER: Callable[[], EventBus | None] = lambda: None  # noqa: E731
+
+
+def set_activity_bus_getter(getter: Callable[[], EventBus | None]) -> None:
+    """Inject the EventBus getter. Called from ``api/app.py:create_app()``.
+
+    The MCP tool wrapper reads the bus lazily via this getter — so the
+    application factory can install the bus AFTER all tools are registered
+    at import time. In standalone stdio/http mode where no factory runs,
+    the getter stays as the no-op default and the wrapper becomes a
+    pass-through.
+    """
+    global _ACTIVITY_BUS_GETTER
+    _ACTIVITY_BUS_GETTER = getter
+
+
+def get_activity_bus() -> EventBus | None:
+    """Resolve the active EventBus via the lazy getter.
+
+    Used by MCP-side service factories that run outside FastAPI's request
+    scope and therefore cannot reach ``request.app.state.plugin_manager``.
+    Returns ``None`` in standalone stdio/http mode.
+    """
+    return _ACTIVITY_BUS_GETTER()
+
+
+def _project_arguments(kwargs: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Serialise tool kwargs, capping payload at 8 KiB.
+
+    Oversized payloads → ``{"__truncated__": True, "preview": "<first 256 chars>"}``.
+    """
+    try:
+        serialized = json.dumps(kwargs, default=str)
+    except (TypeError, ValueError):
+        return {"__unserializable__": True}, True
+    if len(serialized.encode("utf-8")) <= _MAX_ARG_BYTES:
+        try:
+            return json.loads(serialized), False
+        except Exception:
+            return {"__unserializable__": True}, True
+    return {"__truncated__": True, "preview": serialized[:256]}, True
+
+
+def _wrap_tool_with_activity(
+    tool_name: str,
+    handler: Callable[..., Awaitable[Any]],
+    *,
+    bus_getter: Callable[[], EventBus | None],
+) -> Callable[..., Awaitable[Any]]:
+    """Wrap a FastMCP tool coroutine with TOOL_CALLED / ERROR_OCCURRED emission.
+
+    No-ops when ``bus`` is None or ``agent_id`` cannot be resolved.
+    """
+
+    @wraps(handler)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        bus = bus_getter()
+        start = time.monotonic()
+        agent_id = kwargs.get("agent_id") or current_agent_id.get()
+        workspace_id = kwargs.get("workspace_id") or ""
+        session_id = kwargs.get("session_id")
+        arguments, truncated = _project_arguments(kwargs)
+
+        # Bind agent_id into the contextvar so downstream calls (e.g.
+        # `hybrid_search_and_answer`) that read it directly see the same
+        # value the wrapper observed — even when the caller passed agent_id
+        # only as a kwarg and not as the X-Agent-Id header.
+        token = bind_agent_id(agent_id) if agent_id is not None else None
+
+        error: BaseException | None = None
+        try:
+            return await handler(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 — emit then re-raise
+            error = exc
+            raise
+        finally:
+            if token is not None:
+                current_agent_id.reset(token)
+            duration_ms = int((time.monotonic() - start) * 1000)
+            if bus is not None and agent_id is not None:
+                await bus.emit(
+                    TOOL_CALLED,
+                    {
+                        "workspace_id": workspace_id,
+                        "agent_id": agent_id,
+                        "session_id": session_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "arguments_truncated": truncated,
+                        "duration_ms": duration_ms,
+                        "success": error is None,
+                        "error_message": str(error) if error is not None else None,
+                    },
+                )
+                if error is not None:
+                    await bus.emit(
+                        ERROR_OCCURRED,
+                        {
+                            "workspace_id": workspace_id,
+                            "agent_id": agent_id,
+                            "session_id": session_id,
+                            "source": "tool",
+                            "error_type": type(error).__name__,
+                            "error_message": str(error),
+                            "context": {"tool_name": tool_name},
+                        },
+                    )
+
+    return wrapper
+
+
+# Monkey-patch FastMCP's .tool decorator so every subsequently registered
+# tool is wrapped. Tools are registered later via `import metatron.mcp.tools`
+# from `api/app.py`; since this module loads first, the patch lands in time.
+_original_tool = mcp.tool
+
+
+def _tool_with_activity(*decorator_args: Any, **decorator_kwargs: Any) -> Any:
+    registrar = _original_tool(*decorator_args, **decorator_kwargs)
+
+    def _apply(func: Callable[..., Awaitable[Any]]) -> Any:
+        name = decorator_kwargs.get("name") or func.__name__
+        # Lazy-resolve the bus getter at call time, not at wrap time. Tools are
+        # decorated at module-import time (before create_app() runs), so binding
+        # ``_ACTIVITY_BUS_GETTER`` directly would freeze the no-op default into
+        # every wrapper closure. Re-reading via globals each invocation lets
+        # ``set_activity_bus_getter`` from create_app() take effect.
+        wrapped = _wrap_tool_with_activity(
+            name, func, bus_getter=lambda: _ACTIVITY_BUS_GETTER()
+        )
+        wrapped.__name__ = func.__name__
+        wrapped.__qualname__ = getattr(func, "__qualname__", func.__name__)
+        return registrar(wrapped)
+
+    return _apply
+
+
+mcp.tool = _tool_with_activity  # type: ignore[method-assign]
 
 
 def get_server() -> FastMCP:
@@ -124,9 +281,14 @@ async def run_http(
         stateless_http=True,
     )
 
+    # WS4 S6 — X-Agent-Id contextvar for standalone MCP transport
+    from metatron.api.middleware.agent_id import AgentIdContextMiddleware
+
+    app.add_middleware(AgentIdContextMiddleware)
+
     # Add authentication middleware
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request
+    from starlette.requests import Request  # noqa: TC002
     from starlette.responses import JSONResponse
 
     class AuthMiddleware(BaseHTTPMiddleware):

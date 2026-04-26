@@ -91,6 +91,7 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
             k=req.top_k,
             intent_query=req.question,
             plugin_manager=plugin_manager,
+            source="rest",
         )
     except Exception as exc:
         logger.error("chat.error", error=str(exc), exc_info=True)
@@ -191,6 +192,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
                 k=req.top_k,
                 intent_query=req.question,
                 plugin_manager=plugin_manager,
+                source="rest",
             )
         except Exception as exc:
             logger.error("chat.stream.error", error=str(exc), exc_info=True)

@@ -39,6 +39,7 @@ async def metatron_search(
         answer = await hybrid_search_and_answer(
             query,
             workspace_id=workspace_id or "default",
+            source="mcp",
         )
 
         # Return the answer directly — the search pipeline already

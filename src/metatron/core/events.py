@@ -65,6 +65,39 @@ FRESHNESS_DECISION_APPLIED = "freshness_decision_applied"
 FRESHNESS_REVIEW_CREATED = "freshness_review_created"
 FRESHNESS_REVIEW_RESOLVED = "freshness_review_resolved"
 
+# Extended payload convention for QUERY_EXECUTED (existing constant, extended by WS4 S6):
+#   query_executed         -> {"workspace_id", "agent_id", "session_id",
+#                              "correlation_id", "query", "top_k",
+#                              "result_count", "duration_ms", "source"}
+
+# Agent activity events (WS4 S6 — activity logging)
+# Payload conventions:
+#   memory_promoted        -> {"workspace_id", "agent_id", "record_id",
+#                              "from_scope", "to_scope"}
+#   document_accessed      -> {"workspace_id", "agent_id", "session_id",
+#                              "correlation_id", "document_ids", "channel"}
+#   tool_called            -> {"workspace_id", "agent_id", "session_id",
+#                              "tool_name", "arguments", "arguments_truncated",
+#                              "duration_ms", "success", "error_message"}
+#   agent_created          -> {"workspace_id", "agent_id", "config_version",
+#                              "created_by"}
+#   agent_updated          -> {"workspace_id", "agent_id", "config_version",
+#                              "changed_by", "changed_fields"}
+#   agent_status_changed   -> {"workspace_id", "agent_id", "old_status",
+#                              "new_status", "changed_by"}
+#   agent_deleted          -> {"workspace_id", "agent_id", "changed_by"}
+#   error_occurred         -> {"workspace_id", "agent_id", "session_id",
+#                              "source", "error_type", "error_message",
+#                              "context"}
+MEMORY_PROMOTED = "memory_promoted"
+DOCUMENT_ACCESSED = "document_accessed"
+TOOL_CALLED = "tool_called"
+AGENT_CREATED = "agent_created"
+AGENT_UPDATED = "agent_updated"
+AGENT_STATUS_CHANGED = "agent_status_changed"
+AGENT_DELETED = "agent_deleted"
+ERROR_OCCURRED = "error_occurred"
+
 # Type alias for async event handler callables
 EventHandlerCallable = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
