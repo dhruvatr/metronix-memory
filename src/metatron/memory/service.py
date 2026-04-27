@@ -86,6 +86,9 @@ class MemoryService:
         # when called without wiring.
         self._freshness_store = freshness_store
         self._event_bus = event_bus
+        # Set on first skipped emission so the "bus not wired" warning fires
+        # exactly once per service instance (see ``_emit_bus``).
+        self._warned_no_bus = False
 
     @property
     def pg_store(self) -> MemoryPostgresStore:
@@ -138,6 +141,13 @@ class MemoryService:
     async def _emit_bus(self, name: str, payload: dict[str, object]) -> None:
         """Emit an event on the EventBus; no-op when bus is not wired."""
         if self._event_bus is None:
+            if not self._warned_no_bus:
+                logger.warning(
+                    "event_bus_not_wired",
+                    service="MemoryService",
+                    workspace_id=self._workspace_id,
+                )
+                self._warned_no_bus = True
             return
         await self._event_bus.emit(name, payload)
 

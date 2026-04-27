@@ -123,6 +123,16 @@ request header:
   the header's help (when a tool parameter already carries `agent_id`, as
   with the memory tools).
 
+### Sensitive data in tool arguments
+
+Activity-log `tool.called` events store the full set of tool keyword
+arguments verbatim in `event_data.arguments` (capped at 8 KiB; oversized
+payloads become a 256-char preview). Tools must NOT pass credentials, raw
+PII, or other sensitive data as arguments — anything that lands in `kwargs`
+also lands in `agent_activity_log.event_data` as JSONB and is readable by
+anyone with `viewer+` RBAC on the agent. Future RBAC-scoped redaction is
+deferred to Phase 4 (audit logging).
+
 ### 4. Add Metatron to Hermes
 
 Hermes supports MCP natively via its `MCP Integration` feature — see

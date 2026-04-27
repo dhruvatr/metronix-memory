@@ -491,9 +491,14 @@ async def get_agent_activity(
 ) -> ActivityListResponse:
     """Paginated activity timeline for a single agent."""
     try:
-        await reg_service.get_agent(agent_id)
+        agent = await reg_service.get_agent(agent_id)
     except AgentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
+    # Defence-in-depth: registry already filters by workspace, but explicit
+    # cross-check guarantees we never leak activity from a foreign workspace
+    # if the registry layer ever regresses.
+    if agent.workspace_id != reg_service.workspace_id:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id!r}")
 
     events, has_more = await act_service.list_for_agent(
         agent_id=agent_id,
@@ -537,9 +542,11 @@ async def get_agent_activity_summary(
 ) -> ActivitySummaryResponse:
     """Aggregated stats over `period` (1d | 7d | 30d | 90d)."""
     try:
-        await reg_service.get_agent(agent_id)
+        agent = await reg_service.get_agent(agent_id)
     except AgentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None
+    if agent.workspace_id != reg_service.workspace_id:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id!r}")
 
     try:
         payload = await act_service.summary_for_agent(agent_id=agent_id, period=period)

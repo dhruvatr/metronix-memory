@@ -33,6 +33,7 @@ def _client(
     app = create_app(Settings(AUTH_ENABLED=False))
 
     reg = MagicMock()
+    reg.workspace_id = "default"
     if agent_exists:
         rec = MagicMock()
         rec.id = "ag_1"
@@ -69,6 +70,20 @@ def _client(
 def test_activity_returns_404_for_unknown_agent() -> None:
     client, _, _ = _client(agent_exists=False)
     r = client.get("/api/v1/agents/unknown/activity")
+    assert r.status_code == 404
+
+
+def test_activity_returns_404_for_foreign_workspace_agent() -> None:
+    """B1 defence-in-depth: agent exists but belongs to another workspace."""
+    client, reg, _ = _client(agent_exists=True)
+    # Override the registered agent so it claims a different workspace
+    foreign_rec = MagicMock()
+    foreign_rec.id = "ag_1"
+    foreign_rec.workspace_id = "other_ws"
+    reg.get_agent = AsyncMock(return_value=foreign_rec)
+    r = client.get("/api/v1/agents/ag_1/activity")
+    assert r.status_code == 404
+    r = client.get("/api/v1/agents/ag_1/activity/summary")
     assert r.status_code == 404
 
 
@@ -138,6 +153,7 @@ def test_activity_summary_invalid_period_returns_400() -> None:
 
     app = create_app(Settings(AUTH_ENABLED=False))
     reg = MagicMock()
+    reg.workspace_id = "default"
     rec = MagicMock()
     rec.id = "ag_1"
     rec.workspace_id = "default"

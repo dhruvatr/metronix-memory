@@ -843,6 +843,16 @@ async def _emit_search_events(
     for channel, doc_ids in docs_by_channel.items():
         if not doc_ids:
             continue
+        original_count = len(doc_ids)
+        capped_ids = list(doc_ids)[:50]
+        if original_count > 50:
+            logger.warning(
+                "activity_log.document_ids_capped",
+                channel=channel,
+                original_count=original_count,
+                cap=50,
+                correlation_id=correlation_id,
+            )
         await bus.emit(
             DOCUMENT_ACCESSED,
             {
@@ -850,7 +860,7 @@ async def _emit_search_events(
                 "agent_id": agent_id,
                 "session_id": session_id,
                 "correlation_id": correlation_id,
-                "document_ids": list(doc_ids)[:50],
+                "document_ids": capped_ids,
                 "channel": channel,
             },
         )

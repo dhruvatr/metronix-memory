@@ -88,6 +88,10 @@ class AgentRegistryService:
         self._repo = repo
         self._workspace_id = workspace_id
         self._event_bus = event_bus
+        # Set on first skipped emission so the warning fires exactly once
+        # per service instance — surfaces a misconfigured deployment without
+        # flooding the log with one entry per emit.
+        self._warned_no_bus = False
 
     @property
     def workspace_id(self) -> str:
@@ -100,6 +104,13 @@ class AgentRegistryService:
     async def _emit(self, name: str, payload: dict[str, Any]) -> None:
         """Fire an event on the bus; no-op when bus is not wired."""
         if self._event_bus is None:
+            if not self._warned_no_bus:
+                logger.warning(
+                    "event_bus_not_wired",
+                    service="AgentRegistryService",
+                    workspace_id=self._workspace_id,
+                )
+                self._warned_no_bus = True
             return
         await self._event_bus.emit(name, payload)
 

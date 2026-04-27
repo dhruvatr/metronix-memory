@@ -138,6 +138,10 @@ class ActivityStore:
             day_counts = {str(m["day"]): int(m["n"]) for m in b.mappings().all()}
 
         # Zero-fill days between since and until (UTC calendar days).
+        # `until` is treated as exclusive — subtracting 1 µs ensures that a
+        # midnight boundary like `until=2026-04-23T00:00Z` does NOT include
+        # April 23rd in the buckets (which would be wrong for a 1d window
+        # whose `since` lands on 2026-04-22T00:00Z).
         start_day = since.astimezone(UTC).date()
         end_day = (until.astimezone(UTC) - timedelta(microseconds=1)).date()
         days: list[dict[str, Any]] = []

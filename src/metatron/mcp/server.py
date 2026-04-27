@@ -90,6 +90,11 @@ def set_activity_bus_getter(getter: Callable[[], EventBus | None]) -> None:
     at import time. In standalone stdio/http mode where no factory runs,
     the getter stays as the no-op default and the wrapper becomes a
     pass-through.
+
+    **Call contract:** expected to be invoked exactly once per process, from
+    ``create_app()``. Calling it again silently replaces the getter — tests
+    and hot-reload paths should reset it back to ``lambda: None`` when they
+    are done to avoid cross-test contamination.
     """
     global _ACTIVITY_BUS_GETTER
     _ACTIVITY_BUS_GETTER = getter
@@ -105,20 +110,33 @@ def get_activity_bus() -> EventBus | None:
     return _ACTIVITY_BUS_GETTER()
 
 
-def _project_arguments(kwargs: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def _project_arguments(
+    kwargs: dict[str, Any], *, tool_name: str | None = None
+) -> tuple[dict[str, Any], bool]:
     """Serialise tool kwargs, capping payload at 8 KiB.
 
     Oversized payloads → ``{"__truncated__": True, "preview": "<first 256 chars>"}``.
+    Logs a structlog warning when truncation occurs so tool authors can see
+    that their payload was capped.
     """
     try:
         serialized = json.dumps(kwargs, default=str)
     except (TypeError, ValueError):
+        logger.warning("activity_log.arguments_unserialisable", tool_name=tool_name)
         return {"__unserializable__": True}, True
-    if len(serialized.encode("utf-8")) <= _MAX_ARG_BYTES:
+    payload_size = len(serialized.encode("utf-8"))
+    if payload_size <= _MAX_ARG_BYTES:
         try:
             return json.loads(serialized), False
         except Exception:
+            logger.warning("activity_log.arguments_unserialisable", tool_name=tool_name)
             return {"__unserializable__": True}, True
+    logger.warning(
+        "activity_log.arguments_truncated",
+        tool_name=tool_name,
+        original_size=payload_size,
+        cap=_MAX_ARG_BYTES,
+    )
     return {"__truncated__": True, "preview": serialized[:256]}, True
 
 
@@ -140,12 +158,17 @@ def _wrap_tool_with_activity(
         agent_id = kwargs.get("agent_id") or current_agent_id.get()
         workspace_id = kwargs.get("workspace_id") or ""
         session_id = kwargs.get("session_id")
-        arguments, truncated = _project_arguments(kwargs)
+        arguments, truncated = _project_arguments(kwargs, tool_name=tool_name)
 
         # Bind agent_id into the contextvar so downstream calls (e.g.
         # `hybrid_search_and_answer`) that read it directly see the same
         # value the wrapper observed — even when the caller passed agent_id
         # only as a kwarg and not as the X-Agent-Id header.
+        # Caveat: any background task spawned inside the handler via
+        # `asyncio.create_task` will outlive this wrapper's `finally` block,
+        # so it will see the contextvar reset to its prior value (likely
+        # `None`). No tools currently spawn fire-and-forget tasks; if that
+        # changes, propagate `agent_id` explicitly into the spawned task.
         token = bind_agent_id(agent_id) if agent_id is not None else None
 
         error: BaseException | None = None
