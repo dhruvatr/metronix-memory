@@ -393,9 +393,26 @@ Team lead orchestrates teammates through the full lifecycle: Jira → branch →
 - All required services (PostgreSQL, Qdrant, Neo4j) are assumed to be already running.
   Tests and eval access them directly, no API server needed.
 
+### Model Assignment
+
+Teammates run on different Anthropic models to balance judgment quality against rate-limit consumption:
+
+| Role | Model | Why |
+|---|---|---|
+| **architect** | `opus` | Layer-violation calls, plugin/event-bus impact, plan correctness, search-pipeline trade-offs — quality over cost |
+| **coder** | `sonnet` | Following a clear plan with strict conventions (async, workspace_id filtering, mypy strict) — fast iteration, ~5x cheaper per output token |
+| **reviewer** | `opus` | Catching subtle bugs, layer/import violations, missing async, missing workspace_id filters, broken backward compat for plugins, search-eval regressions — quality matters |
+| **documenter** | `sonnet` | Mechanical doc updates from a known diff (CLAUDE.md / README / CHANGELOG / module CLAUDE.md files) — low judgement, cost-sensitive |
+
+When the lead spawns a teammate via the Task/Agent tool, it MUST pass `model: "opus"` or `model: "sonnet"` accordingly. Default model (whatever the lead is running on) is NOT acceptable — explicit per-role assignment only.
+
+If a Sonnet teammate gets stuck in a loop, produces nonsense, or repeatedly violates conventions, the lead MAY escalate by spawning a fresh teammate with `model: "opus"` for that single phase — but the default split above is the rule, escalation is the exception. Document escalation reason in the human-pause summary.
+
+`haiku` is reserved for future cost-optimisation passes (e.g. trivial doc-only PRs, pure typo fixes); not used by default in any role today.
+
 ### Teammate Roles
 
-**architect** — Planning & decomposition
+**architect** — Planning & decomposition (model: `opus`)
 - Reads the Jira task (via mcp-atlassian) and its parent story/epic for broader context
 - Reads docs/superpowers/ for existing specs, plans, and notes from previous tasks
 - Reads metatron-arch-guard skill for product vision and architectural constraints
@@ -428,7 +445,7 @@ Before writing any code, you MUST:
 Do NOT write implementation code. Output only the plan with acceptance criteria.
 ```
 
-**coder** — Implementation & tests
+**coder** — Implementation & tests (model: `sonnet`)
 - Receives the plan from architect
 - Implements changes following project conventions (async, pydantic-settings, structlog, ruff rules)
 - Writes/updates unit tests for all new code
@@ -456,7 +473,7 @@ After implementation:
 4. Push: git push -u origin feature/MTRNIX-XXX
 ```
 
-**reviewer** — Code review & quality gate
+**reviewer** — Code review & quality gate (model: `opus`)
 - Runs AFTER coder finishes and pushes
 - Reviews the full diff against architectural rules
 - Checks: layer violations, missing tests, missing type hints, broken conventions
@@ -487,7 +504,7 @@ Severity: BLOCKER (must fix), WARNING (should fix), SUGGESTION (nice to have)
 Only approve when zero BLOCKERs remain.
 ```
 
-**documenter** — Documentation updates
+**documenter** — Documentation updates (model: `sonnet`)
 - Runs AFTER human approval (see pipeline below)
 - Updates CLAUDE.md if architecture, commands, config, or conventions changed
 - Updates relevant `.claude/CLAUDE.md` files in affected subdirectories
@@ -526,19 +543,20 @@ Create agent team with 4 teammates: architect, coder, reviewer, documenter.
 Flow:
 1. Update develop and create branch:
    git checkout develop && git pull && git checkout -b feature/MTRNIX-XXX
-2. architect: fetch task from Jira (including parent story/epic),
+2. architect (model: opus): fetch task from Jira (including parent story/epic),
    read docs/superpowers/ for context from previous tasks,
    read metatron-arch-guard skill for product vision,
    scan .claude/CLAUDE.md files in affected directories,
    analyze affected layers, create implementation plan
-3. coder: implement plan, write tests, run lint/typecheck/test, commit and push
+3. coder (model: sonnet): implement plan, write tests, run lint/typecheck/test,
+   commit and push
 4. Create PR to develop: gh pr create --base develop --title "feat(MTRNIX-XXX): short description"
-5. reviewer: review diff, run make test-all, if BLOCKERs found — send back to coder
-   for fixes. Loop until zero BLOCKERs.
+5. reviewer (model: opus): review diff, run make test-all, if BLOCKERs found —
+   send back to coder (also model: sonnet) for fixes. Loop until zero BLOCKERs.
 6. ⏸️ PAUSE — show summary: what was done, changed files, test results.
    Wait for human confirmation before proceeding.
-7. After human "ok": documenter updates documentation (CLAUDE.md, README, CHANGELOG,
-   affected .claude/CLAUDE.md files), commits, pushes
+7. After human "ok": documenter (model: sonnet) updates documentation (CLAUDE.md,
+   README, CHANGELOG, affected .claude/CLAUDE.md files), commits, pushes
 8. When all checks pass — merge PR: gh pr merge --squash
 9. Transition task MTRNIX-XXX to Done in Jira
 
