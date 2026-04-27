@@ -3,6 +3,136 @@
 ## [Unreleased]
 
 ### Added
+- docs: strategy ADR `docs/adr/2026-04-25-metatron-strategy.md` —
+  authoritative snapshot of architectural decisions and pre-pilot plan
+  (Memory Quality Layer with `kind=fact|preference|pinned`, Agent
+  Context Assembler, second Hermes instance for the Russian-content
+  team, open-core split criterion, RBAC plugin frozen as DEPRECATED,
+  Permission Model v2 deferred behind a "first enterprise client"
+  trigger, LiteLLM SDK migration deferred to post-pilot). 32 ADR-style
+  decision records (D-001..D-032). Cross-linked from root CLAUDE.md,
+  ROLLOUT_NOTES_2026-04-24.md, and MEMORY_MCP_FOLLOWUPS.md.
+- test: OAI-compat integration smoke (MTRNIX-323 §4). One full
+  `create_app(...)` + `TestClient` round-trip against
+  `POST /v1/chat/completions` validates the wiring (200 + citations
+  rendered as markdown links + non-ASCII Russian query path) that
+  unit-level tests can't catch — the failure mode is `create_app`
+  drift or `hybrid_search_and_answer` returning a body the OAI
+  envelope can't parse. Lives at
+  `tests/integration/api/test_openai_compat_smoke.py`.
+
+### Changed
+- breaking (REST): `POST /api/v1/agents/{id}/start|stop|pause` on an
+  `ARCHIVED` agent now returns 400 (`AgentInvalidStateTransitionError`)
+  instead of un-archiving the agent. The new
+  `POST /api/v1/agents/{id}/restore` (editor+) is the only transition
+  out of ARCHIVED, and it lands in STOPPED — operators must explicitly
+  `/start` afterwards. Per MTRNIX-319 §5, no live consumer was relying
+  on the previous un-delete loophole. The full lifecycle×status matrix
+  is enforced by `_ALLOWED_LIFECYCLE_SOURCES` in
+  `agents/service.py`. (MTRNIX-323)
+- chore: Eval dataset v1.3 → v1.4 (MTRNIX-323 §2). Four
+  temporal/status queries (`exec-02`, `time-01`, `time-03`, `ru-02`)
+  rewritten to topic-anchored form so they no longer drift as Jira
+  tickets transition to Done; two sprint-anchored queries (`time-05`,
+  `agg-01`) flagged `stable: false` until sprint metadata lands in
+  the retrievable payload. Aggregate metrics on the queries that
+  exist in both v1.3 and v1.4 stay within ±0.01.
+
+### Fixed
+- fix: KB freshness sync_downstream_stores resolves UUID → source_id
+  (MTRNIX-313 follow-up, PR #95). `RawDocumentTarget.sync_downstream_stores`
+  was passing the freshness job's `target_id` (raw_documents.id UUID)
+  directly to `update_payload_by_doc_label` and
+  `set_raw_document_status`. Both downstream stores key by
+  `doc_label = raw_documents.source_id` (Confluence page id, Jira issue
+  key) — UUID never matched a real chunk or `:Document` node, so every
+  worker-driven KB lifecycle transition was a silent no-op on Qdrant
+  and Neo4j. Net effect: `METATRON_FRESHNESS_KB_SEARCH_FILTER_ENABLED=true`
+  was useless before this fix; the retrieval `must_not` filter had
+  nothing to filter because Qdrant payloads never received the
+  lifecycle status. Surfaced during MTRNIX-319 ad-hoc KB validation.
+  Fix fetches the raw_document, extracts source_id, uses it as the
+  doc_label argument. End-to-end validation: doc-02 query MRR 1.000 →
+  0.000 when the expected document is transitioned to ARCHIVED.
+- fix: Eval driver event-loop reuse (MTRNIX-323 §1). `scripts/run_eval.py`
+  now wraps the entire run in a single `asyncio.run()`, calling
+  `clear_store_cache()` immediately before to flush any stray async
+  Qdrant client an import-time side effect may have parked on a
+  different loop. Previously the per-query
+  `hybrid_search_and_answer_sync` calls each created and closed their
+  own loop, leaving the cached `AsyncQdrantVectorStore` bound to a
+  closed loop and forcing 8/29 queries through the
+  `qdrant.async.hybrid_search.fallback` dense-only path. Three
+  consecutive `make eval` runs now emit 0 fallback events.
+
+### Added
+- feat: Freshness queue reliability — processing-list reclaim + scheduled-scan
+  safety net + env-prefixed Redis keys close the Phase A pre-prod gaps
+  (MTRNIX-316). **Requires Redis >= 6.2 for `LMOVE`.** The worker no longer
+  loses jobs on a SIGKILL mid-batch: each worker claims a unique
+  `worker_id = {hostname}:{pid}:{short-uuid}` at bootstrap and moves
+  dequeued jobs into its own `freshness:{env}:processing:{worker_id}` list
+  via `LMOVE`. A heartbeat key (`freshness:{env}:heartbeat:{worker_id}`,
+  TTL 20s) plus a per-workspace reclaim pass (every
+  `METATRON_FRESHNESS_RECLAIM_INTERVAL_ITERATIONS`, default 30 iterations)
+  drains any dead peer's processing list back to the main queue. A
+  scheduled-scan safety net (memory only in this ticket; KB deferred)
+  periodically enqueues freshness jobs for records that never received
+  a write-triggered event. Every freshness Redis key is now namespaced
+  by `METATRON_ENV` so dev rigs sharing a Redis instance can't collide;
+  legacy unprefixed keys are opportunistically drained at startup when
+  `METATRON_FRESHNESS_DRAIN_LEGACY_AT_STARTUP=true`. Six new settings:
+  `METATRON_FRESHNESS_HEARTBEAT_TTL_SECONDS` (20),
+  `METATRON_FRESHNESS_RECLAIM_INTERVAL_ITERATIONS` (30),
+  `METATRON_FRESHNESS_SCHEDULED_SCAN_ENABLED` (True),
+  `METATRON_FRESHNESS_SCHEDULED_SCAN_INTERVAL_SECONDS` (3600),
+  `METATRON_FRESHNESS_SCAN_BATCH_LIMIT` (500),
+  `METATRON_FRESHNESS_DRAIN_LEGACY_AT_STARTUP` (False). Five new
+  Prometheus counters: `freshness_orphans_reclaimed_total`,
+  `freshness_reclaim_errors_total`,
+  `freshness_scheduled_scan_jobs_enqueued_total`,
+  `freshness_scheduled_scan_errors_total`,
+  `freshness_legacy_keys_drained_total`. Backwards-compatible when
+  `METATRON_ENV` is unset — the key shape is byte-identical to Phase A.
+- chore: Pre-rollout validation gate closed (MTRNIX-319). Eval dataset
+  v1.3 refreshes 11 Confluence doc_label IDs that drifted to new
+  page IDs after a workspace reorg — restored measurable retrieval
+  quality (P@10 0.05 → 0.14, MRR 0.26 → 0.63, NDCG 0.22 → 0.58).
+  New onboarding doc `docs/ROLLOUT_NOTES_2026-04-24.md` for teams
+  picking up the project. Remaining loose ends (eval event-loop flake,
+  temporal-query hygiene, Agent Registry UX, optional OAI smoke)
+  tracked as MTRNIX-323.
+
+### Fixed
+- fix: `MemoryService.resolve_review` is now atomic across its three
+  PG writes (MTRNIX-319, PR #89). Previously each of update_lifecycle /
+  delete_review_entry / save_machine_event ran in its own
+  `engine.begin()` transaction — a failure on the third left the first
+  two committed while the caller received an error. Added
+  `MemoryPostgresStore.begin()` + optional `conn` kwarg on the three
+  store methods; the service now opens one transaction and threads
+  the connection through. Same PR also fixes misleading error
+  bucketing: DB-error exceptions (`DBAPIError`, `OperationalError`,
+  `UntranslatableCharacterError`, etc.) no longer get bucketed as
+  `WORKSPACE_NOT_FOUND` based on the SQL text containing
+  `workspace_id`. 14 new unit tests.
+
+### Added
+- feat: Freshness worker syncs memory Qdrant status payload on every
+  lifecycle transition (MTRNIX-322). `MemoryTarget.sync_downstream_stores`
+  now writes `{"status": status.value}` onto the per-workspace Qdrant
+  point via `update_payload` — previously a deliberate no-op. Hook is
+  called by `FreshnessMonitor` (already wired in MTRNIX-313), `Curator`
+  CANDIDATE → ACTIVE promotion, and `apply_decision` mark_stale branch.
+  Closes the drift between PG `memory_records.status` and the Qdrant
+  payload that leaked non-ACTIVE records through `memory_search` under
+  the default `status=["active"]` filter. Adds Prometheus counter
+  `freshness_qdrant_sync_failed_total{target_kind,stage}` for
+  observability. Best-effort — Qdrant failures are logged at WARNING
+  and counted, never propagate. PG remains source of truth; the
+  `scripts/backfill_memory_qdrant_status_payload.py` script stays as
+  the long-tail safety net. No migration, no new config flags.
 - feat: Memory MCP lifecycle-status filter + review queue tools (MTRNIX-314).
   `memory_search` and `memory_list` now accept a `status` param (default
   `["active"]`, pass `["all"]` to disable). Two new MCP tools —

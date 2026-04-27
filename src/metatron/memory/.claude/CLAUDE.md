@@ -83,10 +83,36 @@ Reconciler, FreshnessMonitor, Curator), and the `FreshnessTarget` protocol in
 over the target kind. This subtree keeps only the memory-specific glue:
 - `target_memory.py` — `MemoryTarget` adapter binding the pipeline to
   `MemoryPostgresStore` + `MemoryQdrantStore` + `memory_graph` + `RedisSessionCache`.
+  `sync_downstream_stores(ws, target_id, *, status, freshness_score)` —
+  MTRNIX-322: best-effort writes `{"status": status.value}` onto the
+  per-workspace memory Qdrant point via `MemoryQdrantStore.update_payload`.
+  Failures are logged at WARNING, counted on
+  `freshness_qdrant_sync_failed_total{target_kind="memory_record",stage="sync_downstream"}`,
+  and never propagate. PG remains source of truth; the backfill script at
+  `scripts/backfill_memory_qdrant_status_payload.py` is the long-tail safety net.
+  Callers: `FreshnessMonitor` (already wired in MTRNIX-313), `Curator`
+  (MTRNIX-322), `apply_decision` mark_stale branch (MTRNIX-322).
+  `list_stale_candidates(ws, *, older_than, limit)` — MTRNIX-316:
+  delegates to `MemoryPostgresStore.list_stale_candidates` for the
+  scheduled-scan safety net. Returns non-terminal rows older than
+  `older_than`, ordered ASC by `updated_at`.
 - `producer.py` — memory-side enqueue hook (unchanged signature).
-- `worker.py` / `__main__.py` — worker entry point; now instantiates both a
-  memory and (when `freshness_kb_enabled`) a KB pipeline and dispatches jobs
-  by `target_kind`.
+- `worker.py` / `__main__.py` — worker entry point. Instantiates both a
+  memory and (when `freshness_kb_enabled`) a KB pipeline and dispatches
+  jobs by `target_kind`. **MTRNIX-316** adds per-worker processing-list
+  reclaim + periodic scheduled scan: each worker claims a
+  `worker_id = {hostname}:{pid}:{short-uuid}` at bootstrap, maintains
+  `freshness:{env}:processing:{worker_id}` and `freshness:{env}:heartbeat:{worker_id}`,
+  and every `METATRON_FRESHNESS_RECLAIM_INTERVAL_ITERATIONS` iterations
+  drains any orphaned peer's processing list back to the main queue via
+  `reclaim_worker_orphans`. SIGKILL mid-batch no longer loses jobs.
+  Scheduled scan (memory only in MTRNIX-316; KB deferred) enqueues
+  synthetic `scheduled_scan` jobs for records that never received a
+  write-triggered freshness event. Test-only env vars for the SIGKILL
+  integration harness: `METATRON_FRESHNESS_TEST_WORKER_ID` (pins the
+  worker id so key assertions are deterministic),
+  `METATRON_FRESHNESS_TEST_PROCESS_SLEEP_MS` (widens the LMOVE → LREM
+  window so the kill lands mid-batch). Do not set these in production.
 
 The module's sibling files (`linker.py`, `reconciler.py`, `monitor.py`,
 `curator.py`, `coordination.py`, `decision_engine.py`, `metrics.py`) are now

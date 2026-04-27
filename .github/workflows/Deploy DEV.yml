@@ -33,6 +33,30 @@ jobs:
             -i /tmp/ssh_key \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_DEV }} \
             "sudo whoami && echo '✅ Sudo works' || echo '❌ Sudo failed'"
+
+    - name: Create .env file on remote server
+      run: |
+        # Pass content directly via pipe to avoid any shell interpretation
+        echo "${{ secrets.ENV_FILE_DEV }}" | ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_DEV }} \
+            "sudo bash -c '
+              # Remove old files
+              rm -f /usr/local/bin/.env /usr/local/bin/.env.p
+              
+              # Read from stdin and write to .env
+              cat > /usr/local/bin/.env
+              
+              # Copy .env -> .env.p
+              cp /usr/local/bin/.env /usr/local/bin/.env.p
+              
+              # Set permissions to 777
+              chmod 777 /usr/local/bin/.env /usr/local/bin/.env.p
+              
+              # Verify file creation
+              echo \"✅ .env files created successfully\"
+              ls -la /usr/local/bin/.env*
+            '"
             
     - name: Deploy application
       run: |

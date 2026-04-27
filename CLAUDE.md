@@ -11,6 +11,8 @@ Python 3.12+, FastAPI + asyncio. Product transitioned (2026-04) from "enterprise
 
 See `docs/HERMES_INTEGRATION.md` for the recommended external-agent setup and `docs/LEGACY.md` for modules being phased out.
 
+**Strategy + ADR log:** `docs/adr/2026-04-25-metatron-strategy.md` is the authoritative snapshot of architectural decisions and the upcoming pilot plan (two teams, Hermes per team, Memory Quality Layer with `kind=fact|preference|pinned`, Agent Context Assembler, open-core split, RBAC plugin frozen as DEPRECATED). Read it for current direction; any conflict between this CLAUDE.md and that ADR is a doc bug — file an issue.
+
 ## Quick Commands
 ```
 make dev              # uvicorn --reload on :8000
@@ -265,6 +267,13 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - METATRON_FRESHNESS_BACKOFF_BASE_SECONDS (2.0) — exponential backoff base when worker errors repeat
 - METATRON_FRESHNESS_BACKOFF_MAX_SECONDS (60.0) — exponential backoff cap
 - METATRON_FRESHNESS_MAX_CONSECUTIVE_ERRORS (10) — consecutive-error count after which worker aborts
+- METATRON_FRESHNESS_HEARTBEAT_TTL_SECONDS (20) — worker heartbeat key TTL; reclaim pass treats missing heartbeat as dead worker (MTRNIX-316)
+- METATRON_FRESHNESS_RECLAIM_INTERVAL_ITERATIONS (30) — cadence of the orphan-reclaim pass inside the worker loop (MTRNIX-316)
+- METATRON_FRESHNESS_SCHEDULED_SCAN_ENABLED (true) — master flag for the safety-net scheduled scan that re-enqueues memory records missing a recent freshness event (MTRNIX-316)
+- METATRON_FRESHNESS_SCHEDULED_SCAN_INTERVAL_SECONDS (3600) — scheduled-scan cadence (MTRNIX-316)
+- METATRON_FRESHNESS_SCAN_BATCH_LIMIT (500) — per-workspace cap on stale candidates the scan enqueues per pass (MTRNIX-316)
+- METATRON_FRESHNESS_DRAIN_LEGACY_AT_STARTUP (false) — one-shot drain of legacy unprefixed Redis keys into env-prefixed keys at worker startup; flip on once per deployment during the env-prefix rollout (MTRNIX-316)
+- METATRON_ENV (unset) — deployment environment tag; when set, freshness Redis keys become `freshness:{env}:queue:...` etc. Empty/unset preserves the Phase A unprefixed shape for backward compat (MTRNIX-316)
 - METATRON_FRESHNESS_KB_ENABLED (false) — KB-side freshness producer flag (MTRNIX-313 Phase B); requires `METATRON_FRESHNESS_ENABLED=true`. When off, the KB producer hook in connector sync is a no-op and the worker's KB pipeline is never invoked
 - METATRON_FRESHNESS_KB_SEARCH_FILTER_ENABLED (false) — retrieval-side ARCHIVED/SUPERSEDED filter pushdown; when on, recall channels combine the filter with `access_filter` via `_combine_filters`
 - METATRON_FRESHNESS_WEIGHT (0.0) — scoring weight for the `freshness` signal in `compute_signal_score`; default 0.0 keeps the formula numerically identical to Phase A
@@ -306,8 +315,11 @@ Today agent memory is not automatically added to /v1/chat/completions context.
 
 ### 3. Raw REST API
 - `/api/v1/memory/*` — agent memory CRUD + hybrid search
-- `/api/v1/agents/*` — agent registry CRUD + lifecycle (start/stop/pause) + versioned config
-  (WS4, MTRNIX-270). Reads gated by `require_viewer`; writes/lifecycle by `require_editor`.
+- `/api/v1/agents/*` — agent registry CRUD + lifecycle (start/stop/pause) + `POST /{id}/restore`
+  (MTRNIX-323 — ARCHIVED → STOPPED) + versioned config (WS4, MTRNIX-270). Reads gated by
+  `require_viewer`; writes/lifecycle by `require_editor`. Lifecycle endpoints enforce a strict
+  state-transition matrix — `/start`, `/stop`, `/pause` reject invalid transitions with 400
+  (`AgentInvalidStateTransitionError`); un-archive is only via `/restore`.
 - `/api/v1/documents`, `/api/v1/search` — document CRUD + search
 - `/api/v1/workspaces`, `/api/v1/connections`, `/api/v1/sync` — admin surfaces
 
@@ -357,6 +369,9 @@ Alembic in `migrations/`. Run `make migrate` after pulling. Create new: `make mi
 - Add a built-in agent chat UI / in-memory session store — user-facing chat is the job of external runtimes (Hermes, OpenWebUI, LibreChat). Any new `/api/v1/chat/*` endpoint or in-memory session store is a red flag. (OpenWebUI bundled mode is supported as a packaged chat front-end — that is a separate concern from us building our own chat backend.)
 - Couple new work to current 3-role RBAC (viewer/editor/admin) — 5-role model (Viewer/Editor/Agent Admin/Company Admin/Super Admin) is the target; discuss before extending
 - Assume "workspace == KB tenant" forever — the agent-era model separates company from agent; `agent_id` is becoming a first-class field in memory records
+- Invest in the **enterprise RBAC plugin** — it is **frozen / DEPRECATED** as of 2026-04-25 (D-014 in the strategy ADR). Its model attaches permissions to ingestion; the correct model attaches permissions to documents/chunks at retrieval time. For multi-team isolation use **workspace isolation** (D-016). Permission Model v2 lives in the backlog with a "first enterprise client" trigger.
+- Treat memory records as flat. The next memory work introduces a `kind` enum (`fact` / `preference` / `pinned`, D-017) — `preference` and `pinned` are always-on, never-vanishing entries injected into the agent prompt without retrieval. New memory features must respect this categorisation; do NOT bury preferences in the same `memory_search` flow as facts.
+- Bypass the **Agent Context Assembler** (D-020) once it lands. Both Hermes (via MCP wrapper) and `/v1/chat/completions` will go through one assembler that imposes `<constitution>` / `<preferences>` / `<relevant_memories>` / `<relevant_knowledge>` section boundaries. New consumers must use it; ad-hoc prompt assembly is forbidden.
 
 ## Agent Teams
 

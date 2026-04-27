@@ -4,6 +4,16 @@ Deferred items from **MTRNIX-314** (Memory MCP lifecycle-status filter + review 
 tools, merged 2026-04-22, PR #86). Captured here rather than filed as Jira tickets so
 the team can triage together before committing.
 
+> **Strategic context (2026-04-25):** the broader memory roadmap is now driven by
+> `docs/adr/2026-04-25-metatron-strategy.md` §3 ("Memory Quality Layer"). The
+> upcoming work introduces a `memory_records.kind` enum (`fact` / `preference` /
+> `pinned`) and an Agent Context Assembler that injects preferences and pinned
+> entries into every agent prompt without retrieval. Items in this file remain
+> valid follow-ups; cross-check against the strategy doc when triaging — some
+> may be subsumed (e.g. `merge_into:<id>` content/tag merge in §2 partially
+> overlaps with assertion-lifecycle auto-promote semantics planned post-pilot).
+> Strategy doc takes precedence on direction.
+
 ## 1. Admin-only `memory_force_delete` MCP tool
 
 **Scope:** a new MCP tool that performs the hard-delete path currently missing from
@@ -68,45 +78,37 @@ across the repo (see root CLAUDE.md "Do NOT" section). When it lands:
 per-agent role claim system that does not exist yet. Wait for the broader RBAC
 migration rather than building a one-off for this tool.
 
-## 4. Worker-driven proactive Qdrant status sync
+## 4. KB scheduled scan (MTRNIX-316 follow-up)
 
-**Scope:** make freshness worker stage transitions that write
-`memory_records.status` push the new status to the Qdrant point payload
-synchronously, instead of relying on lazy `update_payload` writes.
+MTRNIX-316 added a scheduled-scan safety net to the freshness worker — a
+periodic pass that enqueues stale records the write-triggered producer
+missed. Scope was explicitly limited to the memory target. The KB target's
+`RawDocumentTarget.list_stale_candidates` returns an empty list today, so
+the shared `ScheduledScan` orchestrator is a no-op for `raw_document`.
 
-**Current state:** `MemoryService.resolve_review` does do a best-effort
-`qdrant.update_payload({"status": new_status.value})` immediately after the PG
-transition — so **MCP-triggered** transitions are always in sync. But
-**worker-triggered** transitions (Curator promotion, Reconciler duplicate marks,
-FreshnessMonitor stale flagging, DecisionEngine auto-apply) currently write only
-to PG. The Qdrant `status` payload catches up on the next `upsert` — which might
-never happen for a stable record.
+**Follow-up sketch:**
 
-**Impact:** a stale record written only in PG still appears in
-`metatron_memory_search` results because the Qdrant `must_not` filter can't see
-its PG-only new status. The graph-leg post-filter via `get_many_statuses` catches
-some of these, but the **Qdrant dense leg itself** is the primary recall channel
-and it is ignoring these records' status.
+- Extend `RawDocumentTarget.list_stale_candidates` to SELECT from
+  `raw_documents` where `status NOT IN ('archived', 'superseded')` AND
+  `(last_freshness_run_at IS NULL OR last_freshness_run_at < :older_than)`.
+  The column already exists (migration 018) so no new schema needed.
+- Wire a second `ScheduledScan` instance in
+  `metatron.memory.freshness.worker._build_worker` alongside the memory
+  one, using `settings.freshness_kb_stale_after_days` (already 90 by
+  default).
+- Gate behind `METATRON_FRESHNESS_KB_ENABLED` so the KB side stays opt-in.
+- Integration test analogous to
+  `tests/integration/memory/freshness/test_scheduled_scan_enqueues_stale.py`
+  against the KB path.
 
-**Fix options:**
-- A: make every freshness stage that mutates `memory_records.status` call the
-  same `qdrant.update_payload` best-effort update. ~4 call sites.
-- B: run `scripts/backfill_memory_qdrant_status_payload.py` on a cron (e.g. once
-  a day). Simpler operationally but has a lag window.
-- C: event-bus subscription on `FRESHNESS_DECISION_APPLIED` that does the
-  Qdrant update. Cleanest architecture but requires event-bus wiring in the
-  worker process (today the worker writes events as rows but may not publish on
-  the in-process bus).
-
-**Recommendation:** Option A is cheap and correct. Pair it with the backfill
-script as a safety net for records that existed before MTRNIX-314.
+**Priority:** low. KB ingest already produces write-triggered jobs when
+connectors sync, so the hot path is covered. The scan is a rescue for
+records that never sync — valuable long-term but not a pre-prod gate.
 
 ## Open question — should any of these be filed as tickets now?
 
-The default answer is probably "yes for #4, maybe #1, not #2/#3":
+The default answer is probably "maybe #1, not #2/#3":
 
-- **#4** has a real correctness impact today (stale records leak into search
-  despite the filter) — file a small ticket, couple of hours of work.
 - **#1** becomes interesting only when an ops team starts hitting ARCHIVED-record
   pile-up. Defer until there is a concrete request.
 - **#2** is UX speculation — wait for Control Center.
