@@ -295,6 +295,12 @@ class Settings(BaseSettings):
         description="KB stale threshold in days (default 90 vs. memory's 30).",
     )
 
+    # --- Agent activity logging (WS4 Stage 6) ---
+    activity_log_enabled: bool = Field(
+        default=True,
+        alias="METATRON_ACTIVITY_LOG_ENABLED",
+    )
+
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS_ORIGINS comma-separated string into a list."""

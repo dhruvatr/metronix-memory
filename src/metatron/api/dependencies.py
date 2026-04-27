@@ -138,12 +138,14 @@ def get_memory_service(request: Request) -> MemoryService:
     )
     search = MemorySearchService(qdrant=qdrant_store, redis=redis_cache)
 
+    plugin_manager = request.app.state.plugin_manager
     service = MemoryService(
         redis_cache=redis_cache,
         qdrant_store=qdrant_store,
         pg_store=pg_store,
         workspace_id=workspace_id,
         search=search,
+        event_bus=plugin_manager.get_event_bus(),
     )
 
     services[workspace_id] = service
@@ -184,8 +186,13 @@ def get_agent_registry_service(request: Request) -> AgentRegistryService:
         request.app.state.memory_pg_engine = engine
     request.app.state.agents_pg_engine = engine
 
+    plugin_manager = request.app.state.plugin_manager
     repo = AgentPersistence(engine)
-    service = AgentRegistryService(repo, workspace_id=workspace_id)
+    service = AgentRegistryService(
+        repo,
+        workspace_id=workspace_id,
+        event_bus=plugin_manager.get_event_bus(),
+    )
 
     services[workspace_id] = service
     request.app.state.agent_registry_services = services

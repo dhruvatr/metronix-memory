@@ -128,6 +128,8 @@ src/metatron/
 │                              #   AgentStatus), service.py (AgentRegistryService), persistence.py
 │                              #   (PG store). CRUD + lifecycle flag + versioned config. Hermes
 │                              #   agent identity. Governance/5-role RBAC deferred to CC plugin.
+├── activity/                  # L3 — [WS4 S6] observability foundation: logger (EventBus subscriber),
+│                              #   service (read facade), contextvar for agent_id.
 ├── benchmarker/               # L2 — [OPTIONAL] api/, db/, schemas/, services/metrics/ — dev eval tool
 └── scripts/                   # graph_audit.py, run_eval.py, grid_search_weights.py,
                                # graph_rebuild.py, graph_process.py
@@ -249,6 +251,7 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - MEMORY_SEARCH_GRAPH_WEIGHT (0.3) — blend weight for Neo4j graph-presence signal (scaled by importance_score)
 - MEMORY_SEARCH_SESSION_WEIGHT (0.1) — blend weight for Redis session-cache presence boost
 - MEMORY_SEARCH_TOP_K_MULTIPLIER (3) — per-leg fetch multiplier for dedup/filter headroom
+- METATRON_ACTIVITY_LOG_ENABLED (true) — WS4 S6 observability foundation. When false, ActivityLogger is not constructed and /activity endpoints return 503.
 - METATRON_FRESHNESS_ENABLED (false) — master flag for freshness worker (MTRNIX-304 Phase A); when false, producer is a no-op and `python -m metatron.memory.freshness` exits immediately
 - METATRON_FRESHNESS_POLL_SECONDS (2.0) — worker poll interval when queue is idle
 - METATRON_FRESHNESS_MAX_JOBS_PER_ITERATION (20) — max jobs drained per bounded-loop iteration

@@ -24,10 +24,12 @@ import structlog
 
 from metatron.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
 from metatron.agents.persistence import _AgentNameConflictError
+from metatron.core.events import AGENT_CREATED, AGENT_DELETED, AGENT_STATUS_CHANGED, AGENT_UPDATED
 from metatron.core.exceptions import MetatronError
 
 if TYPE_CHECKING:
     from metatron.agents.persistence import AgentPersistence
+    from metatron.core.events import EventBus
 
 logger = structlog.get_logger(__name__)
 
@@ -76,9 +78,20 @@ class AgentRegistryService:
     service on ``app.state.agent_registry_services`` keyed by workspace.
     """
 
-    def __init__(self, repo: AgentPersistence, *, workspace_id: str) -> None:
+    def __init__(
+        self,
+        repo: AgentPersistence,
+        *,
+        workspace_id: str,
+        event_bus: EventBus | None = None,
+    ) -> None:
         self._repo = repo
         self._workspace_id = workspace_id
+        self._event_bus = event_bus
+        # Set on first skipped emission so the warning fires exactly once
+        # per service instance — surfaces a misconfigured deployment without
+        # flooding the log with one entry per emit.
+        self._warned_no_bus = False
 
     @property
     def workspace_id(self) -> str:
@@ -87,6 +100,19 @@ class AgentRegistryService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _emit(self, name: str, payload: dict[str, Any]) -> None:
+        """Fire an event on the bus; no-op when bus is not wired."""
+        if self._event_bus is None:
+            if not self._warned_no_bus:
+                logger.warning(
+                    "event_bus_not_wired",
+                    service="AgentRegistryService",
+                    workspace_id=self._workspace_id,
+                )
+                self._warned_no_bus = True
+            return
+        await self._event_bus.emit(name, payload)
 
     @staticmethod
     def _build_snapshot(record: AgentRecord) -> dict[str, Any]:
@@ -134,9 +160,20 @@ class AgentRegistryService:
         )
         record.current_config = self._build_snapshot(record)
         try:
-            return await self._repo.save_new(record)
+            saved = await self._repo.save_new(record)
         except _AgentNameConflictError as exc:
             raise AgentNameConflictError(str(exc)) from exc
+
+        await self._emit(
+            AGENT_CREATED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": saved.id,
+                "config_version": saved.config_version,
+                "created_by": saved.created_by,
+            },
+        )
+        return saved
 
     async def get_agent(self, agent_id: str) -> AgentRecord:
         """Fetch an agent by id. Raises :class:`AgentNotFoundError`."""
@@ -221,6 +258,16 @@ class AgentRegistryService:
         if updated is None:
             # Existed on pre-check, vanished under FOR UPDATE — treat as 404.
             raise AgentNotFoundError(f"agent not found: {agent_id!r}")
+
+        await self._emit(
+            AGENT_UPDATED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": updated.id,
+                "config_version": updated.config_version,
+                "changed_by": changed_by,
+            },
+        )
         return updated
 
     async def delete_agent(self, agent_id: str) -> bool:
@@ -228,13 +275,30 @@ class AgentRegistryService:
 
         Returns True if the agent was found and archived; False if it did
         not exist.
+
+        Note: this method calls ``_repo.update_status`` directly (NOT via
+        ``_transition_status``) so that only ``AGENT_DELETED`` is emitted —
+        never ``AGENT_STATUS_CHANGED``.  This satisfies the W5 spec rule.
         """
+        existing = await self._repo.get(self._workspace_id, agent_id)
+        if existing is None:
+            return False
         record = await self._repo.update_status(
             self._workspace_id,
             agent_id,
             AgentStatus.ARCHIVED,
         )
-        return record is not None
+        if record is None:
+            return False
+        await self._emit(
+            AGENT_DELETED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": agent_id,
+                "changed_by": "",
+            },
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Lifecycle (no version bump)
@@ -260,6 +324,16 @@ class AgentRegistryService:
         if record is None:
             # Race window: row existed at get, vanished under update. Treat as 404.
             raise AgentNotFoundError(f"agent not found: {agent_id!r}")
+        await self._emit(
+            AGENT_STATUS_CHANGED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": agent_id,
+                "old_status": existing.status.value,
+                "new_status": status.value,
+                "changed_by": "",
+            },
+        )
         return record
 
     async def restore_agent(self, agent_id: str) -> AgentRecord:
@@ -294,6 +368,16 @@ class AgentRegistryService:
             raise AgentNameConflictError(str(exc)) from exc
         if record is None:
             raise AgentNotFoundError(f"agent not found: {agent_id!r}")
+        await self._emit(
+            AGENT_STATUS_CHANGED,
+            {
+                "workspace_id": self._workspace_id,
+                "agent_id": agent_id,
+                "old_status": AgentStatus.ARCHIVED.value,
+                "new_status": AgentStatus.STOPPED.value,
+                "changed_by": "",
+            },
+        )
         return record
 
     # ------------------------------------------------------------------

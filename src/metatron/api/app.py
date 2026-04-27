@@ -269,6 +269,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     plugin_manager.get_event_bus().subscribe(SYNC_COMPLETED, on_sync_completed)
 
+    # --- Subscribe activity logger (WS4 S6) ---
+    if settings.activity_log_enabled:
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from metatron.activity.logger import ActivityLogger
+        from metatron.storage.activity_pg import ActivityStore
+
+        # Reuse/initialize the shared PG engine stored on app.state (also used by
+        # memory/ and agents/ dependencies). Create on demand if no earlier
+        # dependency has run yet.
+        engine = getattr(app.state, "memory_pg_engine", None)
+        if engine is None:
+            engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
+            app.state.memory_pg_engine = engine
+
+        activity_store = ActivityStore(engine)
+        activity_logger_instance = ActivityLogger(store=activity_store)
+        activity_logger_instance.subscribe(plugin_manager.get_event_bus())
+        app.state.activity_store = activity_store
+        app.state.activity_logger = activity_logger_instance
+        logger.info("activity_logger.subscribed")
+
+        # Point the MCP tool wrapper at this bus (WS4 S6).
+        from metatron.mcp import server as _mcp_mod
+
+        _mcp_mod.set_activity_bus_getter(lambda: plugin_manager.get_event_bus())
+
     # Enterprise plugin requires auth — auto-enable if any plugin loaded
     if plugin_manager.loaded_plugins and not settings.auth_enabled:
         settings = settings.model_copy(update={"auth_enabled": True})
@@ -295,6 +322,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Auth middleware — added last, becomes outermost, runs first on every request
     app.add_middleware(OptionalAuthMiddleware)
+
+    from metatron.api.middleware.agent_id import AgentIdContextMiddleware
+
+    app.add_middleware(AgentIdContextMiddleware)
 
     # Register core route modules
     app.include_router(health.router)

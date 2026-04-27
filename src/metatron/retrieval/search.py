@@ -7,10 +7,15 @@ import json
 import re
 from collections import Counter
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import structlog
 
+if TYPE_CHECKING:
+    from metatron.core.events import EventBus
+
 from metatron.core.config import Settings
+from metatron.core.events import DOCUMENT_ACCESSED, QUERY_EXECUTED
 from metatron.ingestion.processors.dates import (
     extract_date_from_text,
     extract_date_range,
@@ -798,6 +803,69 @@ async def fast_search(
     return [mr["memory"] for mr in merged[:top_k]]
 
 
+async def _emit_search_events(
+    *,
+    bus: EventBus | None,
+    workspace_id: str,
+    agent_id: str | None,
+    session_id: str | None,
+    source: str,
+    query: str,
+    top_k: int,
+    result_count: int,
+    duration_ms: int,
+    docs_by_channel: dict[str, list[str]],
+) -> None:
+    """Emit QUERY_EXECUTED + per-channel DOCUMENT_ACCESSED with a shared correlation_id.
+
+    No-ops when ``bus`` is None or ``agent_id`` could not be resolved.
+    Empty channels produce no DOCUMENT_ACCESSED event.
+    """
+    if bus is None or not agent_id:
+        return
+    from uuid import uuid4
+
+    correlation_id = uuid4().hex
+    await bus.emit(
+        QUERY_EXECUTED,
+        {
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "correlation_id": correlation_id,
+            "query": query[:256],
+            "top_k": top_k,
+            "result_count": result_count,
+            "duration_ms": duration_ms,
+            "source": source,
+        },
+    )
+    for channel, doc_ids in docs_by_channel.items():
+        if not doc_ids:
+            continue
+        original_count = len(doc_ids)
+        capped_ids = list(doc_ids)[:50]
+        if original_count > 50:
+            logger.warning(
+                "activity_log.document_ids_capped",
+                channel=channel,
+                original_count=original_count,
+                cap=50,
+                correlation_id=correlation_id,
+            )
+        await bus.emit(
+            DOCUMENT_ACCESSED,
+            {
+                "workspace_id": workspace_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "correlation_id": correlation_id,
+                "document_ids": capped_ids,
+                "channel": channel,
+            },
+        )
+
+
 @timed("hybrid_search_and_answer")
 async def hybrid_search_and_answer(  # noqa: C901
     query: str,
@@ -807,11 +875,17 @@ async def hybrid_search_and_answer(  # noqa: C901
     intent_query: str | None = None,
     return_trace: bool = False,
     plugin_manager=None,
+    *,
+    source: str = "rest",
+    session_id: str | None = None,
 ) -> str | dict:
     """End-to-end hybrid search and answer generation (async)."""
     import time
 
+    from metatron.activity.context import current_agent_id
+
     start_time = time.time()
+    agent_id = current_agent_id.get()
 
     raw_query = (intent_query or query or "").strip()
     # Resolve contextual references (relative dates, pronouns) using the full
@@ -905,6 +979,13 @@ async def hybrid_search_and_answer(  # noqa: C901
 
     # -- Merge and deduplicate across channels --
     merged = merge_channels([dense_results, exact_results, metadata_results, graph_results])
+
+    # -- Build per-channel doc provenance for activity logging (DOCUMENT_ACCESSED) --
+    # MergedResult.channels is list[str]; chunk_id is the stable identifier.
+    docs_by_channel: dict[str, list[str]] = {}
+    for mr in merged:
+        for ch in mr["channels"]:
+            docs_by_channel.setdefault(ch, []).append(mr["chunk_id"])
 
     # -- Multi-signal scoring --
     type_cache: dict[str, str] = {}
@@ -1213,6 +1294,25 @@ async def hybrid_search_and_answer(  # noqa: C901
                 )
         except Exception as e:
             logger.warning("search.trace_logging_failed", error=str(e))
+
+    # -- Activity logging: emit QUERY_EXECUTED + DOCUMENT_ACCESSED events --
+    try:
+        _bus = plugin_manager.get_event_bus() if plugin_manager is not None else None
+        _duration_ms = int((time.time() - start_time) * 1000)
+        await _emit_search_events(
+            bus=_bus,
+            workspace_id=workspace_id or "",
+            agent_id=agent_id,
+            session_id=session_id,
+            source=source,
+            query=query,
+            top_k=k,
+            result_count=len(base),
+            duration_ms=_duration_ms,
+            docs_by_channel=docs_by_channel,
+        )
+    except Exception:  # noqa: BLE001 — observability must never break search
+        logger.exception("activity_log.search_emit_failed")
 
     return result
 

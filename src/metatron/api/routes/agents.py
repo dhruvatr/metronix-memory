@@ -18,9 +18,12 @@ from datetime import datetime  # noqa: TC003 — runtime for pydantic field vali
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from metatron.activity.service import (
+    ActivityService,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+)
 from metatron.agents.models import (
     AgentConfigVersion,  # noqa: TC001 — helper annotations need runtime resolution
     AgentRecord,  # noqa: TC001 — helper annotations need runtime resolution
@@ -425,3 +428,128 @@ async def list_agent_versions(
         offset=offset,
         has_more=has_more,
     )
+
+
+# ---------------------------------------------------------------------------
+# Activity (WS4 S6)
+# ---------------------------------------------------------------------------
+
+
+class ActivityEventResponse(BaseModel):
+    id: int
+    workspace_id: str
+    agent_id: str
+    session_id: str | None
+    event_type: str
+    event_data: dict[str, Any]
+    created_at: datetime
+
+
+class ActivityListResponse(BaseModel):
+    events: list[ActivityEventResponse]
+    count: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+class ActivitySummaryResponse(BaseModel):
+    period: str
+    since: str
+    until: str
+    total_events: int
+    counts_by_event_type: dict[str, int]
+    counts_by_day: list[dict[str, Any]]
+
+
+def get_activity_service(request: Request) -> ActivityService:
+    """Per-workspace ActivityService, reusing the store wired in create_app()."""
+    from metatron.api.dependencies import _resolve_workspace_id
+
+    store = getattr(request.app.state, "activity_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="activity log disabled")
+    workspace_id = _resolve_workspace_id(request)
+    return ActivityService(store=store, workspace_id=workspace_id)
+
+
+@router.get(
+    "/{agent_id}/activity",
+    response_model=ActivityListResponse,
+)
+async def get_agent_activity(
+    agent_id: str,
+    user: Annotated[User, Depends(require_viewer)],  # noqa: ARG001
+    reg_service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
+    act_service: Annotated[ActivityService, Depends(get_activity_service)],
+    since: datetime | None = None,
+    until: datetime | None = None,
+    event_type: list[str] | None = Query(None),  # noqa: B008
+    session_id: str | None = Query(None, min_length=1, max_length=64),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0, le=10000),
+) -> ActivityListResponse:
+    """Paginated activity timeline for a single agent."""
+    try:
+        agent = await reg_service.get_agent(agent_id)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    # Defence-in-depth: registry already filters by workspace, but explicit
+    # cross-check guarantees we never leak activity from a foreign workspace
+    # if the registry layer ever regresses.
+    if agent.workspace_id != reg_service.workspace_id:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id!r}")
+
+    events, has_more = await act_service.list_for_agent(
+        agent_id=agent_id,
+        since=since,
+        until=until,
+        event_types=event_type,
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+    )
+    return ActivityListResponse(
+        events=[
+            ActivityEventResponse(
+                id=int(r["id"]),
+                workspace_id=r["workspace_id"],
+                agent_id=r["agent_id"],
+                session_id=r["session_id"],
+                event_type=r["event_type"],
+                event_data=dict(r["event_data"] or {}),
+                created_at=r["created_at"],
+            )
+            for r in events
+        ],
+        count=len(events),
+        limit=limit,
+        offset=offset,
+        has_more=has_more,
+    )
+
+
+@router.get(
+    "/{agent_id}/activity/summary",
+    response_model=ActivitySummaryResponse,
+)
+async def get_agent_activity_summary(
+    agent_id: str,
+    user: Annotated[User, Depends(require_viewer)],  # noqa: ARG001
+    reg_service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
+    act_service: Annotated[ActivityService, Depends(get_activity_service)],
+    period: str = Query("7d"),
+) -> ActivitySummaryResponse:
+    """Aggregated stats over `period` (1d | 7d | 30d | 90d)."""
+    try:
+        agent = await reg_service.get_agent(agent_id)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    if agent.workspace_id != reg_service.workspace_id:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id!r}")
+
+    try:
+        payload = await act_service.summary_for_agent(agent_id=agent_id, period=period)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return ActivitySummaryResponse(**payload)

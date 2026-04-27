@@ -356,6 +356,7 @@ async def _stream_response(
             workspace_id=workspace_id,
             intent_query=user_message,
             plugin_manager=plugin_manager,
+            source="oai_compat",
         )
     except Exception as exc:
         logger.error("openai_compat.stream.error", error=str(exc), exc_info=True)
@@ -444,6 +445,7 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
             workspace_id=workspace_id,
             intent_query=user_message,
             plugin_manager=plugin_manager,
+            source="oai_compat",
         )
     except Exception as exc:
         logger.error("openai_compat.search_error", error=str(exc), exc_info=True)
