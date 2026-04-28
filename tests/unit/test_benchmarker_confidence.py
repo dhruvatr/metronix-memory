@@ -6,17 +6,17 @@ ConfidenceResult with the same length as the input, with scores in [0, 1].
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from metatron.benchmarker.schemas.test_result import ConfidenceResult
 from metatron.benchmarker.services.metrics.confidence import ConfidenceMetric
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_metric() -> ConfidenceMetric:
     """Create a ConfidenceMetric with test defaults."""
@@ -49,7 +49,9 @@ class TestConfidenceMetricSingleItem:
         metric = _make_metric()
 
         with patch.object(metric, "_calculate_single", new_callable=AsyncMock) as mock_calc:
-            mock_calc.return_value = ConfidenceResult(score=0.95, avg_similarity=0.9, num_responses=5)
+            mock_calc.return_value = ConfidenceResult(
+                score=0.95, avg_similarity=0.9, num_responses=5
+            )
             results = await metric.calculate_batch(["What is X?"], workspace_id="ws1")
 
         assert len(results) == 1
@@ -66,7 +68,9 @@ class TestConfidenceMetricMultipleItems:
         questions = ["Q1?", "Q2?", "Q3?"]
 
         with patch.object(metric, "_calculate_single", new_callable=AsyncMock) as mock_calc:
-            mock_calc.return_value = ConfidenceResult(score=0.8, avg_similarity=0.6, num_responses=5)
+            mock_calc.return_value = ConfidenceResult(
+                score=0.8, avg_similarity=0.6, num_responses=5
+            )
             results = await metric.calculate_batch(questions, workspace_id="ws1")
 
         assert len(results) == len(questions)
@@ -84,8 +88,10 @@ class TestConfidenceMetricCalculateSingle:
 
         # Mock response generation — return 5 distinct answers
         responses = [f"Answer {i}" for i in range(5)]
-        with patch.object(metric, "_generate_responses", new_callable=AsyncMock) as mock_gen, \
-             patch.object(metric, "_get_embeddings_batch", new_callable=AsyncMock) as mock_emb:
+        with (
+            patch.object(metric, "_generate_responses", new_callable=AsyncMock) as mock_gen,
+            patch.object(metric, "_get_embeddings_batch", new_callable=AsyncMock) as mock_emb,
+        ):
             mock_gen.return_value = responses
             # Return similar embeddings → high confidence
             mock_emb.return_value = [[0.9, 0.1, 0.0]] * 5

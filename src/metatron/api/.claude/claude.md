@@ -24,7 +24,7 @@ isolated testing. Mounts MCP server at `/mcp`.
 2. Auto-run DB migrations via `asyncio.to_thread(run_migrations_sync, ...)`
 3. `mcp_server.session_manager.run()` (async context manager)
 
-**Note:** Store initialization (Postgres, Qdrant, Memgraph, Ollama) is TODOed in
+**Note:** Store initialization (Postgres, Qdrant, Neo4j, Ollama) is TODOed in
 lifespan — currently all `get_postgres/vector/graph/llm` dependencies raise `NotImplementedError`.
 
 `main()` — entry point for `python -m metatron.api.app`, runs uvicorn with `factory=True`.
@@ -51,20 +51,20 @@ Shared `Depends()` functions:
 
 ### `routes/health.py`
 `GET /health` — liveness: `{"status": "ok"}`
-`GET /ready` — readiness: checks Qdrant, Memgraph, Ollama async via `asyncio.to_thread()`
+`GET /ready` — readiness: checks Qdrant, Neo4j, Ollama async via `asyncio.to_thread()`
 
 ### `routes/auth.py`
 `POST /api/v1/auth/login` — shared-password login, returns JWT token.
 Password validated against `Settings.auth_password`. Issues token for `"admin"` user with `workspace_ids=["*"]`.
 
 ### `routes/chat.py`
-`POST /api/v1/chat` — main Q&A endpoint. Calls `hybrid_search_and_answer()` via `asyncio.to_thread()`.
+`POST /api/v1/chat` — main Q&A endpoint. Calls `await hybrid_search_and_answer()` (async).
 `POST /api/v1/chat/stream` — SSE streaming via `EventSourceResponse`.
 `POST /api/v1/upload` — file upload + immediate ingestion into workspace.
 In-memory conversation history keyed by `user_id` (thread-safe with `threading.Lock`).
 
 ### `routes/admin.py`
-`GET /api/v1/admin/cleanup/preview` — show what would be deleted (Qdrant + Memgraph)
+`GET /api/v1/admin/cleanup/preview` — show what would be deleted (Qdrant + Neo4j)
 `POST /api/v1/admin/cleanup` — delete all data (requires `ALLOW_CLEANUP=true`)
 `POST /api/v1/admin/cleanup/{workspace_id}` — delete workspace data
 
@@ -80,7 +80,7 @@ Full CRUD for DB-based connections + sync trigger. Uses `PostgresStore` for pers
 - `PUT /api/v1/connections/{id}` — update name/config/enabled (handles `***` secret merge)
 - `DELETE /api/v1/connections/{id}` — delete (204, workspace-scoped)
 - `POST /api/v1/connections/{id}/test` — test connection via `connector.configure()`. Updates error_message on failure
-- `POST /api/v1/connections/{id}/sync` — trigger background sync from DB config (connectors only, not channels)
+- `POST /api/v1/connections/{id}/sync` — trigger background sync from DB config (connectors only, not channels). After sync, triggers `process_all_unsynced_graphs()` for decoupled graph extraction.
 
 **Helpers:**
 - `_get_workspace_id(request)` — extracts from `request.state.user` or falls back to `settings.default_workspace_id`
@@ -102,7 +102,7 @@ Full CRUD for DB-based connections + sync trigger. Uses `PostgresStore` for pers
 ### `routes/graph.py`
 `GET /api/v1/graph/overview` — all nodes/edges for workspace (max 500 nodes)
 `GET /api/v1/graph/expand/{node_id}` — neighborhood expansion for a node
-Uses Memgraph directly (neo4j driver). Handles `ServiceUnavailable`/`SessionExpired`.
+Uses Neo4j directly (neo4j driver). Handles `ServiceUnavailable`/`SessionExpired`.
 
 ### `routes/skills.py`
 `GET/POST /api/v1/skills` — list / create skills
@@ -113,6 +113,12 @@ Uses Memgraph directly (neo4j driver). Handles `ServiceUnavailable`/`SessionExpi
 `GET/PUT/DELETE /api/v1/workspaces/{id}` — read / update / delete
 Uses `get_workspace_manager()` singleton.
 
+### `routes/users.py`
+`GET /api/v1/users/platform-mappings` — list all platform mappings
+`GET /api/v1/users/{user_id}/platform-mappings` — mappings for a specific user
+`PUT /api/v1/users/{user_id}/platform-mappings` — update platform mapping
+`DELETE /api/v1/users/{user_id}/platform-mappings/{platform}/{platform_user_id}` — delete mapping
+
 ### `routes/sync.py`
 `GET /api/v1/sync/status` — sync status per connection (TODO stub)
 `GET /api/v1/sync/logs` — recent sync log entries (TODO stub)
@@ -120,9 +126,37 @@ Uses `get_workspace_manager()` singleton.
 ### `routes/benchmarker.py`
 `POST /api/v1/query/trace` — run query with 7-step timing trace for benchmarking.
 
+### `routes/openai_compat.py`
+OpenAI-compatible API endpoints for Open WebUI integration:
+- `GET /v1/models` — list models (one per workspace)
+- `POST /v1/chat/completions` — chat completions (streaming + non-streaming)
+- `GET /v1/openapi.json` — stub for connection verification
+
+### `routes/openwebui_import.py`
+`POST /api/v1/admin/import-openwebui-users` — import users from existing Open WebUI instance.
+
+### `routes/config.py`
+`GET /api/v1/config/features` — feature flag status for UI.
+
 ### `routes/finops.py`
 `GET /api/v1/finops/time-savings` — time savings metrics.
 See `routes/.claude/finops.md` for full documentation.
+
+### `routes/memory.py`
+Memory REST API endpoints (workspace-scoped, RBAC-gated):
+
+| Method | Path | RBAC | Purpose |
+|--------|------|------|---------|
+| POST | `/api/v1/memory/records` | editor+ | Create record — `service.save()` (PG→Qdrant→Neo4j) or `service.cache_session()` for SESSION scope. Returns 201 |
+| POST | `/api/v1/memory/search` | viewer+ | Hybrid search via `MemorySearchService.hybrid_search()`. 503 if search not configured |
+| GET | `/api/v1/memory/records` | viewer+ | List records. Query params: `agent_id`, `scope`, `session_id`, `limit` (1..200), `offset` (0..10000). Routes to `list_session` or `list_records` |
+| DELETE | `/api/v1/memory/records/{id}` | editor+ | Delete record via `service.delete()`. 204 on success, 404 if not in PG |
+
+**DI helper:** `get_memory_service(request)` — per-workspace cache on `app.state.memory_services`; shared PG engine on `app.state.memory_pg_engine`.
+
+**Workspace resolution:** uses `get_workspace_id(request)` exported from `api.dependencies` (workspace always derived from auth, never from body/query).
+
+**Schemas:** pydantic v2 request/response models live inline in `routes/memory.py` per codebase convention.
 
 ### `routes/dashboard/__init__.py`
 Aggregates 3 sub-routers under `/api/v1/dashboard`.

@@ -37,9 +37,25 @@ FastAPI `Depends()` helpers for route protection.
 never leaks raw exceptions to HTTP responses.
 
 ### `user_mapping.py`
-`map_platform_user(channel, channel_user_id, store, auto_create=True) -> User | None`
-— Maps Telegram/Slack platform identity to internal `User`. Currently **`NotImplementedError`** stub.
-Docstring documents the intended DB lookup against `user_platform_mappings` table.
+`PlatformUserMapper` — resolves channel identities (Telegram/Slack/Discord) to internal Users.
+Uses `user_platform_mappings` table (migration 010).
+
+Key methods:
+- `resolve(platform, platform_user_id, display_name, auto_create) -> User | None` — looks up mapping, auto-creates User if not found
+- `create_mapping(user_id, platform, platform_user_id, display_name)` — explicit mapping creation
+- `list_mappings()` — list all mappings
+- `get_user_mappings(user_id)` — mappings for a specific user
+- `update_mapping(user_id, platform, platform_user_id, display_name)` — update existing
+- `delete_mapping(user_id, platform, platform_user_id)` — remove mapping
+
+Results cached with 30-second TTL (`_CACHE_TTL_SECONDS`).
+
+### `user_store.py`
+`UserStore` — User CRUD against PostgreSQL.
+Used by `user_mapping.py` for auto-creating users.
+
+### `api_key_store.py`
+Personal API key management (`mtk_...` format) for OpenAI-compat endpoints.
 
 ## Key Patterns
 - **`AuthenticationError` stays internal** — only converted to `HTTPException` at the API boundary (dependencies.py), never in jwt.py or rbac.py

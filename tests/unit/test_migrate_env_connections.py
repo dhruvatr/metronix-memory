@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from metatron.storage.migrate_env_connections import (
     _collect_configs_from_env,
-    _ENV_MAPPINGS,
     migrate_env_to_db,
 )
-
 
 # ---------------------------------------------------------------------------
 # _collect_configs_from_env
@@ -181,9 +179,8 @@ class TestMigrateEnvToDb:
     async def test_store_closed_on_error(self, mock_store: AsyncMock) -> None:
         mock_store.list_connections.side_effect = RuntimeError("boom")
         env = {"TELEGRAM_BOT_TOKEN": "tg-tok"}
-        with patch.dict("os.environ", env, clear=True):
-            with pytest.raises(RuntimeError):
-                await migrate_env_to_db("dsn", "ws-1", "fernet-key")
+        with patch.dict("os.environ", env, clear=True), pytest.raises(RuntimeError):
+            await migrate_env_to_db("dsn", "ws-1", "fernet-key")
         mock_store.close.assert_awaited_once()
 
     async def test_uses_schema_label_as_name(self, mock_store: AsyncMock) -> None:

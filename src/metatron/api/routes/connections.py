@@ -17,6 +17,7 @@ from metatron.connectors.schemas import (
     validate_config,
 )
 from metatron.core.config import Settings
+from metatron.core.events import SYNC_COMPLETED, EventBus
 from metatron.core.models import Connection
 from metatron.storage.postgres import PostgresStore
 
@@ -175,7 +176,9 @@ async def _try_start_channel(
 
     try:
         await channel_manager.start_channel(
-            connection_id, connector_type, config,
+            connection_id,
+            connector_type,
+            config,
             workspace_id=workspace_id,
         )
         logger.info(
@@ -266,7 +269,11 @@ async def create_connection(
     schema = CONNECTOR_SCHEMAS.get(body.connector_type)
     if schema and schema.category == "channel":
         await _try_start_channel(
-            request, result["id"], body.connector_type, body.config, ws_id,
+            request,
+            result["id"],
+            body.connector_type,
+            body.config,
+            ws_id,
         )
 
     return ConnectionResponse(**result)
@@ -296,7 +303,8 @@ async def list_connections(
                 detail="category must be 'connector' or 'channel'",
             )
         connections = [
-            c for c in connections
+            c
+            for c in connections
             if CONNECTOR_SCHEMAS.get(c["connector_type"], None)
             and CONNECTOR_SCHEMAS[c["connector_type"]].category == category
         ]
@@ -389,10 +397,12 @@ async def update_connection(
         updates["enabled"] = body.enabled
     if body.config is not None:
         errors = validate_config(
-            existing["connector_type"], body.config,
+            existing["connector_type"],
+            body.config,
         )
         # Allow masked secrets through validation (they'll be merged)
         from metatron.connectors.schemas import SECRET_MASK
+
         if errors:
             # Re-check: are all errors for fields that are masked?
             real_errors = []
@@ -413,18 +423,22 @@ async def update_connection(
                     real_errors.append(err)
             if real_errors:
                 raise HTTPException(
-                    status_code=422, detail="; ".join(real_errors),
+                    status_code=422,
+                    detail="; ".join(real_errors),
                 )
         updates["config"] = body.config
 
     if not updates:
         raise HTTPException(
-            status_code=422, detail="No fields to update",
+            status_code=422,
+            detail="No fields to update",
         )
 
     try:
         result = await store.update_connection(
-            connection_id, updates, fernet_key,
+            connection_id,
+            updates,
+            fernet_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from None
@@ -484,20 +498,14 @@ async def test_connection(
         # Channels don't have a testable configure() flow
         return TestConnectionResponse(
             success=True,
-            message=(
-                "Connection saved "
-                "(test not available for this type)"
-            ),
+            message=("Connection saved (test not available for this type)"),
         )
 
     registry = _get_registry()
     if not registry.is_registered(connector_type):
         return TestConnectionResponse(
             success=True,
-            message=(
-                "Connection saved "
-                "(test not available for this type)"
-            ),
+            message=("Connection saved (test not available for this type)"),
         )
 
     try:
@@ -511,7 +519,9 @@ async def test_connection(
 
         # Clear error on success
         await store.update_connection_status(
-            connection_id, status="active", error_message=None,
+            connection_id,
+            status="active",
+            error_message=None,
         )
         return TestConnectionResponse(success=True)
 
@@ -539,9 +549,14 @@ async def trigger_sync(
 ) -> dict[str, str]:
     """Trigger a manual sync for a DB-based connection.
 
-    Only works for connectors (not channels). Starts sync
-    in the background and returns 202 Accepted.
+    Writes a `sync_logs` row with status='running' SYNCHRONOUSLY before
+    spawning the background task, so that a record exists even when the
+    task is destroyed before reaching its finally block (API restart,
+    CancelledError, hung LLM call). The background task then UPDATEs
+    this row on completion or failure.
     """
+    import uuid
+
     fernet_key = _get_fernet_key(request)
     store = _get_store(request)
     ws_id = _get_workspace_id(request, workspace_id)
@@ -559,26 +574,42 @@ async def trigger_sync(
         )
 
     if not conn.get("enabled", True):
-        raise HTTPException(
-            status_code=400, detail="Connection is disabled",
-        )
+        raise HTTPException(status_code=400, detail="Connection is disabled")
 
-    # Mark as syncing
-    await store.update_connection_status(
-        connection_id, status="syncing",
-    )
+    # Mark connection as syncing
+    await store.update_connection_status(connection_id, status="syncing")
+
+    # Pre-insert a running sync_logs row so we always leave a trace, even
+    # if the background task is destroyed before its finally block runs.
+    sync_id = f"sync_{uuid.uuid4().hex[:12]}"
+    try:
+        await store.create_sync_log(
+            sync_id=sync_id,
+            workspace_id=ws_id,
+            connection_id=connection_id,
+            connector_type=connector_type,
+        )
+    except Exception as e:
+        # Non-fatal — sync still runs, but we lose visibility for this attempt.
+        logger.warning("sync.create_log.failed", connection_id=connection_id, error=str(e))
+
+    pm = getattr(request.app.state, "plugin_manager", None)
+    event_bus = pm.get_event_bus() if pm is not None else None
 
     background_tasks.add_task(
         _run_connection_sync,
+        sync_id=sync_id,
         connection_id=connection_id,
         connector_type=connector_type,
         config=conn["config"],
         workspace_id=ws_id,
         store=store,
+        event_bus=event_bus,
     )
 
     return {
         "status": "sync_started",
+        "sync_id": sync_id,
         "connection_id": connection_id,
         "connector_type": connector_type,
     }
@@ -610,23 +641,25 @@ def _sanitize_error(error: str) -> str:
 
 
 async def _run_connection_sync(
+    sync_id: str,
     connection_id: str,
     connector_type: str,
     config: dict[str, Any],
     workspace_id: str,
     store: PostgresStore,
+    event_bus: EventBus | None = None,
 ) -> None:
-    """Run sync for a DB-based connection. Async background task."""
-    import asyncio
+    """Run sync for a DB-based connection. Async background task.
+
+    Expects a `sync_logs` row with id=sync_id already inserted by
+    `trigger_sync` with status='running'. Updates that row on
+    completion, failure, or exception.
+    """
     import time
-    import uuid
     from datetime import UTC, datetime
 
     from metatron.ingestion.pipeline import ingest_documents
-    from metatron.storage.pg_connection import get_session
-    from metatron.storage.pg_models import SyncLogRow
 
-    sync_id = f"sync_{uuid.uuid4().hex[:12]}"
     start_time = time.perf_counter()
     status = "failed"
     documents_fetched = 0
@@ -653,7 +686,12 @@ async def _run_connection_sync(
         )
 
         await connector.configure(connection_obj, config)
-        documents = await connector.fetch(workspace_id)
+
+        from metatron.connectors.sync_state import SyncState
+
+        sync_state = SyncState()
+        since = sync_state.get_last_sync(workspace_id, connector_type)
+        documents = await connector.fetch(workspace_id, since=since)
         documents_fetched = len(documents)
 
         logger.info(
@@ -663,30 +701,122 @@ async def _run_connection_sync(
             documents=documents_fetched,
         )
 
-        if documents:
-            # ingest_documents is sync — run in thread pool
-            result = await asyncio.to_thread(
-                ingest_documents, documents, workspace_id, connector_type,
+        # Phase 1: Persist raw documents to PostgreSQL (source of truth)
+        upsert_result = None
+        try:
+            upsert_result = await store.upsert_raw_documents(
+                workspace_id=workspace_id,
+                documents=documents,
+                connector_type=connector_type,
+                connection_id=connection_id,
+            )
+            logger.info(
+                "sync.raw_documents.persisted",
+                new=upsert_result["new"],
+                updated=upsert_result["updated"],
+                unchanged=upsert_result["unchanged"],
+            )
+        except Exception as e:
+            logger.warning("sync.raw_documents.error", error=str(e))
+
+        # Phase 1b: Enqueue KB freshness jobs for changed docs (MTRNIX-313).
+        # Flag-gated; with both freshness flags off this is a zero-Redis no-op.
+        # We enqueue per PG raw_document id so the worker can look the row up
+        # directly via ``get_raw_document_by_id`` without replaying natural
+        # keys.
+        if upsert_result and upsert_result.get("changed_source_ids"):
+            from metatron.ingestion.freshness.producer import (
+                enqueue_raw_document_if_enabled,
+            )
+
+            for src_id in upsert_result["changed_source_ids"]:
+                try:
+                    raw_doc_row = await store.get_raw_document(
+                        workspace_id=workspace_id,
+                        connector_type=connector_type,
+                        source_id=src_id,
+                    )
+                except Exception:
+                    logger.debug(
+                        "sync.freshness.lookup_failed",
+                        source_id=src_id,
+                        exc_info=True,
+                    )
+                    continue
+                if not raw_doc_row:
+                    continue
+                raw_doc_id = raw_doc_row.get("id") if isinstance(raw_doc_row, dict) else None
+                if not raw_doc_id:
+                    continue
+                # ``content_changed`` is the generic event label for KB
+                # upserts (new + updated are not distinguished by the worker
+                # today; they go through the same pipeline).
+                await enqueue_raw_document_if_enabled(
+                    workspace_id=workspace_id,
+                    raw_document_id=raw_doc_id,
+                    event_type="content_changed",
+                    payload={"connector_type": connector_type, "source_id": src_id},
+                )
+
+        # Phase 2: Ingest into Qdrant (only new/updated docs, skip unchanged)
+        if upsert_result and upsert_result.get("changed_source_ids"):
+            changed_ids = set(upsert_result["changed_source_ids"])
+            docs_to_ingest = [d for d in documents if d.source_id in changed_ids]
+            logger.info(
+                "sync.filtering_unchanged",
+                total=len(documents),
+                changed=len(docs_to_ingest),
+                skipped=len(documents) - len(docs_to_ingest),
+            )
+        else:
+            docs_to_ingest = documents
+
+        if docs_to_ingest:
+            result = await ingest_documents(
+                docs_to_ingest,
+                workspace_id,
+                connector_type,
+                source_role=connector.source_role,
+                skip_graph=True,
             )
             documents_new = result.documents_new
             documents_updated = result.documents_updated
             documents_skipped = result.documents_skipped
-            qdrant_chunks = (
-                result.documents_new + result.documents_updated
-            )
+            qdrant_chunks = result.documents_new + result.documents_updated
 
             if result.errors:
-                errors_list = [
-                    _sanitize_error(str(e))
-                    for e in result.errors[:10]
-                ]
-                status = (
-                    "partial" if result.documents_new > 0 else "failed"
-                )
+                errors_list = [_sanitize_error(str(e)) for e in result.errors[:10]]
+                status = "partial" if result.documents_new > 0 else "failed"
             else:
                 status = "success"
+
+            # Phase 3: Mark Qdrant sync status in raw_documents
+            try:
+                all_source_ids = [d.source_id for d in documents if d.source_id]
+                if all_source_ids:
+                    await store.mark_documents_synced_by_source(
+                        workspace_id=workspace_id,
+                        connector_type=connector_type,
+                        source_ids=all_source_ids,
+                        target="qdrant",
+                    )
+            except Exception as e:
+                logger.warning("sync.mark_synced.error", error=str(e))
         else:
             status = "success"
+
+        # Phase 4: Graph extraction from PG (always runs — picks up pending docs)
+        try:
+            from metatron.ingestion.pipeline import process_all_unsynced_graphs
+
+            graph_result = await process_all_unsynced_graphs(workspace_id, store)
+            logger.info(
+                "sync.graph_processing.done",
+                ok=graph_result["ok"],
+                errors=graph_result["errors"],
+            )
+        except Exception as e:
+            logger.warning("sync.graph_processing.error", error=str(e))
 
     except Exception as e:
         logger.error(
@@ -700,18 +830,31 @@ async def _run_connection_sync(
 
     finally:
         duration_ms = (time.perf_counter() - start_time) * 1000
+        final_conn_status = "active" if status == "success" else "error"
+        error_msg = "; ".join(errors_list) if errors_list else None
+
+        # Update sync_logs row (centralized helper — Task 2)
+        try:
+            await store.update_sync_log(
+                sync_id=sync_id,
+                status=status,
+                documents_fetched=documents_fetched,
+                documents_new=documents_new,
+                documents_updated=documents_updated,
+                documents_skipped=documents_skipped,
+                qdrant_chunks=qdrant_chunks,
+                errors=errors_list,
+                duration_ms=duration_ms,
+            )
+            logger.info("sync.logged", sync_id=sync_id, status=status, duration_ms=duration_ms)
+        except Exception as e:
+            logger.warning("sync.log_failed", sync_id=sync_id, error=str(e))
 
         # Update connection status
-        final_status = (
-            "active" if status == "success" else "error"
-        )
-        error_msg = (
-            "; ".join(errors_list) if errors_list else None
-        )
         try:
             await store.update_connection_status(
                 connection_id,
-                status=final_status,
+                status=final_conn_status,
                 error_message=error_msg,
                 last_synced_at=datetime.now(UTC),
             )
@@ -722,38 +865,28 @@ async def _run_connection_sync(
                 error=str(e),
             )
 
-        # Log sync result (sync ORM — run in thread pool)
-        try:
-            def _write_sync_log() -> None:
-                with get_session() as session:
-                    sync_log = SyncLogRow(
-                        id=sync_id,
-                        workspace_id=workspace_id,
-                        connection_id=connection_id,
-                        connector_type=connector_type,
-                        status=status,
-                        documents_fetched=documents_fetched,
-                        documents_new=documents_new,
-                        documents_updated=documents_updated,
-                        documents_skipped=documents_skipped,
-                        errors=errors_list,
-                        duration_ms=duration_ms,
-                        source_title=(
-                            f"{connector_type.capitalize()} Sync"
-                        ),
-                        qdrant_chunks=qdrant_chunks,
-                        created_at=datetime.now(UTC),
-                    )
-                    session.add(sync_log)
+        # Persist sync timestamp so next sync is incremental (not full)
+        if status in ("success", "partial"):
+            try:
+                from metatron.connectors.sync_state import SyncState
 
-            await asyncio.to_thread(_write_sync_log)
-            logger.info(
-                "sync.logged",
-                sync_id=sync_id,
-                status=status,
-                duration_ms=duration_ms,
-            )
-        except Exception as e:
-            logger.warning(
-                "sync.log_failed", sync_id=sync_id, error=str(e),
-            )
+                sync_state = SyncState()
+                sync_state.set_last_sync(workspace_id, connector_type)
+            except Exception as e:
+                logger.warning("sync.state_save.error", error=str(e))
+
+        # Emit SYNC_COMPLETED for cache invalidation and plugin hooks
+        if event_bus is not None:
+            try:
+                await event_bus.emit(
+                    SYNC_COMPLETED,
+                    {
+                        "sync_id": sync_id,
+                        "workspace_id": workspace_id,
+                        "connection_id": connection_id,
+                        "connector_type": connector_type,
+                        "status": status,
+                    },
+                )
+            except Exception as e:
+                logger.warning("sync.event_emit.failed", error=str(e))

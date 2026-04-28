@@ -11,9 +11,9 @@ import structlog
 
 from metatron.core.interfaces import (
     GraphStoreInterface,
+    LLMProviderInterface,
     RetrieverInterface,
     VectorStoreInterface,
-    LLMProviderInterface,
 )
 from metatron.core.models import Chunk
 

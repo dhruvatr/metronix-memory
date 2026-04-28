@@ -6,8 +6,9 @@ QEDDocument format expected by the benchmark question generator.
 
 from __future__ import annotations
 
-import structlog
 import random
+
+import structlog
 
 from metatron.benchmarker.schemas.benchmark import QEDDocument
 from metatron.connectors.registry import ConnectorRegistry

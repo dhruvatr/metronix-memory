@@ -7,8 +7,8 @@ so tests can create isolated app instances.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 import uvicorn
@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from metatron.api.middleware import OptionalAuthMiddleware
 from metatron.api.routes import (
     admin,
+    agents,
     auth,
     benchmarker,
     chat,
@@ -28,6 +29,7 @@ from metatron.api.routes import (
     files,
     graph,
     health,
+    memory,
     skills,
     sync,
     users,
@@ -41,8 +43,8 @@ logger = structlog.get_logger()
 
 
 # MCP server instance — imported to register tools
-from metatron.mcp.server import mcp as mcp_server
 import metatron.mcp.tools  # noqa: F401 — registers @mcp.tool() decorators
+from metatron.mcp.server import mcp as mcp_server
 
 
 @asynccontextmanager
@@ -58,6 +60,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         json_output=settings.env != "development",
     )
     logger.info("app.startup", env=settings.env, port=settings.port)
+    logger.info(
+        "app.feature_flags",
+        splade_enabled=settings.splade_enabled,
+        hyde_enabled=settings.hyde_enabled,
+        adaptive_rrf_enabled=settings.adaptive_rrf_enabled,
+        hierarchical_chunking_enabled=settings.hierarchical_chunking_enabled,
+        reranker_enabled=settings.reranker_enabled,
+        graph_extraction_enabled=settings.graph_extraction_enabled,
+    )
 
     # Apply pending database migrations before serving traffic.
     # Advisory lock ensures only one replica runs migrations when several
@@ -65,12 +76,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # continues if the schema is already up to date.
     try:
         import asyncio
+
         from metatron.storage.migrations import run_migrations_sync
+
         await asyncio.to_thread(
             run_migrations_sync, settings.postgres_sync_dsn, settings.postgres_dsn
         )
     except Exception as exc:
         logger.error("migrations.failed", error=str(exc))
+
+    # Ensure Memgraph property indexes exist (idempotent, non-fatal)
+    try:
+        import asyncio as _asyncio
+
+        from metatron.storage.neo4j_graph import ensure_graph_indexes
+
+        await _asyncio.to_thread(ensure_graph_indexes)
+    except Exception as exc:
+        logger.warning("neo4j.indexes.failed", error=str(exc))
 
     # One-time migration: env-var credentials → DB connections (idempotent)
     try:
@@ -86,11 +109,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("env_migration.failed", error=str(exc))
 
+    # Recover from any syncs interrupted by a previous shutdown.
+    # Reset `sync_logs.running` → `failed` and `connections.syncing` → `error`.
+    try:
+        import asyncio as _asyncio
+
+        from metatron.storage.recovery import recover_interrupted_syncs
+
+        rec = await _asyncio.to_thread(recover_interrupted_syncs)
+        if rec["sync_logs_reset"] or rec["connections_reset"]:
+            logger.info(
+                "sync.recovery.applied",
+                sync_logs_reset=rec["sync_logs_reset"],
+                connections_reset=rec["connections_reset"],
+            )
+    except Exception as exc:
+        logger.warning("sync.recovery.startup_failed", error=str(exc))
+
+    # --- Shared DB engine for user store + API key store ---
+    _user_engine = None
+    try:
+        from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
+
+        _user_engine = _create_engine(settings.postgres_dsn)
+    except Exception as exc:
+        logger.error("db_engine.init.failed", error=str(exc))
+
     # --- User store ---
     try:
+        if _user_engine is None:
+            raise RuntimeError("DB engine not initialized")
         from metatron.auth.user_store import UserStore
-        from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
-        _user_engine = _create_engine(settings.postgres_dsn)
+
         user_store = UserStore(_user_engine)
         logger.info("user_store.init.starting")
         await user_store.ensure_schema()
@@ -102,8 +152,52 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("user_store.ready")
     except Exception as exc:
         import traceback
+
         logger.error("user_store.init.failed", error=str(exc))
         traceback.print_exc()
+
+    # --- Platform user mapper ---
+    try:
+        if _user_engine is None:
+            raise RuntimeError("DB engine not initialized")
+        from metatron.auth.user_mapping import PlatformUserMapper
+
+        platform_mapper = PlatformUserMapper(_user_engine, user_store)
+        await platform_mapper.ensure_schema()
+        app.state.platform_mapper = platform_mapper
+        logger.info("platform_mapper.ready")
+    except Exception as exc:
+        logger.warning("platform_mapper.init.failed", error=str(exc))
+
+    # --- API Key store (personal keys for /v1 endpoints) ---
+    try:
+        if _user_engine is None:
+            raise RuntimeError("DB engine not initialized")
+        from metatron.auth.api_key_store import ApiKeyStore
+
+        api_key_store = ApiKeyStore(_user_engine)
+        await api_key_store.ensure_schema()
+        app.state.api_key_store = api_key_store
+        logger.info("api_key_store.ready")
+    except Exception as exc:
+        logger.error("api_key_store.init.failed", error=str(exc))
+
+    # --- Open WebUI sync (bundled scenario) ---
+    if settings.openwebui_url:
+        try:
+            from metatron.auth.openwebui_sync import OpenWebUISync
+
+            owui_sync = OpenWebUISync(
+                owui_url=settings.openwebui_url,
+                metatron_url=settings.openwebui_metatron_url,
+                admin_email="admin@metatron.local",
+                admin_password=settings.auth_password,
+            )
+            await owui_sync.ensure_admin()
+            app.state.owui_sync = owui_sync
+            logger.info("owui_sync.configured", url=settings.openwebui_url)
+        except Exception as exc:
+            logger.warning("owui_sync.init.failed", error=str(exc))
 
     # --- PostgresStore (shared) ---
     from metatron.storage.postgres import PostgresStore
@@ -138,6 +232,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cm = getattr(app.state, "channel_manager", None)
     if cm is not None:
         await cm.stop_all()
+    owui_sync = getattr(app.state, "owui_sync", None)
+    if owui_sync and owui_sync._client:
+        await owui_sync._client.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -166,6 +263,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     discover_plugins(plugin_manager)
     app.state.plugin_manager = plugin_manager
 
+    # --- Subscribe core event handlers ---
+    from metatron.core.events import SYNC_COMPLETED
+    from metatron.retrieval.channels import on_sync_completed
+
+    plugin_manager.get_event_bus().subscribe(SYNC_COMPLETED, on_sync_completed)
+
+    # --- Subscribe activity logger (WS4 S6) ---
+    if settings.activity_log_enabled:
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        from metatron.activity.logger import ActivityLogger
+        from metatron.storage.activity_pg import ActivityStore
+
+        # Reuse/initialize the shared PG engine stored on app.state (also used by
+        # memory/ and agents/ dependencies). Create on demand if no earlier
+        # dependency has run yet.
+        engine = getattr(app.state, "memory_pg_engine", None)
+        if engine is None:
+            engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
+            app.state.memory_pg_engine = engine
+
+        activity_store = ActivityStore(engine)
+        activity_logger_instance = ActivityLogger(store=activity_store)
+        activity_logger_instance.subscribe(plugin_manager.get_event_bus())
+        app.state.activity_store = activity_store
+        app.state.activity_logger = activity_logger_instance
+        logger.info("activity_logger.subscribed")
+
+        # Point the MCP tool wrapper at this bus (WS4 S6).
+        from metatron.mcp import server as _mcp_mod
+
+        _mcp_mod.set_activity_bus_getter(lambda: plugin_manager.get_event_bus())
+
     # Enterprise plugin requires auth — auto-enable if any plugin loaded
     if plugin_manager.loaded_plugins and not settings.auth_enabled:
         settings = settings.model_copy(update={"auth_enabled": True})
@@ -193,6 +323,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Auth middleware — added last, becomes outermost, runs first on every request
     app.add_middleware(OptionalAuthMiddleware)
 
+    from metatron.api.middleware.agent_id import AgentIdContextMiddleware
+
+    app.add_middleware(AgentIdContextMiddleware)
+
     # Register core route modules
     app.include_router(health.router)
     app.include_router(auth.router, prefix="/api/v1")
@@ -209,18 +343,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(graph.router, prefix="/api/v1")
     app.include_router(config.router, prefix="/api/v1")
     app.include_router(users.router, prefix="/api/v1")
+    app.include_router(memory.router, prefix="/api/v1")
+    app.include_router(agents.router, prefix="/api/v1")
 
     from metatron.api.routes.finops import router as finops_router
+
     app.include_router(finops_router, prefix="/api/v1")
+
+    from metatron.api.routes.openwebui_import import router as owui_import_router
+
+    app.include_router(owui_import_router, prefix="/api/v1")
 
     # OpenAI-compatible API (for Open WebUI integration)
     if settings.openai_compat_enabled:
         from metatron.api.routes.openai_compat import router as openai_compat_router
+
         app.include_router(openai_compat_router)
 
     # Lazy import benchmarker module router (optional dependency)
     try:
         from metatron.benchmarker.api import router as benchmarker_module_router
+
         app.include_router(benchmarker_module_router, prefix="/api/v1/benchmarker")
         logger.info("Benchmarker module loaded successfully")
     except ImportError as e:

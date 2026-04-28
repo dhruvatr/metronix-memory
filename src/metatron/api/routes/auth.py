@@ -1,7 +1,6 @@
 """Auth API — login and session endpoints."""
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
@@ -17,7 +16,7 @@ router = APIRouter(tags=["auth"])
 
 
 class LoginRequest(BaseModel):
-    email: Optional[str] = None
+    email: str | None = None
     password: str
 
 

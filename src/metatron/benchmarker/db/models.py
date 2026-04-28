@@ -9,13 +9,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     String,
     Text,
 )
@@ -49,9 +49,7 @@ class BenchmarkSetRow(Base):  # type: ignore[misc]
         cascade="all, delete-orphan",
     )
 
-    __table_args__ = (
-        Index("ix_benchmark_sets_workspace", "workspace_id"),
-    )
+    __table_args__ = (Index("ix_benchmark_sets_workspace", "workspace_id"),)
 
 
 class BenchmarkQuestionRow(Base):  # type: ignore[misc]
@@ -73,9 +71,7 @@ class BenchmarkQuestionRow(Base):  # type: ignore[misc]
 
     benchmark_set = relationship("BenchmarkSetRow", back_populates="questions")
 
-    __table_args__ = (
-        Index("ix_benchmark_questions_set", "benchmark_set_id"),
-    )
+    __table_args__ = (Index("ix_benchmark_questions_set", "benchmark_set_id"),)
 
 
 class TestRunRow(Base):  # type: ignore[misc]
@@ -99,6 +95,9 @@ class TestRunRow(Base):  # type: ignore[misc]
     avg_context_precision = Column(Float, nullable=True)
     avg_context_recall = Column(Float, nullable=True)
     avg_confidence = Column(Float, nullable=True)
+    avg_ndcg_at_10 = Column(Float, nullable=True)
+    avg_mrr = Column(Float, nullable=True)
+    avg_precision_at_k = Column(Float, nullable=True)
 
     benchmark_set = relationship("BenchmarkSetRow", back_populates="test_runs")
     test_results = relationship(
@@ -107,9 +106,7 @@ class TestRunRow(Base):  # type: ignore[misc]
         cascade="all, delete-orphan",
     )
 
-    __table_args__ = (
-        Index("ix_test_runs_benchmark_set", "benchmark_set_id"),
-    )
+    __table_args__ = (Index("ix_test_runs_benchmark_set", "benchmark_set_id"),)
 
 
 class TestResultRow(Base):  # type: ignore[misc]
@@ -131,11 +128,12 @@ class TestResultRow(Base):  # type: ignore[misc]
     context_precision = Column(Float, nullable=True)
     context_recall = Column(Float, nullable=True)
     confidence = Column(Float, nullable=True)
+    ndcg_at_10 = Column(Float, nullable=True)
+    mrr = Column(Float, nullable=True)
+    precision_at_k = Column(Float, nullable=True)
     claim_scores = Column(JSON, nullable=True)
     context = Column(JSON, nullable=True)  # white-box data
 
     test_run = relationship("TestRunRow", back_populates="test_results")
 
-    __table_args__ = (
-        Index("ix_test_results_run", "test_run_id"),
-    )
+    __table_args__ = (Index("ix_test_results_run", "test_run_id"),)

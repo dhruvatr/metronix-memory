@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+from typing import Any
 
 import structlog
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ChatAction, ParseMode
-
-from typing import Any
 
 from metatron.agent.router import AgentRouter
 
@@ -42,9 +41,7 @@ class TelegramChannel:
     ) -> None:
         self._token = bot_token
         self._router = router
-        self._workspace_id = (
-            workspace_id or router._settings.default_workspace_id
-        )
+        self._workspace_id = workspace_id or router._settings.default_workspace_id
         self._mapper = mapper
         self._event_bus = event_bus
         self._bot = Bot(
@@ -113,14 +110,39 @@ class TelegramChannel:
 
         await self._bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
 
+        # Map platform user to internal user
+        if self._mapper:
+            display_name = ""
+            if message.from_user:
+                parts = [message.from_user.first_name or ""]
+                if message.from_user.last_name:
+                    parts.append(message.from_user.last_name)
+                display_name = " ".join(parts).strip()
+            user = await self._mapper.map_platform_user(
+                channel="telegram",
+                channel_user_id=user_id,
+                workspace_id=self._workspace_id,
+                event_bus=self._event_bus,
+                display_name=display_name,
+            )
+            if user:
+                user_id = user.id
+
         # Download file
         try:
             file_obj = await self._bot.get_file(doc.file_id)
             bio = await self._bot.download_file(file_obj.file_path)
             content = bio.read()
         except Exception as e:
-            logger.error("telegram.document.download_error", error=str(e), exc_info=True)
-            await self._send_response(chat_id, "Could not download the file. Please try again.")
+            logger.error(
+                "telegram.document.download_error",
+                error=str(e),
+                exc_info=True,
+            )
+            await self._send_response(
+                chat_id,
+                "Could not download the file. Please try again.",
+            )
             return
 
         # Process through router (sync)
@@ -191,7 +213,10 @@ class TelegramChannel:
         await self._send_response(chat_id, answer, reply_to=message.message_id)
 
     async def _send_response(
-        self, chat_id: int, text: str, reply_to: int | None = None,
+        self,
+        chat_id: int,
+        text: str,
+        reply_to: int | None = None,
     ) -> None:
         """Send a response with 3-step fallback: Markdown → HTML → plain text."""
         chunks = _split_message(text)

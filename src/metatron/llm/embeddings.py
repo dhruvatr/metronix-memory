@@ -9,9 +9,10 @@ Thread-safe with lock protection on cache reads and writes.
 
 from __future__ import annotations
 
+import asyncio
 import re
-import time
 import threading
+import time
 
 import structlog
 from cachetools import TTLCache
@@ -49,6 +50,7 @@ def _is_context_length_error(resp) -> bool:
     except Exception:
         return False
 
+
 _settings = Settings()
 
 _embedding_cache: TTLCache = TTLCache(
@@ -66,7 +68,10 @@ class _ContextLengthError(Exception):
 
 
 def _call_ollama_embedding(
-    text: str, model: str, session, ollama_url: str,
+    text: str,
+    model: str,
+    session,
+    ollama_url: str,
 ) -> list[float]:
     """Call Ollama embedding API with transient-error retry (3 attempts).
 
@@ -86,8 +91,7 @@ def _call_ollama_embedding(
 
             if _is_context_length_error(resp):
                 raise _ContextLengthError(
-                    f"context length exceeded ({len(text)} chars): "
-                    f"{resp.text[:200]}"
+                    f"context length exceeded ({len(text)} chars): {resp.text[:200]}"
                 )
 
             if resp.status_code >= 500:
@@ -115,9 +119,7 @@ def _call_ollama_embedding(
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
-def get_cached_embedding(
-    text: str, model: str = "nomic-embed-text:latest"
-) -> list[float]:
+def get_cached_embedding(text: str, model: str = "nomic-embed-text:latest") -> list[float]:
     """Get a single dense embedding with caching.
 
     Used for search queries and entity resolution where a single vector
@@ -169,7 +171,9 @@ def get_cached_embedding(
 
 
 def get_cached_embedding_split(
-    text: str, model: str = "nomic-embed-text:latest", depth: int = 0,
+    text: str,
+    model: str = "nomic-embed-text:latest",
+    depth: int = 0,
 ) -> list[tuple[str, list[float]]]:
     """Get embeddings for text, splitting on context length overflow.
 
@@ -253,6 +257,42 @@ def get_cached_embedding_split(
         return left_results + right_results
 
 
+_ingest_semaphore: asyncio.Semaphore | None = None
+_ingest_semaphore_init_lock = threading.Lock()
+
+
+def _get_ingest_semaphore() -> asyncio.Semaphore:
+    """Return the ingest-embedding throttle, creating it on first use.
+
+    Deferred construction keeps the asyncio.Semaphore out of the import
+    path — useful for test harnesses that build Settings with a custom
+    ``ingest_embed_concurrency`` before the module is first exercised.
+    """
+    global _ingest_semaphore  # noqa: PLW0603
+    if _ingest_semaphore is None:
+        with _ingest_semaphore_init_lock:
+            if _ingest_semaphore is None:
+                _ingest_semaphore = asyncio.Semaphore(_settings.ingest_embed_concurrency)
+    return _ingest_semaphore
+
+
+async def embed_for_ingest(
+    text: str,
+    model: str = "nomic-embed-text:latest",
+) -> list[tuple[str, list[float]]]:
+    """Ingest-side throttled wrapper around ``get_cached_embedding_split``.
+
+    Caps concurrent Ollama ``/api/embeddings`` calls to
+    ``METATRON_INGEST_EMBED_CONCURRENCY`` (default 2) so a mass connector
+    sync does not saturate Ollama and push concurrent query embeddings
+    into timeout territory. Query path uses ``get_cached_embedding``
+    directly (no semaphore) so searches stay ahead of ingest in the queue.
+    """
+    sem = _get_ingest_semaphore()
+    async with sem:
+        return await asyncio.to_thread(get_cached_embedding_split, text, model)
+
+
 def get_embedding_cache_stats() -> dict:
     """Get embedding cache statistics."""
     return {
@@ -262,9 +302,7 @@ def get_embedding_cache_stats() -> dict:
         "hits": _embedding_cache_hits,
         "misses": _embedding_cache_misses,
         "hit_rate": round(
-            _embedding_cache_hits
-            / max(_embedding_cache_hits + _embedding_cache_misses, 1)
-            * 100,
+            _embedding_cache_hits / max(_embedding_cache_hits + _embedding_cache_misses, 1) * 100,
             1,
         ),
     }

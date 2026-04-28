@@ -3,9 +3,8 @@
 Reuses existing ingestion processors to convert Confluence page payloads
 into clean text ready for the Document.content field.
 """
-from __future__ import annotations
 
-from typing import Optional
+from __future__ import annotations
 
 import structlog
 
@@ -17,7 +16,7 @@ logger = structlog.get_logger()
 
 def process_confluence_page(
     page_body_html: str,
-    page_title: Optional[str] = None,
+    page_title: str | None = None,
 ) -> tuple[str, str]:
     """Convert Confluence page HTML into clean Markdown text.
 

@@ -2,56 +2,91 @@
 
 ## Overview
 L2 — the full search pipeline from raw query to LLM answer with sources.
-Entry point: `hybrid_search_and_answer()` in `search.py`. Currently sync
-(all TODO: async migration comments), runs via `asyncio.to_thread()` from API layer.
+Entry point: `hybrid_search_and_answer()` in `search.py`. Fully async pipeline.
+
+## Pipeline (current)
+```
+Query → [HyDE (optional, short/vague queries)] → expansion → classify(profile) → weight_preset
+     → recall_dense + recall_exact + recall_metadata + recall_graph  (parallel via asyncio.gather)
+     → merge_channels → compute_signal_score(6 weighted signals, normalized [0,1])
+     → confidence filter (min_signal_score, default disabled)
+     → top-35 pool → cross-encoder rerank (bge-reranker-v2-m3)
+     → compute_final_score(blend: 30% signal + 70% reranker)
+     → _prepend_root_context (fetch root chunks for child results)
+     → _collect_frags(dict) → _mark_evidence_role(PRIMARY/SUPPORTING)
+     → _build_ctx(grouped markdown) → LLM(evidence rules) → _append_sources → answer
+
+Sparse search uses SPLADE learned representations (SPLADE_ENABLED=true, default ON).
+Falls back to BM25 when SPLADE_ENABLED=false.
+HyDE generates hypothetical document for short queries (HYDE_ENABLED=false, default OFF).
+Adaptive RRF adjusts rrf_k based on dense/sparse overlap (ADAPTIVE_RRF_ENABLED=false, default OFF).
+Transitive alias resolution: recall_graph resolves aliases via 1..3 hop BFS over ALIAS edges.
+```
 
 ## Files
 
 ### `search.py`
-Main pipeline — `hybrid_search_and_answer()`.
+Main pipeline — `async def hybrid_search_and_answer()`.
+Orchestrates: language detection → translation → [HyDE] → query expansion → classification →
+recall channels (parallel via asyncio.gather) → scoring → reranking → fragment collection →
+evidence roles → LLM.
 
-**Global constants (from Settings at module import time):**
-```python
-_MAX_TOTAL = search_max_total_chars   # 40000
-_MAX_FRAG  = search_max_fragment_chars # 8000
-_POOL_MUL  = search_pool_multiplier   # 3  (pool = k * 3)
-_POOL_MIN  = search_pool_min          # 15 (minimum pool size)
-_GRAPH_DEPTH = 2
-_JIRA_KEY_RE = r'\b([A-Z]{2,}-\d+)\b'
-```
+Key functions:
+- `_run_recall_channels_async(ctx)` — parallel dispatch of 4 recall channels via `asyncio.gather`
+- `_prepend_root_context()` — fetch root chunks for child results, prepend as context
+- `_collect_frags()` — extract text, deduplicate, respect `_MAX_TOTAL`/`_MAX_FRAG`
+- `_mark_evidence_role()` — assigns PRIMARY/SUPPORTING based on query profile
+- `_build_ctx()` — assembles grouped markdown context for LLM
+- `_append_sources()` — citation formatting (max 5 sources)
 
-**Full pipeline in `hybrid_search_and_answer(query, workspace_id, k, ...)`:**
-1. **Language detection** — `detect_response_language()`: Cyrillic detection → `"ru"` else `"en"`
-2. **Cyrillic translation** — `translate_query_to_english()` via LLM if Cyrillic detected
-3. **Jira key injection** — regex extracts `PROJ-123` patterns → direct `_inject_jira_key_results()`
-4. **Person/activity injection** — `_ACTIVITY_KW` + `_PERSON_RU`/`_PERSON_EN` regex → entity resolution via `AliasRegistry`
-5. **Title entity extraction** — `extract_title_entities()` → `_build_title_filter()` → `_search_by_title()`
-6. **Schema routing** — `should_use_team_workflow_schema()` → `TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT`
-7. **`search_with_date_filter()`** — pool = `max(k * _POOL_MUL, _POOL_MIN)`
-   - Date range detection → separate date-filtered search merged with unfiltered
-   - Jira multiplier (`_JIRA_MUL=2`) when Jira query detected
-   - Falls back to plain `store.hybrid_search(query, limit=k)`
-8. **`diversify_results(base, k=50)`** — de-duplicate by source, interleave by type
-9. **Title boost** — `_boost_title_matches()` promotes title matches to top
-10. **Reranker** — if `RERANKER_ENABLED`: `rerank(query, base, top_k=25)` via `reranker.py`
-11. **`_collect_frags()`** — extract text, deduplicate by truncated hash, respect `_MAX_TOTAL`/`_MAX_FRAG`
-12. **Graph enrichment** —
-    - `get_entities_by_doc_labels()` or `get_graph_entities(frags, workspace_id)`
-    - `get_graph_relationships()` with `max_depth=_GRAPH_DEPTH`
-    - Related docs via `get_related_documents()` → extra frags via `search_by_doc_labels()`
-13. **Token budget** — `select_fragments_within_budget(frags, ...)` — trims to `LLM_CONTEXT_MAX_TOKENS`
-14. **LLM call** — `chat_completion()` / `chat_completion_with_retry()` with built context
-15. **Source append** — `_append_sources(answer, base)` — max 5 sources
+### `channels.py`
+4 independent recall channels (sync + async variants) + merge logic:
+- `recall_dense(ctx)` / `recall_dense_async(ctx)` — RRF hybrid search (dense + SPLADE/BM25 sparse via Qdrant). Supports HyDE embedding path and adaptive RRF.
+- `recall_exact(ctx)` / `recall_exact_async(ctx)` — Jira key lookup + title entity search
+- `recall_metadata(ctx)` / `recall_metadata_async(ctx)` — date filters, person/assignee, activity status
+- `recall_graph(ctx)` / `recall_graph_async(ctx)` — entity graph traversal (BFS hop expansion via Neo4j) with transitive alias resolution (1..3 hop BFS over ALIAS edges)
+- `merge_channels()` — merges results, preserves all channel scores
+- `_cached_get_graph_entities()` — LRU cache (maxsize=128) for graph entity lookups
+- `on_sync_completed()` — event handler clearing graph entity LRU cache
 
-**Trace logging** (non-blocking, after answer):
-```python
-source_word_count = sum(len(frag.split()) for frag in frags)
-store_query_trace_sync(workspace_id, rq, trace_data, total_ms)
-```
+Types: `ScoredResult`, `MergedResult`, `RecallContext` (includes `hyde_embedding`
+and `freshness_filter` fields).
+
+**Freshness filter pushdown (MTRNIX-313, Phase B).** When
+`METATRON_FRESHNESS_KB_SEARCH_FILTER_ENABLED=true`, `search.py` builds a
+Qdrant `Filter` excluding `status IN ('archived','superseded')` and passes it
+on `RecallContext.freshness_filter`. Each channel combines it with
+`access_filter` via `_combine_filters()` before calling the Qdrant store, so
+ARCHIVED/SUPERSEDED chunks are filtered server-side without a PG round-trip.
+Default off → `freshness_filter` is `None` and the code path is byte-identical
+to pre-Phase-B (no extra branch, same `filter_conditions` argument sent to
+Qdrant). `_combine_filters` merges `must` / `must_not` / `should` lists.
+
+### `scoring.py`
+Multi-signal scoring formula:
+- `compute_signal_score(merged_result, ...)` — weighted signals (dense, graph, metadata, recency, balance, freshness), normalized to [0,1] by dividing by sum of ALL active weights
+- `compute_final_score(signal_score, rerank_score, blend_weight)` — blend formula
+- `source_balance(source_type, type_counts, total)` — smooth gradient (linear decay from 1.0 to 0.0 at threshold)
+- `recency_score(date_str)` — time decay
+- `normalize_scores(scores)` — min-max normalization for cross-encoder output
+
+**Freshness signal (MTRNIX-313, Phase B).** `compute_signal_score` accepts an
+optional `freshness` score (the `raw_documents.freshness_score` for the
+document that produced the candidate; default 1.0 when unknown) weighted by
+`freshness_weight` (env `METATRON_FRESHNESS_WEIGHT`, default 0.0). With the
+default weight, both the numerator term and the denominator sum contribution
+are zero — the formula is numerically identical to Phase A.
+
+### `query_classifier.py`
+Hybrid rule+LLM query classifier:
+- Rule gate: regex patterns for Jira keys, dates, files, relationships
+- LLM fallback: DeepSeek classification with confidence threshold
+- 6 profiles: execution, documentation, user_file, relationship, temporal, mixed
+- `QUERY_PROFILE_WEIGHTS` — per-profile weight overrides for scoring formula
 
 ### `reranker.py`
 Cross-encoder reranker — `BAAI/bge-reranker-v2-m3`.
-Lazy singleton (loaded on first use). `rerank(query, results, top_k=25) -> list`.
+Lazy singleton (loaded on first use). `rerank(query, results, top_k)`.
 Falls back gracefully if model unavailable.
 
 ### `query_expansion.py`
@@ -59,66 +94,44 @@ Falls back gracefully if model unavailable.
 Disabled when `QUERY_EXPANSION_ENABLED=False`. Returns original query on failure.
 
 ### `token_budget.py`
-`MAX_GRAPH_TOKENS = 2000`
-`estimate_graph_tokens(g_ents, g_rels, g_docs) -> int`
-`truncate_graph_context(g_ents, g_rels, g_docs, max_tokens)` — priority: Person entities first
 `select_fragments_within_budget(frags, max_chars) -> list[str]`
-
-### `alias_registry.py`
-`AliasRegistry` — file-persisted person alias store at `.metatron/person_aliases.json`.
-Singleton via `get_alias_registry()`. Auto-populated from Jira sync.
-Maps display names / Cyrillic names to canonical identifiers for person queries.
-
-### `aliases.py`
-Hardcoded fallback alias dict — used when `alias_registry.json` doesn't exist yet.
-
-### `routing.py`
-`is_jira_query(query) -> bool` — keyword heuristics.
-`should_use_team_workflow_schema(query) -> bool` — detects team/workflow questions.
-`_extract_json_object(text) -> dict | None` — robust JSON extraction from LLM output.
+`truncate_graph_context(g_ents, g_rels, g_docs, max_tokens)` — priority: Person entities first
 
 ### `hybrid.py`
 `HybridSearcher` — wraps dense + sparse search with RRF fusion.
 RRF formula: `score = Σ 1/(rrf_k + rank)` where `rrf_k=60`.
-Weight blend: dense=0.35, sparse=0.20, tags=0.20, graph=0.15, recency=0.10.
-
-### `scoring.py`
-Multi-factor scoring post-RRF fusion: recency decay, tag overlap, title match boost.
-
-### `entity_resolver.py`
-`resolve_entity(name, workspace_id)` — resolves ambiguous entity names using alias registry
-and graph lookup.
-
-### `entity_helpers.py`
-Helper functions for entity extraction from query text. Proper noun detection,
-company token extraction (`_PROPER_NOUN_RE`, `_COMPANY_TOKEN_RE`, `_COMPANY_MULTI_RE`).
-
-### `graph_enrichment.py`
-`GraphEnricher` — wraps graph entity/relationship injection.
-Currently has `NotImplementedError` stubs; actual graph ops are called directly in `search.py`.
-
-### `fallback.py`
-`GracefulRetriever` — wraps retrieval with `_safe_call()` pattern.
-If Memgraph is down → search continues without graph enrichment.
-Currently has `NotImplementedError` stubs.
+When `ADAPTIVE_RRF_ENABLED=true`, rrf_k adjusts between `RRF_K_LOW` and `RRF_K_HIGH`
+based on dense/sparse overlap ratio.
 
 ### `context.py`
 `_build_ctx(query, lang, frags, g_ents, g_rels, g_docs) -> str`
-Assembles the LLM context string from fragments + graph data.
+Assembles LLM context from fragments + graph data, grouped by evidence role.
 
 ### `prompts.py`
-System prompts:
-- `HYBRID_SYSTEM_PROMPT` — standard RAG answer prompt
-- `TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT` — structured JSON output for team workflow queries
-- `TEAM_WORKFLOW_SCHEMA_SPEC` — JSON schema for structured output
+System prompts with atomic evidence rules for LLM.
+
+### `fallback.py`
+Graceful retrieval — `_safe_call` pattern. If a retrieval component fails (graph down,
+Qdrant timeout), the retriever skips that signal and continues with available data.
+
+### `graph_enrichment.py`
+Graph-based enrichment for search results.
+
+### Other files
+- `alias_registry.py` — file-based person alias store for entity resolution
+- `aliases.py` — hardcoded `NAME_ALIASES` + transitive alias resolution helpers
+- `routing.py` — query type heuristics (jira, team workflow)
+- `entity_resolver.py`, `entity_helpers.py` — entity extraction and resolution; includes `create_alias_relationship()` for bidirectional ALIAS edges in Neo4j
 
 ## Key Patterns
-- **Sync-first with thread offload** — `hybrid_search_and_answer()` is sync; called via `asyncio.to_thread()` from chat route
-- **Graceful degradation** — graph failures are caught and logged; search returns results without graph enrichment
-- **Pool multiplier** — always fetch `k * _POOL_MUL` candidates, rerank down to `k`
-- **Lazy reranker** — model loaded on first call, not at import time (avoids slow startup)
-- **FinOps integration** — `source_word_count` written to `query_traces.trace` JSONB after every answer
+- **Fully async** — `hybrid_search_and_answer()` is `async def`; recall channels dispatched via `asyncio.gather`
+- **Parallel recall** — 4 async channels run concurrently via `asyncio.gather`
+- **Score isolation** — scores stored in `score_map: dict[str, float]`, not in memory dicts
+- **Graceful degradation** — graph/reranker failures are caught; search continues
+- **LRU cache** — graph entity lookups cached (maxsize=128)
+- **Configurable weights** — all scoring weights overridable via env vars or query profiles
+- **Lazy reranker** — model loaded on first call, not at import time
 
 ## Dependencies
-- **Depends on**: `core.config`, `core.models`, `storage.qdrant` (hybrid search), `storage.graph_ops` (graph queries), `storage.pg_connection` (trace logging), `llm` (chat_completion), `ingestion.processors.dates`, `observability.metrics` (@timed)
-- **Depended on by**: `api.routes.chat` (main search endpoint), `api.routes.benchmarker` (traced queries)
+- **Depends on**: `core.config`, `core.models`, `storage.qdrant`, `storage.graph_ops`, `storage.pg_connection`, `llm`, `ingestion.processors.dates`, `observability.metrics`
+- **Depended on by**: `api.routes.chat`, `api.routes.benchmarker`

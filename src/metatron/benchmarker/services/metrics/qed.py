@@ -12,10 +12,9 @@ fresh event loop to prevent conflicts with the running uvicorn loop.
 from __future__ import annotations
 
 import asyncio
-import structlog
-from typing import Dict, List, Optional
 
 import pandas as pd
+import structlog
 from benchmark_qed.autoe.assertion_scores import get_assertion_scores
 from benchmark_qed.config.llm_config import LLMConfig, LLMProvider
 from benchmark_qed.llm.provider.openai import OpenAIChat
@@ -50,11 +49,12 @@ class QEDMetricsCalculator:
         self.concurrent_requests = concurrent_requests
         self.temperature = temperature
 
-        self._llm: Optional[OpenAIChat] = None
-        self._llm_config: Optional[LLMConfig] = None
+        self._llm: OpenAIChat | None = None
+        self._llm_config: LLMConfig | None = None
 
         logger.info(
-            "QEDMetricsCalculator initialized: model=%s", deepseek_model,
+            "QEDMetricsCalculator initialized: model=%s",
+            deepseek_model,
         )
 
     def _initialize_llm(self) -> None:
@@ -72,8 +72,8 @@ class QEDMetricsCalculator:
 
     def _prepare_dataframes(
         self,
-        questions: List[BenchmarkQuestion],
-        actual_answers: List[str],
+        questions: list[BenchmarkQuestion],
+        actual_answers: list[str],
     ) -> tuple:
         """Prepare answers and assertions DataFrames for AutoE.
 
@@ -82,23 +82,27 @@ class QEDMetricsCalculator:
         """
         answers_data = []
         for question, answer in zip(questions, actual_answers):
-            answers_data.append({
-                "question_id": question.id,
-                "question_text": question.text,
-                "answer": answer,
-            })
+            answers_data.append(
+                {
+                    "question_id": question.id,
+                    "question_text": question.text,
+                    "answer": answer,
+                }
+            )
         answers_df = pd.DataFrame(answers_data)
 
         assertions_data = []
         for question in questions:
             claims = question.attributes.claims if question.attributes else []
             for idx, claim in enumerate(claims):
-                assertions_data.append({
-                    "question_id": question.id,
-                    "question_text": question.text,
-                    "assertion_id": f"{question.id}_claim_{idx}",
-                    "assertion": claim.statement,
-                })
+                assertions_data.append(
+                    {
+                        "question_id": question.id,
+                        "question_text": question.text,
+                        "assertion_id": f"{question.id}_claim_{idx}",
+                        "assertion": claim.statement,
+                    }
+                )
         assertions_df = pd.DataFrame(assertions_data)
 
         logger.info(
@@ -110,10 +114,10 @@ class QEDMetricsCalculator:
 
     async def evaluate_answers(
         self,
-        questions: List[BenchmarkQuestion],
-        actual_answers: List[str],
-        latencies_ms: List[float],
-    ) -> List[Dict]:
+        questions: list[BenchmarkQuestion],
+        actual_answers: list[str],
+        latencies_ms: list[float],
+    ) -> list[dict]:
         """Evaluate correctness of answers using BenchmarkQED AutoE.
 
         Builds two DataFrames (answers + assertions) and calls
@@ -184,21 +188,22 @@ class QEDMetricsCalculator:
 
     def _build_results(
         self,
-        questions: List[BenchmarkQuestion],
+        questions: list[BenchmarkQuestion],
         results_df: pd.DataFrame,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Build per-question result dicts from the AutoE results DataFrame."""
         # Map question_text -> question_id
         question_text_to_id = {q.text: q.id for q in questions}
 
         # Group results by question
-        results_by_question: Dict[str, List[Dict]] = {}
+        results_by_question: dict[str, list[dict]] = {}
         for _, row in results_df.iterrows():
             question_text = row.get("question", "")
             question_id = question_text_to_id.get(question_text)
             if question_id is None:
                 logger.warning(
-                    "Question ID not found for question: %.50s...", question_text,
+                    "Question ID not found for question: %.50s...",
+                    question_text,
                 )
                 continue
 
@@ -206,15 +211,17 @@ class QEDMetricsCalculator:
                 results_by_question[question_id] = []
 
             score_val = float(row.get("score", 0.0))
-            results_by_question[question_id].append({
-                "assertion": row.get("assertion", ""),
-                "score": score_val,
-                "passed": score_val > 0,
-                "reasoning": row.get("reasoning", ""),
-            })
+            results_by_question[question_id].append(
+                {
+                    "assertion": row.get("assertion", ""),
+                    "score": score_val,
+                    "passed": score_val > 0,
+                    "reasoning": row.get("reasoning", ""),
+                }
+            )
 
         # Build final results list
-        results: List[Dict] = []
+        results: list[dict] = []
         for question in questions:
             claim_scores = results_by_question.get(question.id, [])
             if claim_scores:
@@ -225,4 +232,3 @@ class QEDMetricsCalculator:
             results.append({"score": score, "claim_scores": claim_scores})
 
         return results
-

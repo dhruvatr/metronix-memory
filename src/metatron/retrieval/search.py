@@ -1,54 +1,124 @@
 """Hybrid search pipeline -- vector + graph + LLM answer generation."""
+
 from __future__ import annotations
+
 import asyncio
 import json
 import re
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from collections import Counter
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 import structlog
 
+if TYPE_CHECKING:
+    from metatron.core.events import EventBus
+
 from metatron.core.config import Settings
-from metatron.llm import chat_completion, chat_completion_with_retry  # TODO: async migration
+from metatron.core.events import DOCUMENT_ACCESSED, QUERY_EXECUTED
 from metatron.ingestion.processors.dates import (
-    extract_date_from_text, extract_date_range, get_dates_in_range,
+    extract_date_from_text,
+    extract_date_range,
 )
+from metatron.llm import chat_completion, chat_completion_with_retry  # TODO: async migration
 from metatron.observability.metrics import timed
-from metatron.retrieval.prompts import (
-    HYBRID_SYSTEM_PROMPT, TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT,
-    TEAM_WORKFLOW_SCHEMA_SPEC,
-)
 from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
-from metatron.retrieval.query_expansion import expand_query
-from metatron.retrieval.token_budget import (
-    MAX_GRAPH_TOKENS,
-    estimate_graph_tokens, select_fragments_within_budget,
-    truncate_graph_context,
+from metatron.retrieval.channels import (
+    MergedResult,
+    RecallContext,
+    merge_channels,
+    recall_dense_async,
+    recall_exact_async,
+    recall_graph_async,
+    recall_metadata_async,
 )
+from metatron.retrieval.prompts import (
+    HYBRID_SYSTEM_PROMPT,
+    QUERY_RESOLVER_SYSTEM_PROMPT,
+    TEAM_WORKFLOW_SCHEMA_SPEC,
+    TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT,
+)
+from metatron.retrieval.query_classifier import classify_query, get_profile_weights
+from metatron.retrieval.query_expansion import expand_query
 from metatron.retrieval.routing import (
-    _extract_json_object, is_jira_query,
+    _extract_json_object,
     should_use_team_workflow_schema,
 )
-from qdrant_client.models import Filter, FieldCondition, MatchText
-from metatron.storage.qdrant import get_hybrid_store  # TODO: async migration
+from metatron.retrieval.scoring import (
+    compute_final_score,
+    compute_signal_score,
+    normalize_rerank_scores,
+    recency_score,
+    source_balance,
+)
+from metatron.retrieval.token_budget import (
+    MAX_GRAPH_TOKENS,
+    estimate_graph_tokens,
+    select_fragments_within_budget,
+    truncate_graph_context,
+)
 from metatron.storage.graph_ops import (  # TODO: async migration
-    get_graph_entities, get_doc_labels_by_entities, get_related_documents,
-    get_entities_by_doc_labels, get_graph_relationships,
+    get_doc_labels_by_entities,
+    get_entities_by_doc_labels,
+    get_graph_entities,
+    get_graph_relationships,
     get_relationships_at_date,
 )
 
 logger = structlog.get_logger()
 _s = Settings()
 _MAX_TOTAL, _MAX_FRAG = _s.search_max_total_chars, _s.search_max_fragment_chars
-_POOL_MUL, _POOL_MIN = _s.search_pool_multiplier, _s.search_pool_min
-_DATE_MUL = int(getattr(_s, "search_date_multiplier", 3))
-_JIRA_MUL = int(getattr(_s, "search_jira_multiplier", 2))
 _GRAPH_DEPTH = int(getattr(_s, "search_graph_depth", 2))
-_REL_DOCS = int(getattr(_s, "search_related_docs_limit", 5))
-_CTX_EXTRA = int(getattr(_s, "search_context_extra", 5))
 
-_TRANSLATE_SYS = "Translate the following query to English. Return ONLY the translation, nothing else."
+_TRANSLATE_SYS = (
+    "Translate the following query to English. Return ONLY the translation, nothing else."
+)
+
+
+@timed("resolve_query")
+def resolve_query(query: str) -> str:
+    """Rewrite context-dependent references in the query to concrete values.
+
+    Uses LLM to resolve relative dates ("the day before that" → "March 11"),
+    pronouns ("tell me about it" → "tell me about Project Aurora"), and other
+    references that depend on conversation context.
+
+    Falls back to original query on any error.
+    """
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        user_msg = f"Current date: {today}\n\nQuery: {query}"
+        resolved = chat_completion(
+            messages=[
+                {"role": "system", "content": QUERY_RESOLVER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0,
+            max_tokens=200,
+            timeout=10,
+        )
+        resolved = resolved.strip()
+
+        if not resolved or len(resolved) < 3 or len(resolved) > len(query) * 3:
+            logger.warning(
+                "query.resolve_fallback",
+                reason="invalid_response",
+                original=query[:100],
+                response_len=len(resolved) if resolved else 0,
+            )
+            return query
+
+        if resolved != query:
+            logger.info(
+                "query.resolved",
+                original=query[:100],
+                resolved=resolved[:200],
+            )
+        return resolved
+    except Exception as e:
+        logger.warning("query.resolve_failed", error=str(e))
+        return query
 
 
 def _run_hooks_sync(plugin_manager, hook_name: str, context: dict) -> dict:
@@ -68,89 +138,48 @@ def _run_hooks_sync(plugin_manager, hook_name: str, context: dict) -> dict:
         except RuntimeError as e:
             if "cannot be called from a running event loop" in str(e):
                 structlog.get_logger().error(
-                    "hooks.async_conflict", hook=hook_name, error=str(e),
+                    "hooks.async_conflict",
+                    hook=hook_name,
+                    error=str(e),
                 )
             else:
                 raise
     return context
 
 
-def _compose_filters(access_filter, existing_filter):
-    """AND-compose two Qdrant Filters. Returns None if both are None."""
-    if access_filter and existing_filter:
-        all_conditions = []
-        for f in (access_filter, existing_filter):
-            if f.must:
-                all_conditions.extend(f.must)
-            if f.should:
-                all_conditions.append(Filter(should=f.should))
-            if f.must_not:
-                all_conditions.append(Filter(must_not=f.must_not))
-        return Filter(must=all_conditions)
-    return access_filter or existing_filter
-
-
-def _post_filter_acl(results: list, access_filter) -> list:
-    """Post-filter results by access_groups when Qdrant pre-filter wasn't applied.
-
-    Used for search_by_date/search_by_type which don't accept filter_conditions.
-    Extracts allowed groups from the access_filter and checks each result's
-    access_groups payload field.
-    """
-    if not access_filter or not results:
-        return results
-    # Extract allowed group IDs from the access_filter
-    allowed_groups: set = set()
-    allow_empty = False
-    if access_filter.should:
-        for cond in access_filter.should:
-            if hasattr(cond, 'match') and hasattr(cond.match, 'any'):
-                allowed_groups.update(cond.match.any)
-            if hasattr(cond, 'is_empty'):
-                allow_empty = True
-    elif access_filter.must:
-        for cond in access_filter.must:
-            if hasattr(cond, 'is_empty'):
-                allow_empty = True
-    filtered = []
-    for r in results:
-        payload = r.get("payload", r)
-        doc_groups = payload.get("access_groups", [])
-        if not doc_groups:
-            if allow_empty or not allowed_groups:
-                filtered.append(r)
-        elif allowed_groups & set(doc_groups):
-            filtered.append(r)
-    return filtered
-
-
 _ACTIVITY_KW = [
-    "doing", "working", "active", "progress",
-    "делает", "работает", "занимается", "текущ",
+    "doing",
+    "working",
+    "active",
+    "progress",
+    "делает",
+    "работает",
+    "занимается",
+    "текущ",
 ]
 
-_JIRA_KEY_RE = re.compile(r'\b([A-Z]{2,}-\d+)\b', re.IGNORECASE)
+_JIRA_KEY_RE = re.compile(r"\b([A-Z]{2,}-\d+)\b", re.IGNORECASE)
 
 _PERSON_RU = re.compile(
-    r'(?:делает|занимается|работает|насчёт|насчет|про)\s+(\w+)',
+    r"(?:делает|занимается|работает|насчёт|насчет|про)\s+(\w+)",
     re.IGNORECASE,
 )
 _PERSON_EN = re.compile(
-    r'what\s+is\s+(\w+)\s+doing'
-    r'|what\s+(\w+)\s+is\s+working'
-    r'|(?:what|how|tell\s+\w*)\s+about\s+(\w+)',
+    r"what\s+is\s+(\w+)\s+doing"
+    r"|what\s+(\w+)\s+is\s+working"
+    r"|(?:what|how|tell\s+\w*)\s+about\s+(\w+)",
     re.IGNORECASE,
 )
 
 _PROPER_NOUN_RE = re.compile(
-    r'(?:[A-ZА-ЯЁ][a-zа-яё]+(?:\s+[A-ZА-ЯЁ][a-zа-яё]+)+)',
+    r"(?:[A-ZА-ЯЁ][a-zа-яё]+(?:\s+[A-ZА-ЯЁ][a-zа-яё]+)+)",
 )
 
 # Matches uppercase tokens like "3M", "AMD", "AES", "COCACOLA", "IBM"
 # and multi-word company names like "Activision Blizzard", "Best Buy"
-_COMPANY_TOKEN_RE = re.compile(r'\b([A-Z0-9]{2,})\b')
+_COMPANY_TOKEN_RE = re.compile(r"\b([A-Z0-9]{2,})\b")
 _COMPANY_MULTI_RE = re.compile(
-    r'\b((?:[A-Z][a-z]+\s+){1,3}[A-Z][a-z]+)\b',
+    r"\b((?:[A-Z][a-z]+\s+){1,3}[A-Z][a-z]+)\b",
 )
 
 
@@ -174,12 +203,57 @@ def extract_title_entities(query: str) -> list[str]:
     Filters out common English words (FY, USD, Q2, etc.).
     """
     stop = {
-        "FY", "USD", "FY2017", "FY2018", "FY2019", "FY2020", "FY2021",
-        "FY2022", "FY2023", "FY2024", "YOY", "PP", "Q1", "Q2", "Q3", "Q4",
-        "CEO", "CFO", "CTO", "SEC", "US", "UK", "EU", "IT", "AI", "ML",
-        "OR", "IF", "IS", "AS", "AT", "BY", "TO", "OF", "IN", "ON", "AN",
-        "AND", "THE", "FOR", "NOT", "GDP", "IPO", "ROE", "ROA", "PE",
-        "GAAP", "NON", "EBITDA", "CAPEX", "OPEX",
+        "FY",
+        "USD",
+        "FY2017",
+        "FY2018",
+        "FY2019",
+        "FY2020",
+        "FY2021",
+        "FY2022",
+        "FY2023",
+        "FY2024",
+        "YOY",
+        "PP",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "CEO",
+        "CFO",
+        "CTO",
+        "SEC",
+        "US",
+        "UK",
+        "EU",
+        "IT",
+        "AI",
+        "ML",
+        "OR",
+        "IF",
+        "IS",
+        "AS",
+        "AT",
+        "BY",
+        "TO",
+        "OF",
+        "IN",
+        "ON",
+        "AN",
+        "AND",
+        "THE",
+        "FOR",
+        "NOT",
+        "GDP",
+        "IPO",
+        "ROE",
+        "ROA",
+        "PE",
+        "GAAP",
+        "NON",
+        "EBITDA",
+        "CAPEX",
+        "OPEX",
     }
     entities: list[str] = []
 
@@ -209,112 +283,6 @@ def extract_title_entities(query: str) -> list[str]:
     return result
 
 
-def _build_title_filter(entities: list[str]) -> Optional[Filter]:
-    """Build a Qdrant Filter that matches titles containing any of the entities.
-
-    Handles both spaced ("Activision Blizzard") and concatenated
-    ("ACTIVISIONBLIZZARD") title patterns. Generates multiple MatchText
-    variants (original, UPPER, collapsed, collapsed UPPER) since Qdrant
-    MatchText is case-sensitive on non-indexed fields.
-    """
-    if not entities:
-        return None
-    conditions: list[FieldCondition] = []
-    seen: set[str] = set()
-
-    def _add(text: str) -> None:
-        if text and text not in seen:
-            seen.add(text)
-            conditions.append(FieldCondition(key="title", match=MatchText(text=text)))
-
-    for e in entities:
-        _add(e)
-        _add(e.upper())
-        _add(e.lower())
-        # Collapsed: "Activision Blizzard" → "ActivisionBlizzard"
-        collapsed = e.replace(" ", "")
-        if collapsed != e:
-            _add(collapsed)
-            _add(collapsed.upper())
-            _add(collapsed.lower())
-
-    if not conditions:
-        return None
-    if len(conditions) == 1:
-        return Filter(must=conditions)
-    return Filter(should=conditions)
-
-
-def _boost_title_matches(query: str, results: list[dict],
-                         entities: list[str] | None = None) -> list[dict]:
-    """Boost results whose title contains an entity from the query."""
-    if entities is None:
-        entities = extract_title_entities(query)
-    if not entities:
-        return results
-
-    entities_lower = [e.lower() for e in entities]
-
-    boosted: list[dict] = []
-    rest: list[dict] = []
-    for r in results:
-        title = (r.get("title") or (r.get("payload") or {}).get("title") or "").lower()
-        if any(e in title for e in entities_lower):
-            boosted.append(r)
-        else:
-            rest.append(r)
-
-    if boosted:
-        logger.info("search.title_boost", entities=entities, boosted=len(boosted))
-    return boosted + rest
-
-
-def _search_by_title(query: str, workspace_id: Optional[str], limit: int = 5) -> list[dict]:
-    """Search for documents where title matches entities in query."""
-    entities = extract_title_entities(query)
-    if not entities:
-        return []
-    try:
-        store = get_hybrid_store(workspace_id)
-        results: list[dict] = []
-        for entity in entities:
-            for variant in _title_variants(entity):
-                matches = store.scroll_by_title(variant, limit=limit)
-                results = _merge_unique(results, matches)
-        if results:
-            logger.info("search.title_injection", entities=entities, count=len(results))
-        return results
-    except Exception as e:
-        logger.warning("search.title_injection_failed", error=str(e))
-        return []
-
-
-def _title_variants(entity: str) -> list[str]:
-    """Generate case/spacing variants for title matching."""
-    variants = [entity, entity.upper(), entity.lower()]
-    collapsed = entity.replace(" ", "")
-    if collapsed != entity:
-        variants.extend([collapsed, collapsed.upper(), collapsed.lower()])
-    return list(dict.fromkeys(variants))  # dedup, preserve order
-
-
-def _inject_jira_key_results(query: str, workspace_id: Optional[str]) -> list[dict]:
-    """Extract Jira keys from query and fetch exact matches via doc_label."""
-    keys = _JIRA_KEY_RE.findall(query)
-    if not keys:
-        return []
-    keys = list(dict.fromkeys(k.upper() for k in keys))  # dedup, preserve order
-    try:
-        store = get_hybrid_store(workspace_id)
-        results = store.search_by_doc_labels(keys)
-        if results:
-            logger.info("search.jira_key_injection", keys=keys, count=len(results))
-        return results
-    except Exception as e:
-        logger.warning("search.jira_key_injection_failed", error=str(e))
-        return []
-
-
 def detect_response_language(query: str) -> str:
     """Detect primary language of the query.
 
@@ -327,8 +295,8 @@ def detect_response_language(query: str) -> str:
     Russian word appears in an otherwise English sentence stay English because
     the Cyrillic ratio is low.
     """
-    cyrillic = sum(1 for c in query if '\u0400' <= c <= '\u04FF')
-    latin = sum(1 for c in query if 'a' <= c.lower() <= 'z')
+    cyrillic = sum(1 for c in query if "\u0400" <= c <= "\u04ff")
+    latin = sum(1 for c in query if "a" <= c.lower() <= "z")
     total = cyrillic + latin
     if total == 0:
         return "English"
@@ -339,7 +307,7 @@ def detect_response_language(query: str) -> str:
 
 def _has_cyrillic(text: str) -> bool:
     """Return True if text contains any Cyrillic characters."""
-    return any('\u0400' <= c <= '\u04FF' for c in text)
+    return any("\u0400" <= c <= "\u04ff" for c in text)
 
 
 @timed("translate_query")
@@ -349,15 +317,18 @@ def translate_query_to_english(query: str) -> str:  # TODO: async migration
         return query
     try:
         t = chat_completion(
-            messages=[{"role": "system", "content": _TRANSLATE_SYS},
-                      {"role": "user", "content": query}],
-            temperature=0.1, max_tokens=200, timeout=10,
+            messages=[
+                {"role": "system", "content": _TRANSLATE_SYS},
+                {"role": "user", "content": query},
+            ],
+            temperature=0.1,
+            max_tokens=200,
+            timeout=10,
         )
         return t.strip()
     except Exception:
         logger.warning("translate_query.failed", qlen=len(query))
     return query
-
 
 
 def _result_type(r: dict) -> str:
@@ -370,47 +341,8 @@ def _result_type(r: dict) -> str:
     ).lower()
 
 
-_MIN_PER_SOURCE = 2
-
-
-def diversify_results(results: list, k: int = 10) -> list:
-    """Ensure source diversity in search results.
-
-    Instead of letting one source dominate, guarantees minimum
-    representation from each source type that has results.
-
-    Strategy:
-    - Reserve min(2, available) slots per source type
-    - Fill remaining slots by relevance score
-    """
-    if not results or k <= 0:
-        return results[:k]
-
-    by_source: dict[str, list[dict]] = {}
-    for r in results:
-        by_source.setdefault(_result_type(r), []).append(r)
-
-    if len(by_source) <= 1:
-        return results[:k]
-
-    selected: list[dict] = []
-    remaining: list[dict] = []
-
-    for items in by_source.values():
-        take = min(_MIN_PER_SOURCE, len(items))
-        selected.extend(items[:take])
-        remaining.extend(items[take:])
-
-    slots_left = k - len(selected)
-    if slots_left > 0 and remaining:
-        remaining.sort(key=lambda r: r.get("score", 0) or 0, reverse=True)
-        selected.extend(remaining[:slots_left])
-
-    return selected[:k]
-
-
-def _doc_labels(results: List[Dict]) -> List[str]:
-    out: List[str] = []
+def _doc_labels(results: list[dict]) -> list[str]:
+    out: list[str] = []
     for m in results:
         lb = m.get("doc_label") or (m.get("payload") or {}).get("doc_label")
         if lb:
@@ -418,88 +350,13 @@ def _doc_labels(results: List[Dict]) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-def _merge_unique(base: list, extra: list) -> list:
-    seen = {hash((d.get("memory") or "")[:200]) for d in base if d.get("memory")}
-    for r in extra:
-        c = r.get("memory") or ""
-        if c:
-            h = hash(c[:200])
-            if h not in seen:
-                seen.add(h)
-                base.append(r)
-    return base
-
-
-@timed("search")
-def search_with_date_filter(  # TODO: async migration
-    query: str, user_id: str = "user", k: int = 25,
-    workspace_id: Optional[str] = None,
-    date_query: Optional[str] = None,
-    title_filter: Optional[Filter] = None,
-    access_filter=None,
-) -> list:
-    """Hybrid search with date filtering (workspace-aware).
-
-    Args:
-        query: Search query (may be expanded/translated for BM25+vector).
-        date_query: Original query for date extraction (if different from query).
-        title_filter: Optional Qdrant filter to pre-filter by document title.
-        access_filter: Optional Qdrant filter for document-level RBAC (access groups).
-    """
-    combined_filter = _compose_filters(access_filter, title_filter)
-    store = get_hybrid_store(workspace_id)
-    date_range = extract_date_range(date_query or query)
-    if date_range:
-        dates = get_dates_in_range(date_range[0], date_range[1])
-        logger.info("search.date_filter", start=date_range[0], end=date_range[1],
-                     num_dates=len(dates))
-        dd = _post_filter_acl(store.search_by_date(dates, limit=k * _DATE_MUL), access_filter)
-        start = datetime.strptime(date_range[0], "%Y-%m-%d")
-        end = datetime.strptime(date_range[1], "%Y-%m-%d")
-        wider_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
-        wider_end = (end + timedelta(days=7)).strftime("%Y-%m-%d")
-        wider_dates = get_dates_in_range(wider_start, wider_end)
-        wider = _post_filter_acl(store.search_by_date(wider_dates, limit=k * _DATE_MUL), access_filter)
-        if dd or wider:
-            merged = _merge_unique(dd or [], wider or [])
-            merged = _merge_unique(merged, store.hybrid_search(query, limit=k,
-                                                               filter_conditions=combined_filter))
-            if wider and not dd:
-                logger.info("search.date_widened", original=date_range,
-                            wider=(wider_start, wider_end), results=len(wider))
-            return diversify_results(merged, k=k)
-        logger.warning("search.date_filter.empty", start=date_range[0], end=date_range[1])
-    td = extract_date_from_text(date_query or query)
-    if td:
-        dd = _post_filter_acl(store.search_by_date([td], limit=k), access_filter)
-        if dd:
-            if len(dd) < k:
-                _merge_unique(dd, store.hybrid_search(query, limit=k,
-                                                      filter_conditions=combined_filter))
-            return dd[:k]
-    if is_jira_query(query):
-        jd = _post_filter_acl(store.search_by_type("jira", limit=k * _JIRA_MUL), access_filter)
-        if jd:
-            return _merge_unique(jd, store.hybrid_search(query, limit=k,
-                                                         filter_conditions=combined_filter))[: k * _JIRA_MUL]
-
-    # Entity-filtered search: try filtered first, fallback to unfiltered
-    if combined_filter:
-        filtered = store.hybrid_search(query, limit=k, filter_conditions=combined_filter)
-        if len(filtered) >= max(3, k // 2):
-            logger.info("search.entity_filtered", count=len(filtered))
-            return filtered
-        # Not enough results with filter — relax title filter but keep ACL
-        logger.info("search.entity_filter_sparse", filtered=len(filtered))
-        fallback_filter = access_filter  # keep ACL, drop only title filter
-        unfiltered = store.hybrid_search(query, limit=k, filter_conditions=fallback_filter)
-        return _merge_unique(filtered, unfiltered)[:k]
-
-    return store.hybrid_search(query, limit=k)
-
-
-def _collect_frags(base, seen, total):
-    frags: List[str] = []
+def _collect_frags(
+    base: list[dict],
+    seen: set[int],
+    total: int,
+) -> tuple[list[dict], set[int], int, dict[str, dict]]:
+    frags: list[dict] = []
+    doc_stats: dict[str, dict] = {}  # {doc_label: {title, word_count, fetch_count}}
     for mem in base:
         text = mem.get("memory") or mem.get("data") or ""
         if len(text) > _MAX_FRAG:
@@ -507,9 +364,7 @@ def _collect_frags(base, seen, total):
 
         # Prefix with source label so the LLM knows the origin
         source_type = _result_type(mem)
-        title = (mem.get("title")
-                 or (mem.get("payload") or {}).get("title")
-                 or "")
+        title = mem.get("title") or (mem.get("payload") or {}).get("title") or ""
         if source_type != "unknown" or title:
             parts = []
             if source_type != "unknown":
@@ -523,215 +378,779 @@ def _collect_frags(base, seen, total):
             continue
         if total + len(text) > _MAX_TOTAL:
             break
-        frags.append(text); seen.add(th); total += len(text)
-    return frags, seen, total
+        seen.add(th)
+        total += len(text)
+
+        source_role = (
+            mem.get("source_role")
+            or (mem.get("payload") or {}).get("source_role")
+            or "knowledge_base"
+        )
+        date = mem.get("date") or (mem.get("payload") or {}).get("date") or ""
+        dl = mem.get("doc_label") or (mem.get("payload") or {}).get("doc_label") or ""
+
+        frags.append(
+            {
+                "text": text,
+                "source_type": source_type,
+                "source_role": source_role,
+                "title": title,
+                "date": date,
+                "doc_label": dl,
+                "evidence_marker": "",  # set later by _mark_evidence_role
+            }
+        )
+
+        # Track per-document stats for FinOps cost savings
+        if dl:
+            words = len(text.split())
+            if dl not in doc_stats:
+                doc_stats[dl] = {"title": title, "word_count": 0, "fetch_count": 0}
+            doc_stats[dl]["word_count"] += words
+            doc_stats[dl]["fetch_count"] += 1
+            if title:
+                doc_stats[dl]["title"] = title
+    return frags, seen, total, doc_stats
 
 
-_SOURCE_ICONS = {"confluence": "\U0001f4c4", "jira": "\U0001f4cb", "upload": "\U0001f4ce", "notion": "\U0001f4d3"}
-_MAX_SOURCES = 5
+_SOURCE_ICONS = {
+    "confluence": "\U0001f4c4",
+    "jira": "\U0001f4cb",
+    "upload": "\U0001f4ce",
+    "notion": "\U0001f4d3",
+}
+
+# Maps query classifier profile → which source_role gets PRIMARY evidence marker.
+# None means all fragments get SUPPORTING (zero behavior change for mixed/unknown).
+PROFILE_PRIMARY_ROLE: dict[str, str | None] = {
+    "execution": "task_tracker",
+    "documentation": "knowledge_base",
+    "user_file": "user_upload",
+    "relationship": "knowledge_base",
+    "temporal": "task_tracker",
+    "mixed": None,
+}
+
+
+def _mark_evidence_role(frags: list[dict], query_profile: str) -> None:
+    """Label each fragment as PRIMARY or SUPPORTING based on query profile.
+
+    Mutates frags in place. PRIMARY = source_role matches the expected
+    primary source for this query profile. Everything else is SUPPORTING.
+    """
+    primary_role = PROFILE_PRIMARY_ROLE.get(query_profile)
+    for frag in frags:
+        if primary_role and frag["source_role"] == primary_role:
+            frag["evidence_marker"] = "PRIMARY"
+        else:
+            frag["evidence_marker"] = "SUPPORTING"
 
 
 def _append_sources(answer: str, results: list) -> str:
-    """Append a sources section to the answer with document titles and types."""
+    """Append a sources section to the answer with document titles and types.
+
+    All unique sources are included so that every ``[$[title]$]`` reference
+    marker in the LLM answer can be resolved to a URL by downstream consumers
+    (frontend / OpenAI-compat layer).
+    """
     seen_titles: set[str] = set()
     sources: list[str] = []
     for mem in results:
-        title = (
-            mem.get("title")
-            or (mem.get("payload") or {}).get("title")
-            or ""
-        )
+        title = mem.get("title") or (mem.get("payload") or {}).get("title") or ""
         source_type = _result_type(mem)
         if not title or title in seen_titles:
             continue
         seen_titles.add(title)
         icon = _SOURCE_ICONS.get(source_type, "\U0001f4c4")
-        url = (
-            mem.get("url")
-            or (mem.get("payload") or {}).get("url")
-            or ""
-        )
+        url = mem.get("url") or (mem.get("payload") or {}).get("url") or ""
         if url:
             sources.append(f"{icon} {title} \u2014 {url}")
         else:
             sources.append(f"{icon} {title}")
-        if len(sources) >= _MAX_SOURCES:
-            break
     if sources:
         return answer + "\n\n\U0001f4da Sources:\n" + "\n".join(sources)
     return answer
 
 
+# Fixed display order for source_role groups (when no PRIMARY group takes priority)
+_SOURCE_ROLE_ORDER = ["knowledge_base", "task_tracker", "user_upload", "communication"]
+_SOURCE_ROLE_LABELS = {
+    "knowledge_base": "Knowledge base sources",
+    "task_tracker": "Task tracker sources",
+    "user_upload": "User upload sources",
+    "communication": "Communication sources",
+}
+
+
 def _build_ctx(q, lang, frags, g_ents, g_rels, g_docs):
     jd = lambda o: json.dumps(o, ensure_ascii=False, indent=2)  # noqa: E731
+
+    # -- Group fragments by source_role --
+    groups: dict[str, list[dict]] = {}
+    primary_group: str | None = None
+    for f in frags:
+        role = f.get("source_role", "knowledge_base")
+        groups.setdefault(role, []).append(f)
+        if f.get("evidence_marker") == "PRIMARY" and primary_group is None:
+            primary_group = role
+
+    # Build ordered list: primary group first, then fixed order
+    ordered_roles: list[str] = []
+    if primary_group:
+        ordered_roles.append(primary_group)
+    for role in _SOURCE_ROLE_ORDER:
+        if role != primary_group and role in groups:
+            ordered_roles.append(role)
+    # Any unknown roles appended at end
+    for role in groups:
+        if role not in ordered_roles:
+            ordered_roles.append(role)
+
+    # -- Assemble fragment sections --
+    frag_sections: list[str] = []
+    for role in ordered_roles:
+        label = _SOURCE_ROLE_LABELS.get(role, f"{role} sources")
+        lines = [f"## {label}"]
+        for f in groups[role]:
+            marker = f.get("evidence_marker", "SUPPORTING")
+            date_suffix = f" ({f['date']})" if f.get("date") else ""
+            # Text already has [TYPE] Title\ncontent prefix from _collect_frags
+            # Replace the first line with marker-prefixed version
+            text_lines = f["text"].split("\n", 1)
+            header = text_lines[0]
+            body = text_lines[1] if len(text_lines) > 1 else ""
+            lines.append(f"[{marker}] {header}{date_suffix}")
+            if body:
+                lines.append(body)
+            lines.append("")  # blank line between fragments
+        frag_sections.append("\n".join(lines))
+
+    fragment_text = "\n".join(frag_sections)
+
+    # -- Graph context (unchanged format) --
+    graph_parts: list[str] = []
+    if g_ents or g_rels or g_docs:
+        graph_parts.append("## Graph context")
+        if g_ents:
+            graph_parts.append(f"Entities: {jd(g_ents)}")
+        if g_rels:
+            graph_parts.append(f"Relationships: {jd(g_rels)}")
+        if g_docs:
+            graph_parts.append(f"Related documents: {jd(g_docs)}")
+    graph_text = "\n".join(graph_parts)
+
     return (
         f"⚠️ RESPOND ONLY IN {lang.upper()}. Translate all information to {lang} if needed.\n\n"
         f"User question:\n{q}\n\n"
-        f"Vector search results (texts):\n{jd(frags)}\n\n"
-        f"Graph entities:\n{jd(g_ents)}\n\n"
-        f"Entity relationships:\n{jd(g_rels)}\n\n"
-        f"Related documents:\n{jd(g_docs)}\n\n"
+        f"{fragment_text}\n\n"
+        f"{graph_text}\n\n"
         f"Provide a coherent answer. LANGUAGE: {lang.upper()} ONLY."
     )
 
 
+def _extract_fast_signals(query: str) -> tuple[list[str], tuple[str, ...] | None]:
+    """Extract cheap metadata signals (Jira keys + dates) from ``query``.
+
+    Shared by ``_build_recall_context`` and ``fast_search``. Pure function —
+    no I/O, no LLM calls. Returns a tuple of (jira_keys, extracted_dates)
+    where extracted_dates is None when the query has no date reference.
+    """
+    # Jira key extraction
+    jira_keys = _JIRA_KEY_RE.findall(query)
+    jira_keys = list(dict.fromkeys(k.upper() for k in jira_keys))
+
+    # Date extraction
+    date_range = extract_date_range(query)
+    extracted_dates: tuple[str, ...] | None = None
+    if date_range:
+        from metatron.ingestion.processors.dates import get_dates_in_range
+
+        dates_list = get_dates_in_range(date_range[0], date_range[1])
+        if dates_list:
+            extracted_dates = tuple(dates_list)
+    if not extracted_dates:
+        single_date = extract_date_from_text(query)
+        if single_date:
+            extracted_dates = (single_date,)
+
+    return jira_keys, extracted_dates
+
+
+def _build_freshness_filter(settings: Settings | None):  # type: ignore[no-untyped-def]
+    """Build a Qdrant Filter excluding ARCHIVED / SUPERSEDED docs.
+
+    MTRNIX-313: returns ``None`` when
+    ``METATRON_FRESHNESS_KB_SEARCH_FILTER_ENABLED=False`` (default) so the
+    retrieval pipeline stays byte-identical to Phase A. When the flag is on
+    the filter rejects any chunk whose payload's ``status`` is ``archived``
+    or ``superseded``. STALE is deliberately *not* excluded — STALE docs
+    should still be searchable; scoring handles the rank downgrade.
+    """
+    if settings is None or not getattr(settings, "freshness_kb_search_filter_enabled", False):
+        return None
+    try:
+        from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+
+        return Filter(
+            must_not=[
+                FieldCondition(key="status", match=MatchValue(value="archived")),
+                FieldCondition(key="status", match=MatchValue(value="superseded")),
+            ]
+        )
+    except Exception:
+        logger.warning("search.build_freshness_filter.failed", exc_info=True)
+        return None
+
+
+def _build_recall_context(
+    original_query: str,
+    translated_query: str,
+    expanded_query: str,
+    detected_language: str,
+    workspace_id: str | None,
+    access_filter=None,
+    settings: Settings | None = None,
+) -> RecallContext:
+    """Consolidate all extraction logic into a single RecallContext.
+
+    Extracts Jira keys, title entities, person names, date ranges,
+    and activity signals from the query text. This replaces the scattered
+    inline extraction that was previously spread across lines 616-668
+    of hybrid_search_and_answer.
+    """
+    jira_keys, extracted_dates = _extract_fast_signals(original_query)
+
+    # Title entity extraction
+    title_entities = extract_title_entities(original_query)
+
+    # Activity detection
+    rq_lower = original_query.lower()
+    is_activity = any(kw in rq_lower for kw in _ACTIVITY_KW)
+
+    # Person detection
+    detected_person: list[str] = []
+    m = _PERSON_RU.search(rq_lower) or _PERSON_EN.search(original_query)
+    if m:
+        person_token = next((g for g in m.groups() if g), None)
+        if person_token:
+            person_token = person_token.strip()
+            full_names = get_alias_registry().resolve(person_token)
+            if not full_names:
+                full_names = resolve_person_name(person_token)
+            detected_person = list(full_names) if full_names else []
+
+    return RecallContext(
+        original_query=original_query,
+        translated_query=translated_query,
+        expanded_query=expanded_query,
+        detected_language=detected_language,
+        workspace_id=workspace_id,
+        access_filter=access_filter,
+        settings=settings or _s,
+        extracted_jira_keys=jira_keys,
+        extracted_title_entities=title_entities,
+        extracted_dates=extracted_dates,
+        detected_person=detected_person,
+        is_activity_query=is_activity,
+        freshness_filter=_build_freshness_filter(settings or _s),
+    )
+
+
+def _prepend_root_context(
+    results: list[dict],
+    workspace_id: str | None,
+) -> list[dict]:
+    """Fetch root chunks for child results and prepend their content.
+
+    For each result with chunk_type=="child", looks up its parent_id,
+    fetches the root chunk from Qdrant, and prepends the root text to
+    the child's data/memory fields as context.
+
+    Graceful degradation: if root fetch fails, returns results unchanged.
+    """
+    # Collect unique parent_ids from child chunks
+    parent_ids: dict[str, list[dict]] = {}
+    for r in results:
+        payload = r.get("payload") or {}
+        chunk_type = payload.get("chunk_type", "")
+        parent_id = payload.get("parent_id", "")
+        if chunk_type == "child" and parent_id:
+            parent_ids.setdefault(parent_id, []).append(r)
+
+    if not parent_ids:
+        return results
+
+    try:
+        from metatron.storage.qdrant import get_hybrid_store
+
+        store = get_hybrid_store(workspace_id)
+        root_results = store.fetch_by_chunk_ids(
+            list(parent_ids.keys()),
+        )
+    except Exception:
+        logger.warning("search.root_fetch_failed", exc_info=True)
+        return results
+
+    # Build lookup: chunk_id → root text
+    root_texts: dict[str, str] = {}
+    for rr in root_results:
+        payload = rr.get("payload") or {}
+        chunk_id = payload.get("chunk_id", "")
+        text = rr.get("data") or rr.get("memory") or ""
+        if chunk_id and text:
+            root_texts[chunk_id] = text
+
+    # Prepend root context to child results
+    for pid, children in parent_ids.items():
+        root_text = root_texts.get(pid)
+        if not root_text:
+            continue
+        prefix = f"[ROOT CONTEXT]\n{root_text}\n\n[DETAIL]\n"
+        for child in children:
+            for field in ("data", "memory"):
+                if child.get(field):
+                    child[field] = prefix + child[field]
+            # Also update nested payload
+            p = child.get("payload") or {}
+            for field in ("data", "memory"):
+                if p.get(field):
+                    p[field] = prefix + p[field]
+
+    return results
+
+
+async def _run_recall_channels_async(
+    ctx: RecallContext,
+) -> tuple[list, list, list, list]:
+    """Run 4 async recall channels in parallel using asyncio.gather."""
+    dense, exact, metadata, graph = await asyncio.gather(
+        recall_dense_async(ctx),
+        recall_exact_async(ctx),
+        recall_metadata_async(ctx),
+        recall_graph_async(ctx),
+    )
+    return dense, exact, metadata, graph
+
+
+@timed("fast_search")
+async def fast_search(
+    query: str,
+    workspace_id: str | None = None,
+    top_k: int = 10,
+    access_filter=None,
+) -> list[dict]:
+    """Fast retrieval profile — dense (+ optional metadata) recall only.
+
+    This is the low-latency sibling of ``hybrid_search_and_answer`` used by
+    the ``metatron_search_fast`` MCP tool for routine lookups. It bypasses
+    every heavy stage of the full pipeline:
+
+    - No HyDE / LLM query expansion / query translation / classifier
+    - No cross-encoder reranker
+    - No graph recall channel / graph enrichment
+    - No answer generation
+
+    It always runs ``recall_dense_async``; ``recall_metadata_async`` is only
+    invoked when ``_extract_fast_signals`` finds Jira keys or date hints.
+    Results are merged via ``merge_channels`` and sorted by the dense channel
+    score (falling back to the max channel score when dense missed).
+
+    Target: P50 latency under 800 ms on a warm Qdrant/SPLADE cache.
+    """
+    jira_keys, extracted_dates = _extract_fast_signals(query)
+
+    # Minimal RecallContext — no translation, expansion, person resolution, etc.
+    ctx = RecallContext(
+        original_query=query,
+        translated_query=query,
+        expanded_query=query,
+        detected_language="",
+        workspace_id=workspace_id,
+        access_filter=access_filter,
+        settings=_s,
+        extracted_jira_keys=jira_keys,
+        extracted_title_entities=[],
+        extracted_dates=extracted_dates,
+        detected_person=[],
+        is_activity_query=False,
+        hyde_embedding=None,
+        freshness_filter=_build_freshness_filter(_s),
+    )
+
+    include_metadata = bool(_s.search_fast_include_metadata and (jira_keys or extracted_dates))
+
+    if include_metadata:
+        dense_res, metadata_res = await asyncio.gather(
+            recall_dense_async(ctx),
+            recall_metadata_async(ctx),
+        )
+    else:
+        dense_res = await recall_dense_async(ctx)
+        metadata_res = []
+
+    merged = merge_channels([dense_res, metadata_res])
+
+    def _sort_key(mr: MergedResult) -> float:
+        scores = mr.get("channel_scores") or {}
+        dense_score = scores.get("dense")
+        if dense_score is not None:
+            return float(dense_score)
+        if scores:
+            return max(float(v) for v in scores.values())
+        return 0.0
+
+    merged.sort(key=_sort_key, reverse=True)
+    return [mr["memory"] for mr in merged[:top_k]]
+
+
+async def _emit_search_events(
+    *,
+    bus: EventBus | None,
+    workspace_id: str,
+    agent_id: str | None,
+    session_id: str | None,
+    source: str,
+    query: str,
+    top_k: int,
+    result_count: int,
+    duration_ms: int,
+    docs_by_channel: dict[str, list[str]],
+) -> None:
+    """Emit QUERY_EXECUTED + per-channel DOCUMENT_ACCESSED with a shared correlation_id.
+
+    No-ops when ``bus`` is None or ``agent_id`` could not be resolved.
+    Empty channels produce no DOCUMENT_ACCESSED event.
+    """
+    if bus is None or not agent_id:
+        return
+    from uuid import uuid4
+
+    correlation_id = uuid4().hex
+    await bus.emit(
+        QUERY_EXECUTED,
+        {
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "correlation_id": correlation_id,
+            "query": query[:256],
+            "top_k": top_k,
+            "result_count": result_count,
+            "duration_ms": duration_ms,
+            "source": source,
+        },
+    )
+    for channel, doc_ids in docs_by_channel.items():
+        if not doc_ids:
+            continue
+        original_count = len(doc_ids)
+        capped_ids = list(doc_ids)[:50]
+        if original_count > 50:
+            logger.warning(
+                "activity_log.document_ids_capped",
+                channel=channel,
+                original_count=original_count,
+                cap=50,
+                correlation_id=correlation_id,
+            )
+        await bus.emit(
+            DOCUMENT_ACCESSED,
+            {
+                "workspace_id": workspace_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "correlation_id": correlation_id,
+                "document_ids": capped_ids,
+                "channel": channel,
+            },
+        )
+
+
 @timed("hybrid_search_and_answer")
-def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
-    query: str, user_id: str = "user", k: int = 25,
-    workspace_id: Optional[str] = None, intent_query: Optional[str] = None,
+async def hybrid_search_and_answer(  # noqa: C901
+    query: str,
+    user_id: str = "user",
+    k: int = 25,
+    workspace_id: str | None = None,
+    intent_query: str | None = None,
     return_trace: bool = False,
-    title_filter: Optional[Filter] = None,
     plugin_manager=None,
+    *,
+    source: str = "rest",
+    session_id: str | None = None,
 ) -> str | dict:
-    """End-to-end hybrid search and answer generation."""
+    """End-to-end hybrid search and answer generation (async)."""
     import time
+
+    from metatron.activity.context import current_agent_id
+
     start_time = time.time()
-    
-    rq = (intent_query or query or "").strip()
+    agent_id = current_agent_id.get()
+
+    raw_query = (intent_query or query or "").strip()
+    # Resolve contextual references (relative dates, pronouns) using the full
+    # composite query which contains conversation history.  When intent_query
+    # is provided (OpenAI-compat), query carries the context we need.
+    rq = await asyncio.to_thread(
+        resolve_query,
+        query.strip() if intent_query and query else raw_query,
+    )
+    rq_original = raw_query
     use_schema = should_use_team_workflow_schema(rq)
     lang = detect_response_language(rq)
 
     # Expand query for better BM25 recall (adds status keywords, synonyms)
-    eq = expand_query(rq)
+    eq = await asyncio.to_thread(expand_query, rq)
     # Translate expanded query for vector/BM25 search if it has Cyrillic
-    sq = translate_query_to_english(eq) if _has_cyrillic(eq) else eq
+    sq = await asyncio.to_thread(translate_query_to_english, eq) if _has_cyrillic(eq) else eq
 
-    # -- Jira key exact match: "MTRNIX-108" → direct lookup --
-    jira_key_results = _inject_jira_key_results(rq, workspace_id)
+    # -- Classify query intent --
+    if _s.query_classifier_enabled:
+        # Reuse sq when original == expanded (avoids duplicate LLM translation)
+        if _has_cyrillic(rq):
+            _translated_for_classifier = (
+                sq if rq == eq else await asyncio.to_thread(translate_query_to_english, rq)
+            )
+        else:
+            _translated_for_classifier = rq
+        classification = await asyncio.to_thread(
+            classify_query,
+            rq,
+            translated_query=_translated_for_classifier,
+        )
+    else:
+        classification = {"profile": "mixed", "confidence": 1.0, "method": "disabled"}
 
-    # -- Inject status/person-filtered results for activity queries --
-    # Person-specific takes priority: "Что делает Женя?" injects only
-    # Evgeny's tasks, NOT all In Progress tasks from the whole team.
-    injected: list = []
-    rq_lower = rq.lower()
-    is_activity = any(kw in rq_lower for kw in _ACTIVITY_KW)
-
-    # Detect person first
-    person = None
-    m = _PERSON_RU.search(rq_lower) or _PERSON_EN.search(rq)
-    if m:
-        person = next((g for g in m.groups() if g), None)
-
-    if person:
-        # Person-specific: only their tasks, skip general In Progress
-        person = person.strip()
-        full_names = get_alias_registry().resolve(person)
-        if not full_names:
-            full_names = resolve_person_name(person)
-        try:
-            store = get_hybrid_store(workspace_id)
-            for fname in full_names:
-                person_tasks = store.search_by_assignee(fname, limit=10)
-                if person_tasks:
-                    logger.info("search.injected_person_tasks",
-                                person=person, resolved=fname, count=len(person_tasks))
-                    injected = _merge_unique(injected, person_tasks)
-        except Exception as e:
-            logger.warning("search.person_injection_failed", error=str(e))
-    elif is_activity:
-        # General activity (no specific person): all In Progress tasks
-        try:
-            store = get_hybrid_store(workspace_id)
-            for status in ("In Progress", "В работе", "Selected for Development"):
-                batch = store.search_by_status(status, limit=10)
-                if batch:
-                    injected = _merge_unique(injected, batch)
-            if injected:
-                logger.info("search.injected_in_progress", count=len(injected))
-        except Exception as e:
-            logger.warning("search.in_progress_injection_failed", error=str(e))
-
-    # -- Entity extraction for title filtering --
-    entities = extract_title_entities(rq)
-    if title_filter is None:
-        title_filter = _build_title_filter(entities)
-    if entities:
-        logger.info("search.entities_extracted", entities=entities)
-
-    # -- Title-match injection: find docs by title before hybrid search --
-    title_hits = _search_by_title(rq, workspace_id)
+    _profile_weights = get_profile_weights(classification["profile"])
 
     # -- ACL pre-filter: restrict search to user's groups --
     access_filter = None
     if plugin_manager:
-        ctx = _run_hooks_sync(plugin_manager, "search_pre_filter", {
-            "user_id": user_id, "workspace_id": workspace_id, "query": rq,
-        })
-        access_filter = ctx.get("access_filter")
+        hook_ctx: dict = {
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "query": rq,
+        }
+        for hook in plugin_manager.get_pipeline_hooks("search_pre_filter"):
+            hook_ctx = await hook(hook_ctx)
+        access_filter = hook_ctx.get("access_filter")
 
     # Store user_groups from pre-filter hook for graph enrichment
     user_groups = None
     if plugin_manager and access_filter:
-        user_groups = ctx.get("user_groups")
+        user_groups = hook_ctx.get("user_groups")
 
-    pool = max(k * _POOL_MUL, _POOL_MIN)
-    raw = search_with_date_filter(
-        sq, user_id=user_id, k=pool, workspace_id=workspace_id,
-        date_query=rq,  # original query for date extraction (not expanded)
-        title_filter=title_filter,
+    # -- HyDE: generate hypothetical document embedding for short/vague queries --
+    hyde_embedding = None
+    if _s.hyde_enabled:
+        word_count = len(rq.split())
+        is_vague = word_count <= _s.hyde_max_words and classification["profile"] in (
+            "mixed",
+            "documentation",
+        )
+        if is_vague:
+            from metatron.retrieval.query_expansion import get_hyde_embedding
+
+            hyde_embedding = await asyncio.to_thread(get_hyde_embedding, rq, _s)
+            if hyde_embedding:
+                logger.info("hyde.triggered", query=rq, word_count=word_count)
+            else:
+                logger.info("hyde.failed_fallback", query=rq)
+
+    # -- Build recall context (consolidates all extraction logic) --
+    recall_ctx = _build_recall_context(
+        original_query=rq,
+        translated_query=sq,
+        expanded_query=eq,
+        detected_language=lang,
+        workspace_id=workspace_id,
         access_filter=access_filter,
+        settings=_s,
     )
-    if jira_key_results:
-        raw = _merge_unique(jira_key_results, raw)
-    if title_hits:
-        raw = _merge_unique(title_hits, raw)
-    if injected:
-        raw = _merge_unique(injected, raw)
-    base = diversify_results(raw, k=max(k * 2, 10))
-    base = _boost_title_matches(rq, base, entities=entities)
+    recall_ctx.hyde_embedding = hyde_embedding
 
+    # -- Run 4 recall channels in parallel (async) --
+    (
+        dense_results,
+        exact_results,
+        metadata_results,
+        graph_results,
+    ) = await _run_recall_channels_async(recall_ctx)
+
+    # -- Merge and deduplicate across channels --
+    merged = merge_channels([dense_results, exact_results, metadata_results, graph_results])
+
+    # -- Build per-channel doc provenance for activity logging (DOCUMENT_ACCESSED) --
+    # MergedResult.channels is list[str]; chunk_id is the stable identifier.
+    docs_by_channel: dict[str, list[str]] = {}
+    for mr in merged:
+        for ch in mr["channels"]:
+            docs_by_channel.setdefault(ch, []).append(mr["chunk_id"])
+
+    # -- Multi-signal scoring --
+    type_cache: dict[str, str] = {}
+    for mr in merged:
+        type_cache[mr["chunk_id"]] = _result_type(mr["memory"])
+
+    type_counts: dict[str, int] = Counter(type_cache.values())
+    total_merged = len(merged)
+
+    _scoring_weights = {k: v for k, v in _profile_weights.items() if k != "blend_weight"}
+
+    for mr in merged:
+        mem = mr["memory"]
+        date_str = mem.get("date") or (mem.get("payload") or {}).get("date")
+        rec = 1.0
+        if date_str:
+            try:
+                dt = datetime.fromisoformat(str(date_str))
+                rec = recency_score(dt)
+            except (ValueError, TypeError):
+                rec = 1.0
+        bal = source_balance(type_cache[mr["chunk_id"]], type_counts, total_merged)
+        mr["signal_score"] = compute_signal_score(
+            channel_scores=mr["channel_scores"],
+            recency=rec,
+            balance=bal,
+            **_scoring_weights,
+        )
+
+    # Build score_map keyed by chunk_id (no mutation of memory dicts)
+    score_map: dict[str, float] = {mr["chunk_id"]: mr.get("signal_score", 0) for mr in merged}
+
+    merged.sort(key=lambda x: x.get("signal_score", 0), reverse=True)
+
+    # -- Confidence filter: drop candidates below threshold --
+    if _s.min_signal_score > 0:
+        merged = [mr for mr in merged if mr.get("signal_score", 0) >= _s.min_signal_score]
+        if not merged:
+            no_info = "I don't have enough information to answer this question."
+            if lang.lower() == "russian":
+                no_info = "У меня недостаточно информации для ответа на этот вопрос."
+            if return_trace:
+                return {
+                    "answer": no_info,
+                    "source_results": [],
+                    "fragments": [],
+                    "graph_entities": [],
+                    "graph_relations": [],
+                    "graph_docs": [],
+                    "pipeline_stages": {
+                        "original_query": rq_original,
+                        "resolved_query": rq if rq != rq_original else None,
+                        "translated_query": sq,
+                        "expanded_query": eq,
+                        "detected_language": lang,
+                        "recall_dense_count": len(dense_results),
+                        "recall_exact_count": len(exact_results),
+                        "recall_metadata_count": len(metadata_results),
+                        "recall_graph_count": len(graph_results),
+                        "recall_total_unique": 0,
+                        "pre_rerank_count": 0,
+                        "post_rerank_count": 0,
+                        "signal_scored_count": total_merged,
+                        "rerank_pool_count": 0,
+                        "fragment_count": 0,
+                        "primary_fragment_count": 0,
+                        "supporting_fragment_count": 0,
+                        "token_budget_used": 0,
+                        "query_profile": classification["profile"],
+                        "query_profile_method": classification["method"],
+                        "query_profile_confidence": classification["confidence"],
+                    },
+                    "retrieved_doc_labels": [],
+                }
+            return no_info
+
+    pool_size = _s.rerank_pool_size if _s.reranker_enabled else len(merged)
+    base = [mr["memory"] for mr in merged[:pool_size]]
+
+    _pre_rerank_count = len(base)
     if _s.reranker_enabled:
         from metatron.retrieval.reranker import rerank
-        base = rerank(query=rq, results=base, top_k=k)
+
+        base = await asyncio.to_thread(rerank, query=rq, results=base, top_k=len(base))
+        normalize_rerank_scores(base)
+        for r in base:
+            cid = str(r.get("id", ""))
+            score_map[cid] = compute_final_score(
+                signal_score=score_map.get(cid, 0),
+                rerank_score=r.get("rerank_score", 0),
+                blend_weight=_profile_weights["blend_weight"],
+            )
+        base.sort(
+            key=lambda x: score_map.get(str(x.get("id", "")), 0),
+            reverse=True,
+        )
+    base = base[:k]
+    _post_rerank_count = len(base)
+
+    # -- Hierarchical chunking: prepend root chunk content to child chunks --
+    if _s.hierarchical_chunking_enabled:
+        base = _prepend_root_context(base, workspace_id)
 
     # -- ACL post-rerank: defense-in-depth filter --
     if plugin_manager:
-        ctx = _run_hooks_sync(plugin_manager, "search_post_rerank", {
-            "chunks": base, "user_id": user_id, "workspace_id": workspace_id,
-        })
-        base = ctx.get("chunks", base)
+        post_ctx: dict = {
+            "chunks": base,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+        }
+        for hook in plugin_manager.get_pipeline_hooks("search_post_rerank"):
+            post_ctx = await hook(post_ctx)
+        base = post_ctx.get("chunks", base)
 
-    frags, seen_h, total_c = _collect_frags(base, set(), 0)
+    frags, seen_h, total_c, doc_stats = _collect_frags(base, set(), 0)
+    _mark_evidence_role(frags, classification["profile"])
 
     # -- Graph enrichment (graceful degradation: continue without graph if unavailable) --
     g_ents: list = []
     g_rels: list = []
     g_docs: list = []
-    try:
+
+    def _graph_enrichment_sync() -> tuple[list, list, list]:
+        """Run graph enrichment synchronously (offloaded to thread)."""
+        _g_ents: list = []
+        _g_rels: list = []
+        _g_docs: list = []
         dl = _doc_labels(base)
-        g_ents = get_entities_by_doc_labels(dl, workspace_id) if dl else get_graph_entities(frags, workspace_id)
+        frag_texts = [f["text"] for f in frags]
+        _g_ents = (
+            get_entities_by_doc_labels(dl, workspace_id)
+            if dl
+            else get_graph_entities(frag_texts, workspace_id)
+        )
         names: set[str] = set()
-        for e in g_ents:
+        for e in _g_ents:
             if e.get("name"):
                 names.add(e["name"])
             for a in e.get("aliases", []) or []:
                 names.add(a)
         if names:
-            date_range = extract_date_range(rq)
-            if date_range:
-                g_rels = get_relationships_at_date(
-                    list(names), target_date=date_range[0],
-                    workspace_id=workspace_id, max_depth=_GRAPH_DEPTH)
+            _date_range = extract_date_range(rq)
+            if _date_range:
+                _g_rels = get_relationships_at_date(
+                    list(names),
+                    target_date=_date_range[0],
+                    workspace_id=workspace_id,
+                    max_depth=_GRAPH_DEPTH,
+                )
             else:
-                g_rels = get_graph_relationships(
-                    list(names), workspace_id,
-                    max_depth=_GRAPH_DEPTH, active_only=True)
-            for r in g_rels:
+                _g_rels = get_graph_relationships(
+                    list(names), workspace_id, max_depth=_GRAPH_DEPTH, active_only=True
+                )
+            for r in _g_rels:
                 names.update(filter(None, [r.get("source"), r.get("target")]))
-            g_docs = (get_doc_labels_by_entities(list(names), workspace_id, user_groups=user_groups)
-                      if dl else get_related_documents(frags, workspace_id, user_groups=user_groups))
-        # Expand context with graph-related documents
-        if dl and g_docs:
-            extra = [d["doc_label"] for d in g_docs if d.get("doc_label") and d["doc_label"] not in dl]
-            if extra:
-                for mem in get_hybrid_store(workspace_id).search_by_doc_labels(extra, limit=_REL_DOCS):
-                    text = mem.get("memory") or mem.get("data") or ""
-                    if len(text) > _MAX_FRAG:
-                        text = text[:_MAX_FRAG] + "..."
-                    th = hash(text[:200])
-                    if th in seen_h or total_c + len(text) > _MAX_TOTAL:
-                        continue
-                    frags.append(text); seen_h.add(th); total_c += len(text)
+            _g_docs = (
+                get_doc_labels_by_entities(list(names), workspace_id, user_groups=user_groups)
+                if dl
+                else []
+            )
+        return _g_ents, _g_rels, _g_docs
+
+    try:
+        g_ents, g_rels, g_docs = await asyncio.to_thread(_graph_enrichment_sync)
+        # Graph docs kept as metadata only — document chunks come from recall channels
     except Exception:
         logger.warning("search.graph_enrichment_failed", exc_info=True)
 
@@ -739,7 +1158,10 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
     if g_tokens > MAX_GRAPH_TOKENS:
         g_ents, g_rels, g_docs = truncate_graph_context(
-            g_ents, g_rels, g_docs, MAX_GRAPH_TOKENS,
+            g_ents,
+            g_rels,
+            g_docs,
+            MAX_GRAPH_TOKENS,
         )
         g_tokens = estimate_graph_tokens(g_ents, g_rels, g_docs)
     frags = select_fragments_within_budget(
@@ -755,18 +1177,29 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
     try:
         if use_schema:
             sys_prompt = TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT.format(response_language=lang)
-            c = chat_completion_with_retry(
-                messages=[{"role": "system", "content": sys_prompt},
-                          {"role": "user", "content": ctx + TEAM_WORKFLOW_SCHEMA_SPEC}],
-                temperature=0.2, json_mode=True, timeout=60,
+            c = await asyncio.to_thread(
+                chat_completion_with_retry,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": ctx + TEAM_WORKFLOW_SCHEMA_SPEC},
+                ],
+                temperature=0.2,
+                json_mode=True,
+                timeout=60,
             )
             answer = (json.loads(_extract_json_object(c)).get("answer") or "").strip()
         else:
             sys_prompt = HYBRID_SYSTEM_PROMPT.format(response_language=lang)
-            answer = chat_completion_with_retry(
-                messages=[{"role": "system", "content": sys_prompt},
-                          {"role": "user", "content": ctx}],
-                temperature=0.2, timeout=60,
+            answer = (
+                await asyncio.to_thread(
+                    chat_completion_with_retry,
+                    messages=[
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": ctx},
+                    ],
+                    temperature=0.2,
+                    timeout=60,
+                )
             ).strip()
     except Exception:
         logger.error("search.llm_answer_failed", exc_info=True)
@@ -775,6 +1208,7 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
 
     # Return full trace for benchmarker integration when requested
     if return_trace:
+        _token_budget_used = sum(len(f["text"]) for f in frags) // 4 if frags else 0
         result = {
             "answer": _append_sources(answer, base),
             "source_results": base,
@@ -782,17 +1216,45 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
             "graph_entities": g_ents,
             "graph_relations": g_rels,
             "graph_docs": g_docs,
+            "pipeline_stages": {
+                "original_query": rq_original,
+                "resolved_query": rq if rq != rq_original else None,
+                "translated_query": sq,
+                "expanded_query": eq,
+                "detected_language": lang,
+                "recall_dense_count": len(dense_results),
+                "recall_exact_count": len(exact_results),
+                "recall_metadata_count": len(metadata_results),
+                "recall_graph_count": len(graph_results),
+                "recall_total_unique": len(merged),
+                "pre_rerank_count": _pre_rerank_count,
+                "post_rerank_count": _post_rerank_count,
+                "signal_scored_count": total_merged,
+                "rerank_pool_count": pool_size,
+                "fragment_count": len(frags),
+                "primary_fragment_count": sum(
+                    1 for f in frags if f.get("evidence_marker") == "PRIMARY"
+                ),
+                "supporting_fragment_count": sum(
+                    1 for f in frags if f.get("evidence_marker") != "PRIMARY"
+                ),
+                "token_budget_used": _token_budget_used,
+                "query_profile": classification["profile"],
+                "query_profile_method": classification["method"],
+                "query_profile_confidence": classification["confidence"],
+            },
+            "retrieved_doc_labels": [r.get("doc_label", "") for r in base if r.get("doc_label")],
         }
     else:
         result = _append_sources(answer, base)
-    
+
     # Log query trace to PostgreSQL (async, non-blocking)
     if workspace_id:
         try:
             total_ms = (time.time() - start_time) * 1000
             # Count total words in source fragments sent to LLM context.
             # Used by FinOps time-savings calculation: manual_reading_time = (words / 150 WPM) * 1.5
-            source_word_count = sum(len(frag.split()) for frag in frags) if frags else 0
+            source_word_count = sum(len(f["text"].split()) for f in frags) if frags else 0
             trace_data = {
                 "query": rq,
                 "user_id": user_id,
@@ -804,11 +1266,78 @@ def hybrid_search_and_answer(  # noqa: C901  # TODO: async migration
                 "use_schema": use_schema,
                 "language": lang,
                 "source_word_count": source_word_count,
+                "recall_dense_count": len(dense_results),
+                "recall_exact_count": len(exact_results),
+                "recall_metadata_count": len(metadata_results),
+                "recall_graph_count": len(graph_results),
+                "recall_total_unique": len(merged),
             }
-            
+
             from metatron.storage.pg_connection import store_query_trace_sync
-            store_query_trace_sync(workspace_id, rq, trace_data, total_ms)
+
+            await asyncio.to_thread(
+                store_query_trace_sync,
+                workspace_id,
+                rq,
+                trace_data,
+                total_ms,
+            )
+
+            # Track per-document fetch stats for FinOps cost savings
+            if doc_stats:
+                from metatron.storage.pg_connection import upsert_document_fetch_stats_sync
+
+                await asyncio.to_thread(
+                    upsert_document_fetch_stats_sync,
+                    workspace_id,
+                    doc_stats,
+                )
         except Exception as e:
             logger.warning("search.trace_logging_failed", error=str(e))
-    
+
+    # -- Activity logging: emit QUERY_EXECUTED + DOCUMENT_ACCESSED events --
+    try:
+        _bus = plugin_manager.get_event_bus() if plugin_manager is not None else None
+        _duration_ms = int((time.time() - start_time) * 1000)
+        await _emit_search_events(
+            bus=_bus,
+            workspace_id=workspace_id or "",
+            agent_id=agent_id,
+            session_id=session_id,
+            source=source,
+            query=query,
+            top_k=k,
+            result_count=len(base),
+            duration_ms=_duration_ms,
+            docs_by_channel=docs_by_channel,
+        )
+    except Exception:  # noqa: BLE001 — observability must never break search
+        logger.exception("activity_log.search_emit_failed")
+
     return result
+
+
+def hybrid_search_and_answer_sync(
+    query: str,
+    user_id: str = "user",
+    k: int = 25,
+    workspace_id: str | None = None,
+    intent_query: str | None = None,
+    return_trace: bool = False,
+    plugin_manager=None,
+) -> str | dict:
+    """Sync wrapper around the async hybrid_search_and_answer.
+
+    For callers that run in a sync context (e.g. AgentRouter, benchmarker).
+    """
+    return asyncio.run(
+        hybrid_search_and_answer(
+            query=query,
+            user_id=user_id,
+            k=k,
+            workspace_id=workspace_id,
+            intent_query=intent_query,
+            return_trace=return_trace,
+            plugin_manager=plugin_manager,
+        )
+    )

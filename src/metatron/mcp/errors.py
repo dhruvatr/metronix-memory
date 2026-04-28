@@ -7,9 +7,9 @@ and details fields for proper error handling and debugging.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ErrorCode(str, Enum):
@@ -17,7 +17,7 @@ class ErrorCode(str, Enum):
 
     WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
     QDRANT_UNAVAILABLE = "QDRANT_UNAVAILABLE"
-    MEMGRAPH_UNAVAILABLE = "MEMGRAPH_UNAVAILABLE"
+    GRAPH_UNAVAILABLE = "GRAPH_UNAVAILABLE"
     INVALID_CURSOR = "INVALID_CURSOR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
     DOCUMENT_NOT_FOUND = "DOCUMENT_NOT_FOUND"
@@ -39,8 +39,8 @@ class MCPError(BaseModel):
 
     code: ErrorCode
     message: str
-    hint: Optional[str] = None
-    details: Optional[dict[str, Any]] = None
+    hint: str | None = None
+    details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON-RPC response."""
@@ -59,18 +59,38 @@ class MCPError(BaseModel):
 _ERROR_HINTS: dict[ErrorCode, str] = {
     ErrorCode.WORKSPACE_NOT_FOUND: "Check that the workspace_id is correct or create a new workspace",
     ErrorCode.QDRANT_UNAVAILABLE: "Ensure Qdrant vector database is running and accessible",
-    ErrorCode.MEMGRAPH_UNAVAILABLE: "Ensure Memgraph graph database is running and accessible",
+    ErrorCode.GRAPH_UNAVAILABLE: "Ensure Neo4j graph database is running and accessible",
     ErrorCode.INVALID_CURSOR: "Provide a valid cursor from a previous search response",
     ErrorCode.DOCUMENT_NOT_FOUND: "Verify the doc_label is correct or use search to find documents",
     ErrorCode.INGESTION_FAILED: "Check document format and try again, or contact administrator",
     ErrorCode.INVALID_PARAMS: "Review the tool parameters and provide valid values",
 }
 
+# Exception type names (uppercased) that should always be bucketed as
+# INTERNAL_ERROR — not mapped by substring matching against the message.
+# SQL errors routinely contain column names like ``workspace_id`` in the
+# reflected SQL text, which used to trigger a false-positive
+# WORKSPACE_NOT_FOUND. See MTRNIX-319 for the incident.
+_DB_ERROR_TYPE_NAMES: frozenset[str] = frozenset(
+    {
+        "DBAPIERROR",
+        "OPERATIONALERROR",
+        "INTEGRITYERROR",
+        "PROGRAMMINGERROR",
+        "DATAERROR",
+        "INTERNALERROR",
+        "INTERFACEERROR",
+        "UNTRANSLATABLECHARACTERERROR",
+        "NOTSUPPORTEDERROR",
+        "INVALIDREQUESTERROR",
+    }
+)
+
 
 def handle_tool_error(
     tool_name: str,
     exception: Exception,
-    details: Optional[dict[str, Any]] = None,
+    details: dict[str, Any] | None = None,
 ) -> MCPError:
     """Convert an exception to a structured MCPError.
 
@@ -85,15 +105,25 @@ def handle_tool_error(
     error_code = ErrorCode.INTERNAL_ERROR
     error_message = str(exception)
 
-    # Map common exceptions to error codes
+    # Map common exceptions to error codes.
     exception_type = type(exception).__name__.upper()
 
-    if "WORKSPACE" in exception_type or "workspace" in error_message.lower():
+    # DB-layer exceptions get mapped to INTERNAL_ERROR regardless of message
+    # contents — the SQL text routinely contains column names like
+    # ``workspace_id`` that would otherwise trigger false positives like
+    # WORKSPACE_NOT_FOUND (see MTRNIX-319 for the incident).
+    if exception_type in _DB_ERROR_TYPE_NAMES:
+        error_code = ErrorCode.INTERNAL_ERROR
+    elif "WORKSPACE" in exception_type:
         error_code = ErrorCode.WORKSPACE_NOT_FOUND
     elif "QDRANT" in exception_type or "qdrant" in error_message.lower():
         error_code = ErrorCode.QDRANT_UNAVAILABLE
-    elif "MEMGRAPH" in exception_type or "neo4j" in error_message.lower() or "graph" in error_message.lower():
-        error_code = ErrorCode.MEMGRAPH_UNAVAILABLE
+    elif (
+        "NEO4J" in exception_type
+        or "neo4j" in error_message.lower()
+        or "graph" in error_message.lower()
+    ):
+        error_code = ErrorCode.GRAPH_UNAVAILABLE
     elif "CURSOR" in exception_type or "cursor" in error_message.lower():
         error_code = ErrorCode.INVALID_CURSOR
     elif "NOT FOUND" in exception_type or "not found" in error_message.lower():
@@ -104,6 +134,11 @@ def handle_tool_error(
         error_code = ErrorCode.AUTH_REQUIRED
     elif "429" in error_message or "rate" in error_message.lower():
         error_code = ErrorCode.RATE_LIMITED
+    elif "workspace" in error_message.lower():
+        # Fallback: message-based match, only if no better bucket applied.
+        # DB errors are handled above so column names in SQL text cannot
+        # leak into WORKSPACE_NOT_FOUND here.
+        error_code = ErrorCode.WORKSPACE_NOT_FOUND
 
     # Get hint from mapping or generate default
     hint = _ERROR_HINTS.get(error_code)

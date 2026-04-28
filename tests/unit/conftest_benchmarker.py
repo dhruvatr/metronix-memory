@@ -9,23 +9,16 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from metatron.benchmarker.db.models import (
-    BenchmarkQuestionRow,
-    BenchmarkSetRow,
-    TestResultRow,
-    TestRunRow,
-)
 from metatron.core.config import Settings
 from metatron.storage.pg_models import Base
-
 
 # ============================================================================
 # In-memory SQLite engine & session
@@ -172,8 +165,9 @@ def mock_qdrant():
 def mock_hybrid_search():
     """Mock for hybrid_search_and_answer with return_trace support."""
 
-    def _search(query, user_id="user", k=5, workspace_id=None,
-                intent_query=None, return_trace=False):
+    def _search(
+        query, user_id="user", k=5, workspace_id=None, intent_query=None, return_trace=False
+    ):
         answer = f"Answer for: {query}"
         if return_trace:
             return {

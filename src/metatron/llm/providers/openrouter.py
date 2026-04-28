@@ -5,20 +5,19 @@ through a unified API.
 """
 
 import os
-from typing import List, Optional
 
 import requests
 import structlog
 
 from metatron.core.http import get_http_session
 from metatron.llm.base import (
+    LLMAuthenticationError,
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
+    LLMRateLimitError,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
-    LLMRateLimitError,
-    LLMAuthenticationError,
 )
 
 logger = structlog.get_logger()
@@ -32,8 +31,8 @@ class OpenRouterProvider(LLMProvider):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize OpenRouter provider.
@@ -44,12 +43,8 @@ class OpenRouterProvider(LLMProvider):
         """
         super().__init__(model, **kwargs)
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY", "")
-        self.site_url = kwargs.get(
-            "site_url", os.getenv("OPENROUTER_SITE_URL", "")
-        )
-        self.app_name = kwargs.get(
-            "app_name", os.getenv("OPENROUTER_APP_NAME", "Metatron")
-        )
+        self.site_url = kwargs.get("site_url", os.getenv("OPENROUTER_SITE_URL", ""))
+        self.app_name = kwargs.get("app_name", os.getenv("OPENROUTER_APP_NAME", "Metatron"))
 
     @property
     def default_model(self) -> str:
@@ -61,9 +56,9 @@ class OpenRouterProvider(LLMProvider):
 
     def chat_completion(  # TODO: async migration
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 60,
         **kwargs,
@@ -107,8 +102,7 @@ class OpenRouterProvider(LLMProvider):
             if resp.status_code == 404:
                 error_detail = resp.text[:500] if resp.text else "No details"
                 raise LLMError(
-                    f"OpenRouter model '{self.model}' not found. "
-                    f"Details: {error_detail}"
+                    f"OpenRouter model '{self.model}' not found. Details: {error_detail}"
                 )
 
             if resp.status_code == 400:
@@ -128,8 +122,7 @@ class OpenRouterProvider(LLMProvider):
                     )
                     if resp.status_code != 200:
                         raise LLMError(
-                            f"OpenRouter error (retry without json_mode): "
-                            f"{resp.text[:300]}"
+                            f"OpenRouter error (retry without json_mode): {resp.text[:300]}"
                         )
                 else:
                     raise LLMError(f"OpenRouter bad request: {error_detail}")
@@ -158,12 +151,8 @@ class OpenRouterProvider(LLMProvider):
             )
 
         except requests.exceptions.Timeout:
-            raise LLMConnectionError(
-                f"OpenRouter API timeout after {timeout}s"
-            )
+            raise LLMConnectionError(f"OpenRouter API timeout after {timeout}s")
         except requests.exceptions.ConnectionError as e:
-            raise LLMConnectionError(
-                f"Failed to connect to OpenRouter API: {e}"
-            )
+            raise LLMConnectionError(f"Failed to connect to OpenRouter API: {e}")
         except requests.exceptions.HTTPError as e:
             raise LLMError(f"OpenRouter API error: {e}")

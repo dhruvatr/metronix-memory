@@ -1,5 +1,19 @@
 # Skills
 
+> **ℹ️ INACTIVE (2026-04):** The `src/metatron/skills/` engine described below is
+> currently not implemented — `SkillEngine.load_skills()`, `select_skills()`, and
+> `seed_builtins()` all raise `NotImplementedError`, and no code calls them.
+>
+> The module is **kept as reserved capability**, not slated for removal. MCP tool
+> descriptions cover most "tell the LLM how to use a tool" needs today (see
+> `docs/HERMES_INTEGRATION.md` and `docs/OPENCLAW_INTEGRATION.md`), but a
+> workspace-customizable, prompt-injectable skill catalog may become useful later
+> (per-workspace tool docs, custom playbooks beyond what MCP returns).
+>
+> Do not build on top of `skills/` without first checking whether MCP covers the need.
+> Do not delete it either — that is an explicit product decision deferred to later.
+> See `docs/LEGACY.md` item 4 for context.
+
 ## Overview
 
 Skills are Markdown documents that teach the LLM how to use tools. They contain instructions, examples, and structured tool call formats that the LLM reads at runtime to decide what actions to take.

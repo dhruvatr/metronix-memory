@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import time
 import threading
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, Dict, TypeVar
+from typing import Any, TypeVar
 
 import structlog
 
@@ -32,7 +33,7 @@ class OperationMetrics:
     def avg_duration(self) -> float:
         return self.total_duration / self.count if self.count > 0 else 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "count": self.count,
             "success_count": self.success_count,
@@ -43,9 +44,7 @@ class OperationMetrics:
             if self.min_duration != float("inf")
             else 0,
             "max_duration_sec": round(self.max_duration, 3),
-            "success_rate": round(
-                self.success_count / self.count * 100, 1
-            )
+            "success_rate": round(self.success_count / self.count * 100, 1)
             if self.count > 0
             else 0,
             "last_error": self.last_error,
@@ -56,7 +55,7 @@ class MetricsCollector:
     """Thread-safe metrics collector."""
 
     def __init__(self) -> None:
-        self._metrics: Dict[str, OperationMetrics] = defaultdict(OperationMetrics)
+        self._metrics: dict[str, OperationMetrics] = defaultdict(OperationMetrics)
         self._lock = threading.Lock()
         self._start_time = time.time()
 
@@ -79,15 +78,12 @@ class MetricsCollector:
             m.max_duration = max(m.max_duration, duration)
             m.last_error = error[:200]
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         with self._lock:
             uptime = time.time() - self._start_time
             return {
                 "uptime_sec": round(uptime, 1),
-                "operations": {
-                    name: metrics.to_dict()
-                    for name, metrics in self._metrics.items()
-                },
+                "operations": {name: metrics.to_dict() for name, metrics in self._metrics.items()},
             }
 
     def reset(self) -> None:
@@ -99,7 +95,7 @@ class MetricsCollector:
 _collector = MetricsCollector()
 
 
-def get_metrics() -> Dict[str, Any]:
+def get_metrics() -> dict[str, Any]:
     return _collector.get_metrics()
 
 
@@ -122,9 +118,7 @@ def timed(operation_name: str | Callable | None = None, log_args: bool = False):
             start = time.perf_counter()
 
             if log_args and args:
-                display_args = (
-                    args[1:] if args and hasattr(args[0], "__class__") else args
-                )
+                display_args = args[1:] if args and hasattr(args[0], "__class__") else args
                 arg_str = str(display_args)[:100]
                 log_prefix = f"{name}({arg_str})"
             else:
@@ -148,7 +142,9 @@ def timed(operation_name: str | Callable | None = None, log_args: bool = False):
                 duration = time.perf_counter() - start
                 error_msg = str(e)
                 _collector.record_error(name, duration, error_msg)
-                logger.error("operation_failed", op=log_prefix, duration=f"{duration:.3f}s", error=error_msg)
+                logger.error(
+                    "operation_failed", op=log_prefix, duration=f"{duration:.3f}s", error=error_msg
+                )
                 raise
 
         return wrapper
@@ -188,10 +184,17 @@ class Timer:
             error_msg = str(exc_val)
             _collector.record_error(self.operation_name, self.duration, error_msg)
             if self.log:
-                logger.error("timer_failed", op=self.operation_name, duration=f"{self.duration:.3f}s", error=error_msg)
+                logger.error(
+                    "timer_failed",
+                    op=self.operation_name,
+                    duration=f"{self.duration:.3f}s",
+                    error=error_msg,
+                )
         else:
             _collector.record_success(self.operation_name, self.duration)
             if self.log:
-                logger.debug("timer_complete", op=self.operation_name, duration=f"{self.duration:.3f}s")
+                logger.debug(
+                    "timer_complete", op=self.operation_name, duration=f"{self.duration:.3f}s"
+                )
 
         return False

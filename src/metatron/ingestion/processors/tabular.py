@@ -8,7 +8,6 @@ semantic search over structured content.
 from __future__ import annotations
 
 import io
-from typing import List, Optional, Tuple
 
 import pandas as pd
 import structlog
@@ -36,7 +35,7 @@ def parse_excel(content: bytes) -> pd.DataFrame:
 
 def dataframe_to_text(
     df: pd.DataFrame,
-    max_rows: Optional[int] = None,
+    max_rows: int | None = None,
     include_row_numbers: bool = True,
 ) -> str:
     """Convert a DataFrame to key-value text.
@@ -62,9 +61,9 @@ def dataframe_to_text(
         df = df.head(max_rows)
         logger.warning("tabular.truncated", max_rows=max_rows)
 
-    lines: List[str] = []
+    lines: list[str] = []
     for idx, row in df.iterrows():
-        pairs: List[str] = []
+        pairs: list[str] = []
         for col in df.columns:
             value = row[col]
             if pd.isna(value) or str(value).strip() == "":
@@ -88,8 +87,8 @@ def dataframe_to_text(
 def process_tabular_file(  # TODO: async migration
     content: bytes,
     filename: str,
-    max_rows: Optional[int] = 10000,
-) -> Tuple[str, dict]:
+    max_rows: int | None = 10000,
+) -> tuple[str, dict]:
     """Process a CSV or Excel file and convert to text.
 
     Args:

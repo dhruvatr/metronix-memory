@@ -3,6 +3,7 @@
 Uses atlassian-python-api (v4+) with enhanced_jql for Jira Cloud.
 Fetches issue summary, description, comments, and changelog.
 """
+
 # TODO: async migration
 from __future__ import annotations
 
@@ -31,6 +32,8 @@ class JiraConnector(ConnectorInterface):
     - project_key: Jira project to index (optional — syncs all if empty)
     """
 
+    source_role: str = "task_tracker"
+
     def __init__(self) -> None:
         self._client = None  # type: ignore[assignment]
         self._config: dict[str, str] = {}
@@ -48,7 +51,9 @@ class JiraConnector(ConnectorInterface):
         )
 
     async def fetch(
-        self, workspace_id: str, since: datetime | None = None,
+        self,
+        workspace_id: str,
+        since: datetime | None = None,
     ) -> list[Document]:
         logger.info("jira.fetch.started", workspace_id=workspace_id, since=since)
         if self._client is None:

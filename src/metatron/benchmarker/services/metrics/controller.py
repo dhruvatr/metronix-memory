@@ -11,8 +11,9 @@ have white-box data available.
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
+
 import structlog
-from typing import TYPE_CHECKING, List, Optional
 
 from metatron.benchmarker.schemas.test_context import TestContext
 from metatron.benchmarker.schemas.test_result import MetricsResult
@@ -30,6 +31,7 @@ from metatron.benchmarker.services.metrics.qed import QEDMetricsCalculator
 from metatron.benchmarker.services.metrics.relevancy import (
     AnswerRelevancyMetric,
 )
+from metatron.benchmarker.services.metrics.retrieval import RetrievalMetrics
 
 if TYPE_CHECKING:
     from metatron.core.config import Settings
@@ -78,6 +80,7 @@ class MetricsController:
             embedding_base_url=embedding_base_url,
             embedding_model=embedding_model,
         )
+        self.retrieval = RetrievalMetrics()
 
         logger.info(
             "MetricsController initialized: model=%s, embedding_url=%s",
@@ -86,7 +89,7 @@ class MetricsController:
         )
 
     @classmethod
-    def from_settings(cls, settings: "Settings") -> "MetricsController":
+    def from_settings(cls, settings: Settings) -> MetricsController:
         """Create a MetricsController from Metatron Core settings.
 
         Maps ``Settings`` fields to constructor arguments:
@@ -103,8 +106,9 @@ class MetricsController:
         )
 
     async def calculate_all(
-        self, contexts: List[TestContext],
-    ) -> List[MetricsResult]:
+        self,
+        contexts: list[TestContext],
+    ) -> list[MetricsResult]:
         """Compute all 6 metrics for a list of test contexts in parallel.
 
         Uses ``asyncio.gather()`` to run correctness, relevancy, faithfulness,
@@ -120,7 +124,7 @@ class MetricsController:
         if not contexts:
             return []
 
-        # Run all 6 metrics in parallel
+        # Run all 7 metrics in parallel
         (
             correctness_results,
             relevancy_results,
@@ -128,6 +132,7 @@ class MetricsController:
             precision_results,
             recall_results,
             confidence_results,
+            retrieval_results,
         ) = await asyncio.gather(
             self._calc_correctness(contexts),
             self._calc_relevancy(contexts),
@@ -135,10 +140,11 @@ class MetricsController:
             self._calc_precision(contexts),
             self._calc_recall(contexts),
             self._calc_confidence(contexts),
+            self._calc_retrieval(contexts),
         )
 
         # Merge results into MetricsResult objects
-        results: List[MetricsResult] = []
+        results: list[MetricsResult] = []
         for i in range(len(contexts)):
             result = MetricsResult(
                 correctness=self._safe_get(correctness_results, i, "score"),
@@ -150,11 +156,18 @@ class MetricsController:
                 claim_scores=self._safe_get(correctness_results, i, "claim_scores"),
                 chunk_scores=self._safe_get(precision_results, i, "chunk_scores"),
                 faithfulness_reasoning=self._safe_get(
-                    faithfulness_results, i, "reasoning",
+                    faithfulness_results,
+                    i,
+                    "reasoning",
                 ),
                 recall_reasoning=self._safe_get(
-                    recall_results, i, "reasoning",
+                    recall_results,
+                    i,
+                    "reasoning",
                 ),
+                ndcg_at_10=self._safe_get(retrieval_results, i, "ndcg_at_k"),
+                mrr=self._safe_get(retrieval_results, i, "mrr"),
+                precision_at_k=self._safe_get(retrieval_results, i, "precision_at_k"),
             )
             results.append(result)
 
@@ -165,8 +178,9 @@ class MetricsController:
     # ------------------------------------------------------------------
 
     async def _calc_correctness(
-        self, contexts: List[TestContext],
-    ) -> Optional[List]:
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
         """Calculate correctness via QED AutoE."""
         try:
             questions = [ctx.question for ctx in contexts]
@@ -180,8 +194,9 @@ class MetricsController:
             return None
 
     async def _calc_relevancy(
-        self, contexts: List[TestContext],
-    ) -> Optional[List]:
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
         """Calculate answer relevancy via embedding cosine similarity."""
         try:
             questions = [ctx.question.text for ctx in contexts]
@@ -193,14 +208,15 @@ class MetricsController:
             return None
 
     async def _calc_faithfulness(
-        self, contexts: List[TestContext],
-    ) -> Optional[List]:
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
         """Calculate faithfulness for contexts with white-box data."""
         try:
-            questions: List[str] = []
-            answers: List[str] = []
-            context_texts: List[str] = []
-            wb_indices: List[int] = []
+            questions: list[str] = []
+            answers: list[str] = []
+            context_texts: list[str] = []
+            wb_indices: list[int] = []
 
             for i, ctx in enumerate(contexts):
                 if ctx.has_white_box_data:
@@ -213,11 +229,13 @@ class MetricsController:
                 return None
 
             wb_results = await self.faithfulness.calculate_batch(
-                questions, answers, context_texts,
+                questions,
+                answers,
+                context_texts,
             )
 
             # Map results back to full context list
-            full_results: List = [None] * len(contexts)
+            full_results: list = [None] * len(contexts)
             for idx, wb_idx in enumerate(wb_indices):
                 full_results[wb_idx] = wb_results[idx]
 
@@ -227,13 +245,14 @@ class MetricsController:
             return None
 
     async def _calc_precision(
-        self, contexts: List[TestContext],
-    ) -> Optional[List]:
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
         """Calculate context precision for contexts with white-box data."""
         try:
-            questions: List[str] = []
-            chunks_per_question: List[List[str]] = []
-            wb_indices: List[int] = []
+            questions: list[str] = []
+            chunks_per_question: list[list[str]] = []
+            wb_indices: list[int] = []
 
             for i, ctx in enumerate(contexts):
                 if ctx.has_white_box_data:
@@ -246,11 +265,12 @@ class MetricsController:
                 return None
 
             wb_results = await self.precision.calculate_batch(
-                questions, chunks_per_question,
+                questions,
+                chunks_per_question,
             )
 
             # Map results back to full context list
-            full_results: List = [None] * len(contexts)
+            full_results: list = [None] * len(contexts)
             for idx, wb_idx in enumerate(wb_indices):
                 full_results[wb_idx] = wb_results[idx]
 
@@ -260,15 +280,16 @@ class MetricsController:
             return None
 
     async def _calc_recall(
-        self, contexts: List[TestContext],
-    ) -> Optional[List]:
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
         """Calculate context recall for contexts with white-box data."""
         try:
-            questions: List[str] = []
-            answers: List[str] = []
-            context_texts: List[str] = []
-            ground_truths: List[str] = []
-            wb_indices: List[int] = []
+            questions: list[str] = []
+            answers: list[str] = []
+            context_texts: list[str] = []
+            ground_truths: list[str] = []
+            wb_indices: list[int] = []
 
             for i, ctx in enumerate(contexts):
                 if ctx.has_white_box_data:
@@ -285,11 +306,14 @@ class MetricsController:
                 return None
 
             wb_results = await self.recall.calculate_batch(
-                questions, answers, context_texts, ground_truths,
+                questions,
+                answers,
+                context_texts,
+                ground_truths,
             )
 
             # Map results back to full context list
-            full_results: List = [None] * len(contexts)
+            full_results: list = [None] * len(contexts)
             for idx, wb_idx in enumerate(wb_indices):
                 full_results[wb_idx] = wb_results[idx]
 
@@ -298,15 +322,39 @@ class MetricsController:
             logger.error("Context recall metric failed: %s", exc)
             return None
 
+    async def _calc_retrieval(
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
+        """Calculate retrieval metrics for contexts with expected labels."""
+        try:
+            results = []
+            for ctx in contexts:
+                if ctx.expected_doc_labels and ctx.retrieved_doc_labels:
+                    r = self.retrieval.compute(
+                        ctx.retrieved_doc_labels,
+                        ctx.expected_doc_labels,
+                        k=10,
+                    )
+                    results.append(r)
+                else:
+                    results.append(None)
+            return results
+        except Exception as exc:
+            logger.error("Retrieval metrics failed: %s", exc)
+            return None
+
     async def _calc_confidence(
-        self, contexts: List[TestContext],
-    ) -> Optional[List]:
+        self,
+        contexts: list[TestContext],
+    ) -> list | None:
         """Calculate confidence via response consistency."""
         try:
             questions = [ctx.question.text for ctx in contexts]
             workspace_id = contexts[0].workspace_id if contexts else None
             results = await self.confidence.calculate_batch(
-                questions, workspace_id=workspace_id,
+                questions,
+                workspace_id=workspace_id,
             )
             return results
         except Exception as exc:
@@ -318,7 +366,7 @@ class MetricsController:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _safe_get(results: Optional[List], index: int, attr: str):
+    def _safe_get(results: list | None, index: int, attr: str):
         """Safely extract an attribute from a result at the given index.
 
         Returns None if results is None, index is out of range,

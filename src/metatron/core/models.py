@@ -9,7 +9,17 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 from uuid import uuid4
+
+
+class SourceRole(StrEnum):
+    """Role of a document source in the knowledge system."""
+
+    KNOWLEDGE_BASE = "knowledge_base"
+    TASK_TRACKER = "task_tracker"
+    COMMUNICATION = "communication"
+    USER_UPLOAD = "user_upload"
 
 
 class ChunkType(StrEnum):
@@ -37,9 +47,65 @@ class ConnectionStatus(StrEnum):
     DISABLED = "disabled"
 
 
+class LifecycleStatus(StrEnum):
+    """Lifecycle status shared by MemoryRecord (agent memory) and RawDocument (KB).
+
+    Promoted from ``MemoryStatus`` in Phase B (MTRNIX-313). Both dataclasses
+    carry the same seven states; an alias ``MemoryStatus`` is kept for Phase A
+    call sites and enterprise plugin imports.
+    """
+
+    CANDIDATE = "candidate"
+    ACTIVE = "active"
+    STALE = "stale"
+    SUPERSEDED = "superseded"
+    ARCHIVED = "archived"
+    CONFLICTED = "conflicted"
+    REVIEW_NEEDED = "review_needed"
+
+
+# Backward compatibility — existing imports ``from metatron.core.models import
+# MemoryStatus`` keep working. Do NOT remove; used by Phase A call sites and
+# the enterprise plugin.
+MemoryStatus = LifecycleStatus
+
+
 # ---------------------------------------------------------------------------
 # Documents & chunks
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class RawDocument:
+    """A raw document persisted in PostgreSQL as source of truth."""
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    workspace_id: str = ""
+    connector_type: str = ""
+    connection_id: str | None = None
+    source_id: str = ""
+    title: str = ""
+    content: str = ""
+    url: str = ""
+    author: str = ""
+    content_hash: str = ""
+    metadata: dict = field(default_factory=dict)
+    source_role: str = "knowledge_base"
+    qdrant_synced: bool = False
+    graph_synced: bool = False
+    fetched_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    # --- Freshness lifecycle (MTRNIX-313, Phase B) ---
+    # Defaults mirror Alembic 018's server-side defaults so pre-migration rows
+    # "look active" with a neutral freshness score and zero evidence.
+    status: LifecycleStatus = LifecycleStatus.ACTIVE
+    freshness_score: float = 0.5
+    superseded_by: str | None = None
+    valid_until: datetime | None = None
+    evidence_count: int = 0
+    verification_state: str | None = None
+    last_freshness_run_at: datetime | None = None
 
 
 @dataclass
@@ -48,14 +114,15 @@ class Document:
 
     id: str = field(default_factory=lambda: uuid4().hex)
     workspace_id: str = ""
-    source_type: str = ""          # e.g. "confluence", "jira", "github"
-    source_id: str = ""            # connector-specific unique ID
+    source_type: str = ""  # e.g. "confluence", "jira", "github"
+    source_id: str = ""  # connector-specific unique ID
     title: str = ""
     content: str = ""
     url: str = ""
     author: str = ""
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
+    source_role: str = ""  # e.g. "knowledge_base", "task_tracker", "communication", "user_upload"
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -68,7 +135,7 @@ class Chunk:
     document_id: str = ""
     workspace_id: str = ""
     chunk_type: ChunkType = ChunkType.STANDALONE
-    parent_id: str | None = None   # points to ROOT chunk if this is CHILD
+    parent_id: str | None = None  # points to ROOT chunk if this is CHILD
     content: str = ""
     token_count: int = 0
     simhash: int = 0
@@ -99,8 +166,8 @@ class DocumentVersion:
 class IncomingMessage:
     """A message received from a channel (Telegram, Slack, etc.)."""
 
-    channel: str = ""              # "telegram", "slack"
-    channel_user_id: str = ""      # platform-specific user ID
+    channel: str = ""  # "telegram", "slack"
+    channel_user_id: str = ""  # platform-specific user ID
     workspace_id: str = ""
     text: str = ""
     thread_id: str | None = None
@@ -134,7 +201,7 @@ class Skill:
     id: str = field(default_factory=lambda: uuid4().hex)
     name: str = ""
     description: str = ""
-    content: str = ""              # full Markdown body
+    content: str = ""  # full Markdown body
     tags: list[str] = field(default_factory=list)
     triggers: list[str] = field(default_factory=list)
     enabled: bool = True
@@ -148,8 +215,8 @@ class Connection:
 
     id: str = field(default_factory=lambda: uuid4().hex)
     workspace_id: str = ""
-    connector_type: str = ""       # "confluence", "jira", etc.
-    name: str = ""                 # User-friendly label
+    connector_type: str = ""  # "confluence", "jira", etc.
+    name: str = ""  # User-friendly label
     config_encrypted: bytes = b""  # Fernet-encrypted JSON
     status: ConnectionStatus = ConnectionStatus.ACTIVE
     enabled: bool = True
@@ -222,6 +289,7 @@ class SyncResult:
     documents_skipped: int = 0
     errors: list[str] = field(default_factory=list)
     duration_ms: float = 0.0
+    graph_failed_source_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -231,3 +299,162 @@ class QueryStep:
     name: str = ""
     duration_ms: float = 0.0
     metadata: dict[str, str | int | float] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Agent Memory (WS1)
+# ---------------------------------------------------------------------------
+
+
+class MemoryScope(StrEnum):
+    """Scope of an agent memory record.
+
+    Controls storage tier (PG+Qdrant+Neo4j vs Redis) and lifetime.
+    """
+
+    GLOBAL = "global"
+    PER_AGENT = "per_agent"
+    SESSION = "session"
+
+
+# ``MemoryStatus`` used to live here — it is now an alias of ``LifecycleStatus``
+# defined above. Kept importable via the alias so Phase A call sites and the
+# enterprise plugin work unchanged.
+
+
+@dataclass
+class MemoryRecord:
+    """Transport shape for a single agent memory record.
+
+    Persistence layers decide which fields they store:
+    - PostgreSQL persists the full record (source of truth).
+    - Qdrant stores ``content`` + embedding + filter payload (workspace_id,
+      agent_id, scope, tags).
+    - Neo4j stores references and relationships but not the ``content`` blob.
+    - Redis stores the full JSON with a TTL for session-scoped records.
+    """
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    workspace_id: str = ""
+    agent_id: str = ""
+    scope: MemoryScope = MemoryScope.PER_AGENT
+    source_type: str = ""
+    content: str = ""
+    tags: list[str] = field(default_factory=list)
+    importance_score: float = 0.5
+    ttl_expires_at: datetime | None = None
+    content_hash: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    session_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    # Freshness lifecycle (MTRNIX-304).
+    # Defaults keep pre-migration behaviour: existing rows look "active" with
+    # a neutral freshness score and zero evidence, matching Alembic 016's
+    # server-side defaults.
+    status: MemoryStatus = MemoryStatus.ACTIVE
+    freshness_score: float = 0.5
+    superseded_by: str | None = None
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    evidence_count: int = 0
+    verification_state: str | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass
+class MemorySnapshot:
+    """Point-in-time JSONL+gzip export of memory records for an agent."""
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    workspace_id: str = ""
+    agent_id: str = ""
+    label: str = ""
+    trigger: str = ""
+    record_count: int = 0
+    content_hash: str = ""
+    size_bytes: int = 0
+    storage_path: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class MemorySearchResult:
+    """Ranked memory search hit — hybrid dense+sparse+graph scoring."""
+
+    record: MemoryRecord
+    score: float = 0.0
+    dense_score: float = 0.0
+    sparse_score: float = 0.0
+    graph_score: float = 0.0
+    rank: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Freshness (MTRNIX-304)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ReviewEntry:
+    """Human-review item surfaced by the freshness pipeline.
+
+    Reasons (string-typed to keep schema open): "possible_duplicate",
+    "possible_contradiction", "low_confidence_decision".
+    """
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    workspace_id: str = ""
+    target_id: str = ""
+    target_kind: str = "memory_record"
+    # --- Backward compatibility (MTRNIX-313) ---
+    # Phase A called this ``record_id``. New code should use ``target_id``.
+    # ``record_id`` remains a settable alias during the deprecation window;
+    # ``__post_init__`` mirrors the two fields.
+    record_id: str = ""
+    reason: str = ""
+    related_record_id: str | None = None
+    content: str = ""
+    confidence: float = 0.0
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    def __post_init__(self) -> None:
+        if self.target_id and not self.record_id:
+            self.record_id = self.target_id
+        elif self.record_id and not self.target_id:
+            self.target_id = self.record_id
+
+
+@dataclass
+class MachineEvent:
+    """Append-only audit log entry emitted by freshness workers."""
+
+    id: str = field(default_factory=lambda: uuid4().hex)
+    workspace_id: str = ""
+    event_type: str = ""
+    actor: str = "freshness_worker"
+    target_kind: str = "memory_record"
+    target_id: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class FreshnessJob:
+    """Unit of work enqueued by writers, consumed by the freshness worker."""
+
+    workspace_id: str = ""
+    event_type: str = ""
+    target_kind: str = "memory_record"
+    target_id: str = ""
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FreshnessDecision:
+    """Outcome of a DecisionEngine invocation for a single record."""
+
+    action: str = "tag"
+    confidence: float = 0.0
+    tags: list[str] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
+    rationale: str = ""

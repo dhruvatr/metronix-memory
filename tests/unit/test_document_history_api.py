@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from metatron.api.routes.documents import router
 from metatron.core.models import DocumentVersion
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

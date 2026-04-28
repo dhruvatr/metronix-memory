@@ -58,3 +58,19 @@ class ToolDisabledError(MetatronError):
 
 class ToolTimeoutError(MetatronError):
     """Tool execution exceeded the allowed timeout."""
+
+
+class AgentMemoryError(MetatronError):
+    """Base class for memory subsystem errors (WS1)."""
+
+
+class MemoryNotFoundError(AgentMemoryError):
+    """Requested memory record or snapshot does not exist."""
+
+
+class SnapshotCorruptError(AgentMemoryError):
+    """Snapshot content hash mismatch or unreadable payload."""
+
+
+class FreshnessError(MetatronError):
+    """Freshness pipeline failure (stage error, LLM parse failure, lock contention)."""

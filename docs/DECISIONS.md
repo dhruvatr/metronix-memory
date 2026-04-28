@@ -293,13 +293,13 @@ return context_chunks
 
 ### 7. Per-Workspace Isolation
 
-**Algorithm**: Use separate Qdrant collections and Memgraph namespaces for each workspace.
+**Algorithm**: Use separate Qdrant collections and Neo4j namespaces for each workspace.
 
 **Why**: Data isolation for multi-tenant SaaS. No cross-workspace leakage.
 
 **Implementation**:
 - Qdrant collection name: `workspace-{workspace_id}`
-- Memgraph namespace: Query filtering with `WHERE chunk.workspace_id = $workspace_id`
+- Neo4j namespace: Query filtering with `WHERE chunk.workspace_id = $workspace_id`
 
 ## Why Python (Not TypeScript)
 
@@ -313,7 +313,7 @@ return context_chunks
 
 3. **Team Expertise**: Most engineers working on knowledge graphs and RAG have Python experience.
 
-4. **SDK Quality**: Qdrant, Ollama, Memgraph all have excellent Python clients with async support.
+4. **SDK Quality**: Qdrant, Ollama, Neo4j all have excellent Python clients with async support.
 
 5. **Type Safety**: Python 3.11+ with mypy provides strong static type checking (comparable to TypeScript).
 
@@ -397,25 +397,26 @@ class OktaSSOProvider(AuthProvider):
 - Not as mature as Pinecone (but improving rapidly)
 - Smaller community than Elasticsearch
 
-## Why Memgraph
+## Why Neo4j Community Edition (migrated from Memgraph)
 
-**Decision**: Use Memgraph for knowledge graph, not Neo4j or AWS Neptune.
+**Decision**: Use Neo4j CE for knowledge graph. Originally chose Memgraph, migrated to Neo4j.
 
-**Reasons**:
+**Originally chose Memgraph** for in-memory speed and Cypher compatibility.
 
-1. **Cypher Compatibility**: Uses Cypher query language (same as Neo4j). Neo4j drivers work with Memgraph.
+**Migrated to Neo4j CE** because:
 
-2. **In-Memory Speed**: Entire graph in RAM. Queries are 10-100x faster than disk-based graphs.
+1. **Disk-Based Scaling**: Scales to billions of nodes (Memgraph limited by RAM).
 
-3. **Small-Medium Graphs**: Metatron graphs are < 10M nodes per workspace. Memgraph fits well.
+2. **Memory System Prerequisite**: Memory records will be graph nodes — need disk-based storage.
 
-4. **Self-Hosted**: Runs in Docker. No cloud dependencies.
+3. **Full Cypher Support**: No parser workarounds needed (Memgraph 2.18.1 had keyword collisions, no named parameters).
 
-5. **Active Development**: Modern codebase, responsive maintainers.
+4. **Concurrent Read/Write**: Neo4j handles it natively (Memgraph crashed on concurrent operations).
+
+5. **Mature Ecosystem**: Wider community, Neo4j Browser (:7474), better tooling.
 
 **Trade-offs**:
-- Not suitable for > 100M node graphs (use Neo4j or Neptune for that scale)
-- Less mature than Neo4j (but compatible enough)
+- Slightly slower for small graphs (<1M nodes) due to disk I/O vs RAM. Acceptable given scaling requirements.
 
 ## Why Ollama
 
@@ -515,6 +516,55 @@ class OktaSSOProvider(AuthProvider):
 - If latency between components is acceptable
 
 **Current Architecture**: Metatron is modular (layered, dependency injection) but deployed as a single service. This allows splitting into microservices later if needed.
+
+## Why Agent Registry Lives in Core (Not CC Plugin)
+
+**Context (2026-04-21, MTRNIX-270):** WS4 delivered the Agent Registry backend —
+CRUD, lifecycle, versioned config. The task spec called for a new module
+`src/metatron/controlcenter/`, but the root `CLAUDE.md` also says the commercial
+Control Center is a "separate repo, planned." Which side of the boundary owns
+agent identity?
+
+**Decision:** Agent Registry lives **in Core** as a first-class L3 module
+(`src/metatron/agents/`), parallel to `memory/` and `workspaces/`. The
+`controlcenter/` name was rejected.
+
+**Rationale:**
+
+1. **Agent identity is a core primitive.** `memory_records.agent_id` (migration
+   013) already references agents; Hermes integration presupposes a stable
+   identifier. Core needs this regardless of whether a CC plugin exists.
+2. **Consistent neighbour pattern.** `memory/`, `workspaces/` are L3 identity
+   primitives. `agents/` extends the same pattern — same persistence style,
+   same DI shape, same RBAC gates.
+3. **Plugin-shaped governance, not plugin-shaped identity.** What CC actually
+   owns is *policy* on top of identity: 5-role RBAC, budget enforcement,
+   memory-bindings enforcement, company/department/team hierarchy, audit log,
+   workflow orchestration. These land in the future CC plugin and will
+   import from `metatron.agents` rather than duplicate its storage.
+4. **Soft-reference between memory and agents.** `memory_records.agent_id`
+   stays a free string (no FK). Hermes can write memory without prior
+   registration — Core does not add a validation bottleneck. The registry
+   is authoritative for "who exists," but not gatekeeping "who may write."
+5. **Opaque JSONB for `memory_bindings` and `budget` in MVP.** Core stores
+   the blobs, enforces 32 KiB and JSON-serializable, and does not interpret
+   the shape. Enforcement (rate limits, memory scope filtering) is a CC
+   concern.
+
+**Consequences:**
+
+- `/api/v1/agents/*` is a public REST surface, open-source, permissive RBAC
+  (editor to write).
+- CC-plugin extension points: subscribe to future `AGENT_CREATED` /
+  `AGENT_UPDATED` events (not wired in MTRNIX-270), register middleware that
+  enforces 5-role RBAC, wrap `AgentRegistryService` with budget-aware
+  decorators via plugin hook.
+- If Core ever moves to a CC-only agent model, migration is mechanical
+  (rename module, keep PG schema).
+
+**Tradeoff:** external consumers see an "agent registry" in Core that is
+*incomplete* without governance. Documented in `docs/HERMES_INTEGRATION.md`
+and `docs/LEGACY.md` so integrators know what is and is not enforced.
 
 ## Summary
 

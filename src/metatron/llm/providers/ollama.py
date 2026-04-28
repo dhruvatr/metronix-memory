@@ -4,18 +4,17 @@ Ollama runs models locally, useful for privacy and offline operation.
 """
 
 import os
-from typing import List, Optional
 
 import requests
 import structlog
 
 from metatron.core.http import get_http_session
 from metatron.llm.base import (
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
 )
 
 logger = structlog.get_logger()
@@ -28,8 +27,8 @@ class OllamaProvider(LLMProvider):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        host: Optional[str] = None,
+        model: str | None = None,
+        host: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize Ollama provider.
@@ -49,9 +48,7 @@ class OllamaProvider(LLMProvider):
             if ollama_host.startswith(("http://", "https://")):
                 default_host = ollama_host
             else:
-                ollama_port = os.getenv(
-                    "OLLAMA_LLM_PORT", os.getenv("OLLAMA_PORT", "11434")
-                )
+                ollama_port = os.getenv("OLLAMA_LLM_PORT", os.getenv("OLLAMA_PORT", "11434"))
                 default_host = f"http://{ollama_host}:{ollama_port}"
 
         self.host = host or default_host
@@ -84,20 +81,33 @@ class OllamaProvider(LLMProvider):
 
     def chat_completion(  # TODO: async migration
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 120,  # Ollama can be slow for first request
         **kwargs,
     ) -> LLMResponse:
         """Send chat completion request to Ollama."""
+        # num_ctx default in Ollama is 2048, which is too small for RAG —
+        # Metatron builds prompts of 4k–8k tokens and modern Qwen/Llama
+        # models support 128k+, so we default to 32k here. Override via
+        # OLLAMA_NUM_CTX if your hardware can't hold the KV cache.
+        num_ctx = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
+        # Allow env override of the request timeout for slow local models.
+        env_timeout = os.getenv("OLLAMA_REQUEST_TIMEOUT")
+        if env_timeout:
+            try:
+                timeout = int(env_timeout)
+            except ValueError:
+                pass
         payload = {
             "model": self.model,
             "messages": self._messages_to_dicts(messages),
             "stream": False,
             "options": {
                 "temperature": temperature,
+                "num_ctx": num_ctx,
             },
         }
 
@@ -137,12 +147,8 @@ class OllamaProvider(LLMProvider):
             )
 
         except requests.exceptions.Timeout:
-            raise LLMConnectionError(
-                f"Ollama timeout after {timeout}s - is the model loaded?"
-            )
+            raise LLMConnectionError(f"Ollama timeout after {timeout}s - is the model loaded?")
         except requests.exceptions.ConnectionError as e:
-            raise LLMConnectionError(
-                f"Failed to connect to Ollama at {self.host}: {e}"
-            )
+            raise LLMConnectionError(f"Failed to connect to Ollama at {self.host}: {e}")
         except requests.exceptions.HTTPError as e:
             raise LLMError(f"Ollama error: {e}")

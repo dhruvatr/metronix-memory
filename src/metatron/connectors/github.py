@@ -25,6 +25,8 @@ class GitHubConnector(ConnectorInterface):
     - repos: Comma-separated repo names (or "*" for all)
     """
 
+    source_role: str = "task_tracker"
+
     def __init__(self) -> None:
         self._client = None
         self._config: dict[str, str] = {}
@@ -37,9 +39,7 @@ class GitHubConnector(ConnectorInterface):
         # from github import Github
         # self._client = Github(decrypted_config["token"])
 
-    async def fetch(
-        self, workspace_id: str, since: datetime | None = None
-    ) -> list[Document]:
+    async def fetch(self, workspace_id: str, since: datetime | None = None) -> list[Document]:
         """Fetch GitHub content: READMEs, issues, PRs.
 
         For each repo:

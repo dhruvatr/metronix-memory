@@ -6,7 +6,7 @@ and the abstract LLMProvider base class that all providers implement.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import structlog
 
@@ -17,29 +17,35 @@ logger = structlog.get_logger()
 # Exception hierarchy
 # ---------------------------------------------------------------------------
 
+
 class LLMError(Exception):
     """Base exception for LLM-related errors."""
+
     pass
 
 
 class LLMConnectionError(LLMError):
     """Raised when connection to LLM provider fails."""
+
     pass
 
 
 class LLMRateLimitError(LLMError):
     """Raised when rate limit is exceeded."""
+
     pass
 
 
 class LLMAuthenticationError(LLMError):
     """Raised when authentication fails."""
+
     pass
 
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class LLMResponse:
@@ -48,8 +54,8 @@ class LLMResponse:
     content: str
     model: str
     provider: str
-    usage: Dict[str, int] = field(default_factory=dict)
-    raw_response: Optional[Dict[str, Any]] = None
+    usage: dict[str, int] = field(default_factory=dict)
+    raw_response: dict[str, Any] | None = None
 
     @property
     def prompt_tokens(self) -> int:
@@ -76,12 +82,13 @@ class Message:
 # Abstract provider
 # ---------------------------------------------------------------------------
 
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
     name: str = "base"
 
-    def __init__(self, model: Optional[str] = None, **kwargs: Any) -> None:
+    def __init__(self, model: str | None = None, **kwargs: Any) -> None:
         """Initialize the provider.
 
         Args:
@@ -100,9 +107,9 @@ class LLMProvider(ABC):
     @abstractmethod
     def chat_completion(
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 60,
         **kwargs: Any,
@@ -133,6 +140,6 @@ class LLMProvider(ABC):
         """Check if the provider is properly configured and available."""
         pass
 
-    def _messages_to_dicts(self, messages: List[Message]) -> List[Dict[str, str]]:
+    def _messages_to_dicts(self, messages: list[Message]) -> list[dict[str, str]]:
         """Convert Message objects to dicts for API calls."""
         return [{"role": m.role, "content": m.content} for m in messages]

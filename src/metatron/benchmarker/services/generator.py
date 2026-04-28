@@ -10,9 +10,9 @@ event loop conflicts with uvicorn.
 from __future__ import annotations
 
 import asyncio
-import structlog
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
+import structlog
 from benchmark_qed.autod.data_model.text_unit import TextUnit
 from benchmark_qed.autod.data_processor.embedding import TextEmbedder
 from benchmark_qed.autod.sampler.clustering.kmeans import KmeansClustering
@@ -112,7 +112,7 @@ class BenchmarkGenerator:
         self.temperature = temperature
 
         # LLM parameters
-        self.llm_params: Dict[str, Any] = {
+        self.llm_params: dict[str, Any] = {
             "temperature": self.temperature,
             "seed": self.random_seed,
         }
@@ -123,7 +123,7 @@ class BenchmarkGenerator:
         self.embedding_model: OpenAIEmbedding | None = None
 
         # source_id → metadata mapping for enriching claim sources
-        self.source_metadata: Dict[str, Dict[str, str]] = {}
+        self.source_metadata: dict[str, dict[str, str]] = {}
 
         logger.info(
             "BenchmarkGenerator initialised: model=%s, num_questions=%d",
@@ -136,7 +136,7 @@ class BenchmarkGenerator:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_settings(cls, settings: "Settings") -> "BenchmarkGenerator":
+    def from_settings(cls, settings: Settings) -> BenchmarkGenerator:
         """Create a generator from Metatron Core settings.
 
         Maps ``Settings`` fields to constructor arguments:
@@ -196,12 +196,12 @@ class BenchmarkGenerator:
     # Internal helpers – text preparation
     # ------------------------------------------------------------------
 
-    def _prepare_text_units(self, documents: List[QEDDocument]) -> List[TextUnit]:
+    def _prepare_text_units(self, documents: list[QEDDocument]) -> list[TextUnit]:
         """Convert ``QEDDocument`` objects into ``TextUnit`` for BenchmarkQED.
 
         Also stores source metadata for later enrichment of claim sources.
         """
-        text_units: List[TextUnit] = []
+        text_units: list[TextUnit] = []
 
         for doc in documents:
             self.source_metadata[doc.source_id] = {
@@ -229,9 +229,7 @@ class BenchmarkGenerator:
         )
         return text_units
 
-    def _validate_and_truncate_texts(
-        self, text_units: List[TextUnit]
-    ) -> List[TextUnit]:
+    def _validate_and_truncate_texts(self, text_units: list[TextUnit]) -> list[TextUnit]:
         """Validate and truncate texts to ``MAX_TEXT_LENGTH``.
 
         The embedding API has a limitation on input length.  Texts exceeding
@@ -251,9 +249,7 @@ class BenchmarkGenerator:
                 truncated_count += 1
 
         if truncated_count > 0:
-            logger.info(
-                "Truncated %d/%d texts", truncated_count, len(text_units)
-            )
+            logger.info("Truncated %d/%d texts", truncated_count, len(text_units))
 
         return text_units
 
@@ -261,9 +257,7 @@ class BenchmarkGenerator:
     # Internal helpers – embeddings & clustering
     # ------------------------------------------------------------------
 
-    async def _create_embeddings_with_retry(
-        self, text_units: List[TextUnit]
-    ) -> List[TextUnit]:
+    async def _create_embeddings_with_retry(self, text_units: list[TextUnit]) -> list[TextUnit]:
         """Create embeddings with retry and exponential backoff.
 
         Raises:
@@ -276,17 +270,13 @@ class BenchmarkGenerator:
                 )
 
                 valid_count = sum(
-                    1
-                    for unit in text_units_with_embeddings
-                    if unit.text_embedding is not None
+                    1 for unit in text_units_with_embeddings if unit.text_embedding is not None
                 )
 
                 if valid_count == 0:
                     raise ValueError("No embeddings created")
 
-                logger.info(
-                    "Created %d/%d embeddings", valid_count, len(text_units)
-                )
+                logger.info("Created %d/%d embeddings", valid_count, len(text_units))
                 return text_units_with_embeddings
 
             except Exception as e:
@@ -309,9 +299,9 @@ class BenchmarkGenerator:
 
     async def _cluster_texts(
         self,
-        text_units: List[TextUnit],
-        num_clusters: Optional[int] = None,
-    ) -> List[TextUnit]:
+        text_units: list[TextUnit],
+        num_clusters: int | None = None,
+    ) -> list[TextUnit]:
         """Cluster text units for BenchmarkQED.
 
         Returns text units annotated with ``cluster_id``.
@@ -328,17 +318,13 @@ class BenchmarkGenerator:
         text_units = self._validate_and_truncate_texts(text_units)
 
         logger.info("Creating embeddings...")
-        text_units_with_embeddings = await self._create_embeddings_with_retry(
-            text_units
-        )
+        text_units_with_embeddings = await self._create_embeddings_with_retry(text_units)
 
         logger.info("Performing clustering...")
         clustering = KmeansClustering(random_seed=self.random_seed)
-        text_clusters = clustering.cluster(
-            text_units_with_embeddings, num_clusters=num_clusters
-        )
+        text_clusters = clustering.cluster(text_units_with_embeddings, num_clusters=num_clusters)
 
-        all_texts: List[TextUnit] = []
+        all_texts: list[TextUnit] = []
         for cluster in text_clusters:
             for text_unit in cluster.text_units:
                 text_unit.cluster_id = cluster.id
@@ -355,9 +341,7 @@ class BenchmarkGenerator:
     # Internal helpers – question conversion
     # ------------------------------------------------------------------
 
-    def _convert_to_benchmark_question(
-        self, qed_question: Any
-    ) -> BenchmarkQuestion:
+    def _convert_to_benchmark_question(self, qed_question: Any) -> BenchmarkQuestion:
         """Convert a BenchmarkQED question object into ``BenchmarkQuestion``.
 
         Handles both dict and object representations from BenchmarkQED.
@@ -370,16 +354,14 @@ class BenchmarkGenerator:
             elif hasattr(qed_question, "__dict__"):
                 qed_question = qed_question.__dict__
             else:
-                raise ValueError(
-                    f"Cannot serialise question of type {type(qed_question)}"
-                )
+                raise ValueError(f"Cannot serialise question of type {type(qed_question)}")
 
         # Convert claims
-        claims: List[Claim] = []
+        claims: list[Claim] = []
         attributes_data = qed_question.get("attributes", {})
 
         for claim_data in attributes_data.get("claims", []):
-            sources: List[ClaimSource] = []
+            sources: list[ClaimSource] = []
             for src in claim_data.get("sources", []):
                 source_id = src.get("source_id", "")
                 claim_source = ClaimSource(
@@ -415,22 +397,12 @@ class BenchmarkGenerator:
             abstract_categories=abstract_categories,
             background_information=attributes_data.get("background_information"),
             reference_coverage=attributes_data.get("reference_coverage", 0.0),
-            relevant_reference_count=attributes_data.get(
-                "relevant_reference_count", 0
-            ),
+            relevant_reference_count=attributes_data.get("relevant_reference_count", 0),
             reference_count=attributes_data.get("reference_count", 0),
-            min_reference_similarity=attributes_data.get(
-                "min_reference_similarity", 0.0
-            ),
-            max_reference_similarity=attributes_data.get(
-                "max_reference_similarity", 0.0
-            ),
-            mean_reference_similarity=attributes_data.get(
-                "mean_reference_similarity", 0.0
-            ),
-            intra_inter_similarity_ratio=attributes_data.get(
-                "intra_inter_similarity_ratio", 0.0
-            ),
+            min_reference_similarity=attributes_data.get("min_reference_similarity", 0.0),
+            max_reference_similarity=attributes_data.get("max_reference_similarity", 0.0),
+            mean_reference_similarity=attributes_data.get("mean_reference_similarity", 0.0),
+            intra_inter_similarity_ratio=attributes_data.get("intra_inter_similarity_ratio", 0.0),
             claim_count=attributes_data.get("claim_count", 0),
             claims=claims,
             is_representative=attributes_data.get("is_representative", True),
@@ -444,9 +416,7 @@ class BenchmarkGenerator:
             attributes=attributes,
         )
 
-    def _convert_to_qed_question(
-        self, benchmark_question: BenchmarkQuestion
-    ) -> QEDQuestion:
+    def _convert_to_qed_question(self, benchmark_question: BenchmarkQuestion) -> QEDQuestion:
         """Convert ``BenchmarkQuestion`` back to BenchmarkQED format.
 
         Used for global question generation which requires local questions
@@ -457,20 +427,18 @@ class BenchmarkGenerator:
             text=benchmark_question.text,
             references=benchmark_question.references,
             attributes={
-                "abstract_categories": benchmark_question.attributes.abstract_categories
-                or [],
-                "named_entities": benchmark_question.attributes.named_entities
-                or [],
+                "abstract_categories": benchmark_question.attributes.abstract_categories or [],
+                "named_entities": benchmark_question.attributes.named_entities or [],
             },
         )
 
     def _convert_questions_with_error_handling(
         self,
-        qed_questions: List[Any],
+        qed_questions: list[Any],
         question_type: str,
-    ) -> List[BenchmarkQuestion]:
+    ) -> list[BenchmarkQuestion]:
         """Convert a list of QED questions, skipping any that fail."""
-        converted: List[BenchmarkQuestion] = []
+        converted: list[BenchmarkQuestion] = []
 
         for qed_question in qed_questions:
             try:
@@ -494,9 +462,9 @@ class BenchmarkGenerator:
 
     async def _generate_local_questions_async(
         self,
-        text_units: List[TextUnit],
+        text_units: list[TextUnit],
         num_questions: int,
-    ) -> List[BenchmarkQuestion]:
+    ) -> list[BenchmarkQuestion]:
         """Generate local (data-local) questions (async, runs inside thread)."""
         if num_questions <= 0:
             return []
@@ -526,9 +494,9 @@ class BenchmarkGenerator:
 
     async def _generate_global_questions_async(
         self,
-        local_questions: List[BenchmarkQuestion],
+        local_questions: list[BenchmarkQuestion],
         num_questions: int,
-    ) -> List[BenchmarkQuestion]:
+    ) -> list[BenchmarkQuestion]:
         """Generate global (data-global) questions (async, runs inside thread).
 
         Global questions require local questions as input and are generated
@@ -538,15 +506,13 @@ class BenchmarkGenerator:
             return []
 
         if not local_questions:
-            logger.warning(
-                "No local questions available for global generation, skipping"
-            )
+            logger.warning("No local questions available for global generation, skipping")
             return []
 
         logger.info("Generating %d data-global questions...", num_questions)
 
-        local_qed_questions: List[QEDQuestion] = []
-        category_stats: Dict[str, int] = {}
+        local_qed_questions: list[QEDQuestion] = []
+        category_stats: dict[str, int] = {}
 
         for bq in local_questions:
             abstract_categories = bq.attributes.abstract_categories or []
@@ -554,9 +520,7 @@ class BenchmarkGenerator:
                 category_stats[cat] = category_stats.get(cat, 0) + 1
 
             if not abstract_categories:
-                logger.warning(
-                    "Question %s has no abstract_categories, skipping", bq.id
-                )
+                logger.warning("Question %s has no abstract_categories, skipping", bq.id)
                 continue
 
             local_qed_questions.append(self._convert_to_qed_question(bq))
@@ -598,33 +562,23 @@ class BenchmarkGenerator:
             return global_questions
 
         except Exception as e:
-            logger.error(
-                "Error generating global questions: %s", e, exc_info=True
-            )
+            logger.error("Error generating global questions: %s", e, exc_info=True)
             logger.warning("Continuing without global questions")
             return []
 
-    def _log_category_statistics(
-        self, category_stats: Dict[str, int]
-    ) -> None:
+    def _log_category_statistics(self, category_stats: dict[str, int]) -> None:
         """Log statistics about question categories."""
         logger.info("=== CATEGORY STATISTICS ===")
         logger.info("Total unique categories: %d", len(category_stats))
 
-        top_categories = sorted(
-            category_stats.items(), key=lambda x: x[1], reverse=True
-        )[:10]
+        top_categories = sorted(category_stats.items(), key=lambda x: x[1], reverse=True)[:10]
 
         if top_categories:
             logger.info("Top-10 categories:")
             for cat, count in top_categories:
                 logger.info("  '%s': %d questions", cat, count)
 
-        valid_categories = {
-            cat: count
-            for cat, count in category_stats.items()
-            if count > 1
-        }
+        valid_categories = {cat: count for cat, count in category_stats.items() if count > 1}
         logger.info(
             "Categories with >1 question (valid for global): %d",
             len(valid_categories),
@@ -637,10 +591,10 @@ class BenchmarkGenerator:
 
     async def _run_generation_pipeline(
         self,
-        documents: List[QEDDocument],
+        documents: list[QEDDocument],
         num_questions: int,
-        num_clusters: Optional[int] = None,
-    ) -> List[BenchmarkQuestion]:
+        num_clusters: int | None = None,
+    ) -> list[BenchmarkQuestion]:
         """Full generation pipeline (embeddings → clustering → questions).
 
         This method is async and is meant to be called via
@@ -661,12 +615,8 @@ class BenchmarkGenerator:
             num_global,
         )
 
-        local_questions = await self._generate_local_questions_async(
-            text_units, num_local
-        )
-        global_questions = await self._generate_global_questions_async(
-            local_questions, num_global
-        )
+        local_questions = await self._generate_local_questions_async(text_units, num_local)
+        global_questions = await self._generate_global_questions_async(local_questions, num_global)
 
         all_questions = local_questions + global_questions
         logger.info(
@@ -683,10 +633,10 @@ class BenchmarkGenerator:
 
     async def generate_questions(
         self,
-        documents: List[QEDDocument],
+        documents: list[QEDDocument],
         num_questions: int | None = None,
         num_clusters: int | None = None,
-    ) -> List[BenchmarkQuestion]:
+    ) -> list[BenchmarkQuestion]:
         """Generate benchmark questions from documents.
 
         BenchmarkQED calls are isolated in ``asyncio.to_thread()`` to avoid
@@ -710,13 +660,9 @@ class BenchmarkGenerator:
             num_questions = self.num_questions
 
         if num_questions <= 0:
-            raise ValueError(
-                f"num_questions must be > 0, got: {num_questions}"
-            )
+            raise ValueError(f"num_questions must be > 0, got: {num_questions}")
 
-        logger.info(
-            "Starting question generation for %d documents", len(documents)
-        )
+        logger.info("Starting question generation for %d documents", len(documents))
 
         # Isolate the entire BenchmarkQED pipeline in a separate thread
         # with its own event loop to prevent conflicts with uvicorn.
@@ -768,10 +714,7 @@ class BenchmarkGenerator:
     # ------------------------------------------------------------------
 
     def __str__(self) -> str:
-        return (
-            f"BenchmarkGenerator(model={self.deepseek_model}, "
-            f"questions={self.num_questions})"
-        )
+        return f"BenchmarkGenerator(model={self.deepseek_model}, questions={self.num_questions})"
 
     def __repr__(self) -> str:
         return (

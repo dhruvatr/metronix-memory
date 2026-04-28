@@ -39,29 +39,36 @@ def router(settings):
 
 
 class TestRouterErrors:
-    @patch("metatron.agent.router.hybrid_search_and_answer")
+    @patch("metatron.agent.router.hybrid_search_and_answer_sync")
     def test_llm_error_returns_friendly_message(
-        self, mock_search: MagicMock, router: AgentRouter,
+        self,
+        mock_search: MagicMock,
+        router: AgentRouter,
     ) -> None:
         mock_search.side_effect = LLMError("provider timeout")
         result = router.route("query", user_id="u1")
         assert "AI service is temporarily unavailable" in result
         assert "provider timeout" not in result
 
-    @patch("metatron.agent.router.hybrid_search_and_answer")
+    @patch("metatron.agent.router.hybrid_search_and_answer_sync")
     def test_qdrant_response_handling_error_returns_friendly_message(
-        self, mock_search: MagicMock, router: AgentRouter,
+        self,
+        mock_search: MagicMock,
+        router: AgentRouter,
     ) -> None:
         """Qdrant ResponseHandlingException triggers search-service message."""
         from qdrant_client.http.exceptions import ResponseHandlingException
+
         mock_search.side_effect = ResponseHandlingException("connection refused")
         result = router.route("query", user_id="u1")
         assert "Search service is temporarily unavailable" in result
         assert "connection refused" not in result
 
-    @patch("metatron.agent.router.hybrid_search_and_answer")
+    @patch("metatron.agent.router.hybrid_search_and_answer_sync")
     def test_generic_error_returns_friendly_message(
-        self, mock_search: MagicMock, router: AgentRouter,
+        self,
+        mock_search: MagicMock,
+        router: AgentRouter,
     ) -> None:
         """Unexpected errors are caught by the generic handler."""
         mock_search.side_effect = RuntimeError("something unexpected")
@@ -69,9 +76,11 @@ class TestRouterErrors:
         assert "Something went wrong" in result
         assert "something unexpected" not in result
 
-    @patch("metatron.agent.router.hybrid_search_and_answer")
+    @patch("metatron.agent.router.hybrid_search_and_answer_sync")
     def test_unexpected_error_hides_details(
-        self, mock_search: MagicMock, router: AgentRouter,
+        self,
+        mock_search: MagicMock,
+        router: AgentRouter,
     ) -> None:
         mock_search.side_effect = ValueError("secret internal detail")
         result = router.route("query", user_id="u1")
@@ -79,7 +88,8 @@ class TestRouterErrors:
         assert "secret internal detail" not in result
 
     def test_sync_returns_api_redirect(
-        self, router: AgentRouter,
+        self,
+        router: AgentRouter,
     ) -> None:
         """Sync via chat now redirects to API."""
         result = router.route("/sync confluence", user_id="u1")
@@ -96,11 +106,14 @@ class TestLLMRetry:
     @patch("metatron.llm.chat_completion")
     @patch("metatron.llm.time.sleep")
     def test_succeeds_on_second_attempt(
-        self, mock_sleep: MagicMock, mock_cc: MagicMock,
+        self,
+        mock_sleep: MagicMock,
+        mock_cc: MagicMock,
     ) -> None:
         mock_cc.side_effect = [LLMConnectionError("timeout"), "success"]
         result = chat_completion_with_retry(
-            messages=[{"role": "user", "content": "hi"}], max_retries=3,
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=3,
         )
         assert result == "success"
         assert mock_cc.call_count == 2
@@ -109,12 +122,15 @@ class TestLLMRetry:
     @patch("metatron.llm.chat_completion")
     @patch("metatron.llm.time.sleep")
     def test_gives_up_after_max_retries(
-        self, mock_sleep: MagicMock, mock_cc: MagicMock,
+        self,
+        mock_sleep: MagicMock,
+        mock_cc: MagicMock,
     ) -> None:
         mock_cc.side_effect = LLMConnectionError("network down")
         with pytest.raises(LLMConnectionError, match="network down"):
             chat_completion_with_retry(
-                messages=[{"role": "user", "content": "hi"}], max_retries=3,
+                messages=[{"role": "user", "content": "hi"}],
+                max_retries=3,
             )
         assert mock_cc.call_count == 3
         assert mock_sleep.call_count == 2  # sleeps between attempts, not after last
@@ -124,7 +140,8 @@ class TestLLMRetry:
         mock_cc.side_effect = LLMAuthenticationError("bad key")
         with pytest.raises(LLMAuthenticationError, match="bad key"):
             chat_completion_with_retry(
-                messages=[{"role": "user", "content": "hi"}], max_retries=3,
+                messages=[{"role": "user", "content": "hi"}],
+                max_retries=3,
             )
         assert mock_cc.call_count == 1
 
@@ -132,7 +149,8 @@ class TestLLMRetry:
     def test_succeeds_on_first_try(self, mock_cc: MagicMock) -> None:
         mock_cc.return_value = "instant"
         result = chat_completion_with_retry(
-            messages=[{"role": "user", "content": "hi"}], max_retries=3,
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=3,
         )
         assert result == "instant"
         assert mock_cc.call_count == 1
@@ -145,45 +163,91 @@ class TestLLMRetry:
 
 class TestSearchDegradation:
     @patch("metatron.retrieval.search.chat_completion_with_retry", return_value="answer text")
-    @patch("metatron.retrieval.search.get_graph_entities", side_effect=ConnectionError("memgraph down"))
-    @patch("metatron.retrieval.search.search_with_date_filter")
+    @patch(
+        "metatron.retrieval.search.get_graph_entities",
+        side_effect=ConnectionError("memgraph down"),
+    )
+    @patch("metatron.retrieval.search.recall_graph_async", return_value=[])
+    @patch("metatron.retrieval.search.recall_metadata_async", return_value=[])
+    @patch("metatron.retrieval.search.recall_exact_async", return_value=[])
+    @patch("metatron.retrieval.search.recall_dense_async")
     @patch("metatron.retrieval.search.expand_query", side_effect=lambda q: q)
     @patch("metatron.retrieval.search.should_use_team_workflow_schema", return_value=False)
-    def test_graph_failure_continues_with_empty_data(
+    async def test_graph_failure_continues_with_empty_data(
         self,
         _mock_schema: MagicMock,
         _mock_expand: MagicMock,
-        mock_search: MagicMock,
+        mock_dense: MagicMock,
+        _mock_exact: MagicMock,
+        _mock_metadata: MagicMock,
+        _mock_graph_channel: MagicMock,
         _mock_graph: MagicMock,
         mock_llm: MagicMock,
     ) -> None:
-        mock_search.return_value = [
-            {"memory": "doc1 content", "type": "confluence", "title": "Doc 1"},
+        mock_dense.return_value = [
+            {
+                "chunk_id": "c1",
+                "doc_label": "DOC-1",
+                "score": 0.9,
+                "channel": "dense",
+                "memory": {"memory": "doc1 content", "type": "confluence", "title": "Doc 1"},
+            },
         ]
         from metatron.retrieval.search import hybrid_search_and_answer
-        result = hybrid_search_and_answer("test query")
+
+        result = await hybrid_search_and_answer("test query")
         assert "answer text" in result
         mock_llm.assert_called_once()
 
-    @patch("metatron.retrieval.search.chat_completion_with_retry", side_effect=LLMError("all providers down"))
+    @patch(
+        "metatron.retrieval.search.chat_completion_with_retry",
+        side_effect=LLMError("all providers down"),
+    )
     @patch("metatron.retrieval.search.get_entities_by_doc_labels", return_value=[])
-    @patch("metatron.retrieval.search.search_with_date_filter")
+    @patch("metatron.retrieval.search.recall_graph_async", return_value=[])
+    @patch("metatron.retrieval.search.recall_metadata_async", return_value=[])
+    @patch("metatron.retrieval.search.recall_exact_async", return_value=[])
+    @patch("metatron.retrieval.search.recall_dense_async")
     @patch("metatron.retrieval.search.expand_query", side_effect=lambda q: q)
     @patch("metatron.retrieval.search.should_use_team_workflow_schema", return_value=False)
-    def test_llm_failure_returns_document_count(
+    async def test_llm_failure_returns_document_count(
         self,
         _mock_schema: MagicMock,
         _mock_expand: MagicMock,
-        mock_search: MagicMock,
+        mock_dense: MagicMock,
+        _mock_exact: MagicMock,
+        _mock_metadata: MagicMock,
+        _mock_graph: MagicMock,
         _mock_graph_ents: MagicMock,
         _mock_llm: MagicMock,
     ) -> None:
-        mock_search.return_value = [
-            {"memory": "doc1", "type": "jira", "title": "T1", "doc_label": "L1"},
-            {"memory": "doc2", "type": "jira", "title": "T2", "doc_label": "L2"},
-            {"memory": "doc3", "type": "confluence", "title": "T3", "doc_label": "L3"},
+        from metatron.retrieval.channels import ScoredResult
+
+        mock_dense.return_value = [
+            ScoredResult(
+                chunk_id="1",
+                doc_label="L1",
+                score=0.9,
+                channel="dense",
+                memory={"memory": "doc1", "type": "jira", "title": "T1", "doc_label": "L1"},
+            ),
+            ScoredResult(
+                chunk_id="2",
+                doc_label="L2",
+                score=0.8,
+                channel="dense",
+                memory={"memory": "doc2", "type": "jira", "title": "T2", "doc_label": "L2"},
+            ),
+            ScoredResult(
+                chunk_id="3",
+                doc_label="L3",
+                score=0.7,
+                channel="dense",
+                memory={"memory": "doc3", "type": "confluence", "title": "T3", "doc_label": "L3"},
+            ),
         ]
         from metatron.retrieval.search import hybrid_search_and_answer
-        result = hybrid_search_and_answer("test query")
+
+        result = await hybrid_search_and_answer("test query")
         assert "Found 3 relevant documents" in result
         assert "couldn't generate an answer" in result

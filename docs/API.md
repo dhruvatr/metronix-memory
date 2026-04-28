@@ -9,6 +9,7 @@ Base URL: `http://localhost:8000`
 - [Health Checks](#health-checks)
 - [Dashboard](#dashboard)
 - [Workspaces](#workspaces)
+- [Agents](#agents)
 - [Connections](#connections)
 - [Skills](#skills)
 - [Files](#files)
@@ -49,7 +50,7 @@ Readiness check endpoint. Verifies all required services are available.
   "services": {
     "database": "ok",
     "qdrant": "ok",
-    "memgraph": "ok",
+    "neo4j": "ok",
     "ollama": "ok"
   },
   "timestamp": "2026-02-11T10:30:00Z"
@@ -333,10 +334,10 @@ curl "http://localhost:8000/api/v1/dashboard/graph-stats?workspace_id=550e8400-e
 
 **Notes:**
 
-- Data is retrieved from Memgraph (graph stats) and Qdrant (document/chunk counts)
+- Data is retrieved from Neo4j (graph stats) and Qdrant (document/chunk counts)
 - Orphan nodes are nodes without any relationships: `MATCH (n) WHERE NOT (n)--()`
 - Edge count is divided by 2 for undirected relationships
-- If Memgraph or Qdrant is unavailable, returns zeros (graceful degradation)
+- If Neo4j or Qdrant is unavailable, returns zeros (graceful degradation)
 - Orphan list is limited to 100 nodes for performance
 
 ## Workspaces
@@ -425,6 +426,167 @@ Get a specific workspace by ID.
 ```bash
 curl http://localhost:8000/api/v1/workspaces/550e8400-e29b-41d4-a716-446655440000
 ```
+
+## Agents
+
+Agent Registry (WS4, MTRNIX-270). First-class identity primitive for external
+agent runtimes. Workspace is derived from the authenticated user — never from
+request body or query string.
+
+**RBAC:**
+- `require_viewer` — reads (`GET /`, `GET /{id}`, `GET /{id}/versions`)
+- `require_editor` — writes, lifecycle transitions, soft-delete
+
+**Status transitions:** `stopped` (default on create) → `active | paused | stopped`
+via lifecycle endpoints. `archived` via `DELETE`. Lifecycle transitions do NOT
+bump `config_version`; only `PUT /{id}` does.
+
+### POST /api/v1/agents
+
+Create a new agent. Returns 201 with the full record.
+
+**Request Body:**
+
+```json
+{
+  "name": "Trader",
+  "model": "claude-sonnet-4-6",
+  "capabilities": ["trade", "analyze"],
+  "tools": ["search", "memory_store"],
+  "memory_bindings": {"scopes": ["PER_AGENT", "SESSION"]},
+  "budget": {"tokens_per_day": 100000, "cost_usd_month": 50}
+}
+```
+
+`capabilities`, `tools`, `memory_bindings`, `budget` are optional. `memory_bindings`
+and `budget` are opaque JSONB (enforcement deferred). Max 32 KiB serialized for
+each.
+
+**Response:**
+
+```json
+{
+  "id": "3f1c4b2e5d6a4f9e8b7c6d5e4f3a2b1c",
+  "workspace_id": "ws-acme",
+  "name": "Trader",
+  "status": "stopped",
+  "model": "claude-sonnet-4-6",
+  "capabilities": ["trade", "analyze"],
+  "tools": ["search", "memory_store"],
+  "memory_bindings": {"scopes": ["PER_AGENT", "SESSION"]},
+  "budget": {"tokens_per_day": 100000, "cost_usd_month": 50},
+  "config_version": 1,
+  "current_config": {
+    "name": "Trader", "model": "claude-sonnet-4-6",
+    "capabilities": ["trade", "analyze"], "tools": ["search", "memory_store"],
+    "memory_bindings": {"scopes": ["PER_AGENT", "SESSION"]},
+    "budget": {"tokens_per_day": 100000, "cost_usd_month": 50}
+  },
+  "created_by": "user-42",
+  "created_at": "2026-04-21T10:30:00Z",
+  "updated_at": "2026-04-21T10:30:00Z"
+}
+```
+
+**Errors:** 409 if `name` is already used in the workspace.
+
+### GET /api/v1/agents
+
+List agents in the current workspace.
+
+**Query params:**
+
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `status` | enum | — | `active \| paused \| stopped \| archived` |
+| `name_prefix` | string | — | Prefix filter, 1..128 chars, `%` and `_` are escaped |
+| `limit` | int | 50 | 1..200 |
+| `offset` | int | 0 | 0..10000 |
+
+**Response:**
+
+```json
+{
+  "agents": [ { /* AgentResponse */ } ],
+  "count": 1,
+  "limit": 50,
+  "offset": 0,
+  "has_more": false
+}
+```
+
+### GET /api/v1/agents/{id}
+
+Fetch a single agent, including `current_config`.
+
+**Errors:** 404 if not found in this workspace.
+
+### PUT /api/v1/agents/{id}
+
+Partial update. Any subset of mutable fields; at least one field required (else
+422). Merges with existing state, recomputes the snapshot, bumps `config_version`
+by one, and appends a new row to the version history — all in a single PG
+transaction (`SELECT … FOR UPDATE`).
+
+**Request Body:**
+
+```json
+{
+  "model": "claude-opus-4-7",
+  "capabilities": ["trade", "analyze", "report"]
+}
+```
+
+**Response:** updated `AgentResponse` with `config_version` incremented.
+
+**Errors:** 404 if not found; 409 if new name collides with another agent.
+
+### DELETE /api/v1/agents/{id}
+
+Soft-delete — flips `status` to `archived`. No rows are removed; version history
+stays intact. Returns 204.
+
+**Errors:** 404 if not found.
+
+### POST /api/v1/agents/{id}/start
+
+Set `status` to `active`. Returns 200 with the updated record. Version not bumped.
+
+### POST /api/v1/agents/{id}/stop
+
+Set `status` to `stopped`. Returns 200 with the updated record. Version not bumped.
+
+### POST /api/v1/agents/{id}/pause
+
+Set `status` to `paused`. Returns 200 with the updated record. Version not bumped.
+
+### GET /api/v1/agents/{id}/versions
+
+List historical config versions for an agent, newest first.
+
+**Query params:** `limit` (default 50, max 200), `offset` (default 0, max 10000).
+
+**Response:**
+
+```json
+{
+  "versions": [
+    {
+      "agent_id": "3f1c4b2e5d6a4f9e8b7c6d5e4f3a2b1c",
+      "version": 2,
+      "config": { "name": "Trader", "model": "claude-opus-4-7", "...": "..." },
+      "changed_by": "user-42",
+      "changed_at": "2026-04-21T11:00:00Z"
+    }
+  ],
+  "count": 2,
+  "limit": 50,
+  "offset": 0,
+  "has_more": false
+}
+```
+
+**Errors:** 404 if the agent does not exist in this workspace.
 
 ## Connections
 
@@ -1336,7 +1498,7 @@ Delete a test run and all its results.
 
 OpenAI-compatible endpoints for connecting Open WebUI or any OpenAI-compatible client to Metatron.
 
-**Authentication:** `Authorization: Bearer <METATRON_OPENAI_COMPAT_KEY>`
+**Authentication:** `Authorization: Bearer <personal API key (mtk_...)>` or `Bearer <METATRON_OPENAI_COMPAT_KEY>` (Home scenario fallback)
 
 **Error format:** `{"error": {"message": "...", "type": "invalid_request_error"}}`
 
@@ -1423,12 +1585,56 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 ### Open WebUI Setup
 
-1. Add Open WebUI to docker-compose: `docker compose -f docker-compose.full.yml --profile openwebui up`
-2. Open `http://localhost:3080`
-3. Settings → Connections → OpenAI API → Add
-4. URL: `http://metatron-core:8000/v1` (docker) or `http://host.docker.internal:8000/v1` (local dev)
-5. Auth: Bearer, Key: `<METATRON_OPENAI_COMPAT_KEY>`
-6. New Chat → select `metatron-rag-MTRNIX`
+**Home (single user, no auth):**
+1. `docker compose -f docker-compose.full.yml --profile openwebui up`
+2. Open `http://localhost:3080` — no login required
+3. Global connection pre-configured via env vars
+
+**Bundled (multi-user):**
+1. Set `METATRON_OPENWEBUI_URL` and `METATRON_OPENWEBUI_METATRON_URL` in Metatron env
+2. Open WebUI must have `WEBUI_AUTH=true`, `ENABLE_DIRECT_CONNECTIONS=true`
+3. Do NOT set `OPENAI_API_BASE_URL`/`OPENAI_API_KEY` in Open WebUI (no global connection)
+4. Create users in Metatron — they auto-sync to Open WebUI with personal API keys
+5. OWUI admin password = Metatron `AUTH_PASSWORD` (default: `metatron`)
+
+**External (existing Open WebUI):**
+1. Open WebUI must have `ENABLE_DIRECT_CONNECTIONS=true` (mandatory for security)
+2. Import users: `POST /api/v1/admin/import-openwebui-users` with OWUI URL + admin credentials
+3. Download JSON with generated Metatron passwords and API keys
+4. Each user sets Direct Connection in Open WebUI: Settings → Connections → URL + personal API key
+
+### POST /api/v1/admin/import-openwebui-users
+
+Import users from an external Open WebUI instance. Admin only.
+
+**Request Body:**
+```json
+{
+  "owui_url": "http://openwebui.company.com",
+  "admin_email": "admin@company.com",
+  "admin_password": "password"
+}
+```
+
+**Response:**
+```json
+{
+  "imported": [
+    {"email": "user@company.com", "name": "User", "role": "viewer", "metatron_password": "...", "api_key": "mtk_..."}
+  ],
+  "skipped": 0,
+  "already_existed": 1,
+  "total_in_owui": 5
+}
+```
+
+Role mapping: OWUI admin → Metatron admin, OWUI user → Metatron viewer, OWUI pending → skipped.
+
+### Personal API Key Management
+
+- `POST /api/v1/users/{user_id}/api-keys` — create key (returns raw key once, 201)
+- `GET /api/v1/users/{user_id}/api-keys` — list keys (prefix + label, no secrets)
+- `DELETE /api/v1/users/{user_id}/api-keys/{key_prefix}` — revoke key (204)
 
 ## Error Responses
 

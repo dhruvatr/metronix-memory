@@ -21,16 +21,14 @@ logging.basicConfig(
 )
 
 # Import MCP server (structlog is configured in server.py)
+# Import tools so their @mcp.tool() decorators register
+import metatron.mcp.tools  # noqa: F401
 from metatron.mcp.server import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     TRANSPORT_HTTP,
     TRANSPORT_STDIO,
-    main as server_main,
 )
-
-# Import tools so their @mcp.tool() decorators register
-import metatron.mcp.tools  # noqa: F401
 
 
 def parse_args() -> argparse.Namespace:

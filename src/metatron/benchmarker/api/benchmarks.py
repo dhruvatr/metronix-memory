@@ -7,7 +7,6 @@ All endpoints require a workspace_id query parameter for tenant isolation.
 from __future__ import annotations
 
 import structlog
-
 from fastapi import APIRouter, HTTPException, Query
 
 from metatron.benchmarker.db import crud

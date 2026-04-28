@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Optional
 
 
 def normalize_text(text: str) -> str:
@@ -27,8 +26,8 @@ def normalize_workspace_id(workspace_id: str | None = None) -> str:
 def build_doc_label(
     source_id: str,
     user_id: str = "user",
-    workspace_id: Optional[str] = None,
-    upload_time: Optional[str] = None,
+    workspace_id: str | None = None,
+    upload_time: str | None = None,
 ) -> tuple[str, str]:
     """Build a stable document label to link vector and graph representations.
 

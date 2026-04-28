@@ -8,11 +8,10 @@ to Markdown via markdownify, and normalizes the output text.
 from __future__ import annotations
 
 import json
-from typing import Union
+from html import unescape
 
 import structlog
 from ftfy import fix_text
-from html import unescape
 from markdownify import markdownify as html_to_md
 
 from metatron.core.utils import normalize_text
@@ -20,7 +19,7 @@ from metatron.core.utils import normalize_text
 logger = structlog.get_logger()
 
 
-def process_html(body: Union[bytes, str]) -> str:  # TODO: async migration
+def process_html(body: bytes | str) -> str:  # TODO: async migration
     """Process a Confluence page payload into clean Markdown.
 
     Pipeline:

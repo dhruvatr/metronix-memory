@@ -10,9 +10,10 @@ are processed, MetricsController computes the 6 metrics in parallel.
 
 from __future__ import annotations
 
-import structlog
 import time
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
+
+import structlog
 
 from metatron.benchmarker.schemas.benchmark import BenchmarkQuestion
 from metatron.benchmarker.schemas.test_context import TestContext
@@ -31,16 +32,16 @@ class TestRunner:
     def __init__(
         self,
         metrics_controller: Any,
-        context_fetcher: "ContextFetcher",
+        context_fetcher: ContextFetcher,
     ) -> None:
         self.metrics = metrics_controller
         self.ctx_fetcher = context_fetcher
 
     async def run_tests(
         self,
-        questions: List[BenchmarkQuestion],
+        questions: list[BenchmarkQuestion],
         workspace_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run all benchmark questions through the RAG pipeline and compute metrics.
 
@@ -55,7 +56,7 @@ class TestRunner:
         6. Compute average metrics via ``compute_avg_metrics``
         7. Return a dict with questions, contexts, metrics_results, and avg_metrics
         """
-        contexts: List[TestContext] = []
+        contexts: list[TestContext] = []
 
         for q in questions:
             ctx = await self._run_single(q, workspace_id)
@@ -84,12 +85,11 @@ class TestRunner:
         workspace_id: str,
     ) -> TestContext:
         """Run a single question through the RAG pipeline and build a TestContext."""
-        import asyncio
 
+        trace: Any = None
         start = time.time()
         try:
-            trace = await asyncio.to_thread(
-                hybrid_search_and_answer,
+            trace = await hybrid_search_and_answer(
                 query=question.text,
                 workspace_id=workspace_id,
                 return_trace=True,
@@ -123,6 +123,9 @@ class TestRunner:
             graph_entities=graph_entities,
         )
 
+        if isinstance(trace, dict):
+            ctx.retrieved_doc_labels = trace.get("retrieved_doc_labels", [])
+
         # Fetch full chunk data from Qdrant
         if source_results:
             try:
@@ -139,8 +142,8 @@ class TestRunner:
 
     async def _calculate_metrics(
         self,
-        contexts: List[TestContext],
-    ) -> List[MetricsResult]:
+        contexts: list[TestContext],
+    ) -> list[MetricsResult]:
         """Calculate metrics for all contexts, returning empty results on failure."""
         try:
             return await self.metrics.calculate_all(contexts)
@@ -150,8 +153,8 @@ class TestRunner:
 
     @staticmethod
     def _compute_avg_metrics(
-        results: List[MetricsResult],
-    ) -> Dict[str, float | None]:
+        results: list[MetricsResult],
+    ) -> dict[str, float | None]:
         """Compute average of non-None values for each of the 6 metrics."""
         metric_names = (
             "correctness",
@@ -160,14 +163,13 @@ class TestRunner:
             "context_precision",
             "context_recall",
             "confidence",
+            "ndcg_at_10",
+            "mrr",
+            "precision_at_k",
         )
-        avg: Dict[str, float | None] = {}
+        avg: dict[str, float | None] = {}
         for metric in metric_names:
-            values = [
-                getattr(r, metric)
-                for r in results
-                if getattr(r, metric) is not None
-            ]
+            values = [getattr(r, metric) for r in results if getattr(r, metric) is not None]
             avg[f"avg_{metric}"] = sum(values) / len(values) if values else None
         return avg
 

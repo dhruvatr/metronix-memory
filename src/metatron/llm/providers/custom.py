@@ -5,19 +5,18 @@ such as vLLM, text-generation-webui, LocalAI, etc.
 """
 
 import os
-from typing import List, Optional
 
 import requests
 import structlog
 
 from metatron.core.http import get_http_session
 from metatron.llm.base import (
+    LLMAuthenticationError,
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
-    LLMAuthenticationError,
 )
 
 logger = structlog.get_logger()
@@ -30,9 +29,9 @@ class CustomProvider(LLMProvider):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        api_url: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model: str | None = None,
+        api_url: str | None = None,
+        api_key: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize Custom provider.
@@ -43,7 +42,12 @@ class CustomProvider(LLMProvider):
             api_key: Optional API key for authentication.
         """
         super().__init__(model, **kwargs)
-        self.api_url = api_url or os.getenv("CUSTOM_LLM_URL", "")
+        base_url = api_url or os.getenv("CUSTOM_LLM_URL", "")
+        # Ensure URL points to chat completions endpoint
+        self.api_url = (
+            base_url if base_url.endswith("/chat/completions")
+            else f"{base_url.rstrip('/')}/chat/completions"
+        )
         self.api_key = api_key or os.getenv("CUSTOM_LLM_API_KEY", "")
 
     @property
@@ -56,9 +60,9 @@ class CustomProvider(LLMProvider):
 
     def chat_completion(  # TODO: async migration
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 60,
         **kwargs,
@@ -86,6 +90,9 @@ class CustomProvider(LLMProvider):
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
+        # Forward extra kwargs into payload (e.g. thinking, options)
+        payload.update(kwargs)
+
         try:
             session = get_http_session()
             resp = session.post(
@@ -97,6 +104,14 @@ class CustomProvider(LLMProvider):
 
             if resp.status_code == 401:
                 raise LLMAuthenticationError("Custom API authentication failed")
+
+            if resp.status_code >= 400:
+                logger.error(
+                    "custom_api.error_response",
+                    status=resp.status_code,
+                    body=resp.text[:500],
+                    model=self.model,
+                )
 
             resp.raise_for_status()
             data = resp.json()
@@ -118,16 +133,10 @@ class CustomProvider(LLMProvider):
             )
 
         except requests.exceptions.Timeout:
-            raise LLMConnectionError(
-                f"Custom API timeout after {timeout}s"
-            )
+            raise LLMConnectionError(f"Custom API timeout after {timeout}s")
         except requests.exceptions.ConnectionError as e:
-            raise LLMConnectionError(
-                f"Failed to connect to custom API at {self.api_url}: {e}"
-            )
+            raise LLMConnectionError(f"Failed to connect to custom API at {self.api_url}: {e}")
         except requests.exceptions.HTTPError as e:
             raise LLMError(f"Custom API error: {e}")
         except (KeyError, IndexError) as e:
-            raise LLMError(
-                f"Unexpected response format from custom API: {e}"
-            )
+            raise LLMError(f"Unexpected response format from custom API: {e}")

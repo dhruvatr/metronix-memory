@@ -2,20 +2,19 @@
 
 import os
 import time
-from typing import List, Optional
 
 import requests
 import structlog
 
 from metatron.core.http import get_http_session
 from metatron.llm.base import (
+    LLMAuthenticationError,
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
+    LLMRateLimitError,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
-    LLMRateLimitError,
-    LLMAuthenticationError,
 )
 
 logger = structlog.get_logger()
@@ -29,8 +28,8 @@ class DeepSeekProvider(LLMProvider):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
         **kwargs,
     ) -> None:
         """Initialize DeepSeek provider.
@@ -52,9 +51,9 @@ class DeepSeekProvider(LLMProvider):
 
     def chat_completion(  # TODO: async migration
         self,
-        messages: List[Message],
+        messages: list[Message],
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         json_mode: bool = False,
         timeout: int = 60,
         **kwargs,
@@ -115,16 +114,12 @@ class DeepSeekProvider(LLMProvider):
                 )
 
             except requests.exceptions.Timeout:
-                last_error = LLMConnectionError(
-                    f"DeepSeek API timeout after {timeout}s"
-                )
+                last_error = LLMConnectionError(f"DeepSeek API timeout after {timeout}s")
             except (
                 requests.exceptions.ConnectionError,
                 requests.exceptions.ChunkedEncodingError,
             ) as e:
-                last_error = LLMConnectionError(
-                    f"DeepSeek connection error: {e}"
-                )
+                last_error = LLMConnectionError(f"DeepSeek connection error: {e}")
             except requests.exceptions.HTTPError as e:
                 raise LLMError(f"DeepSeek API error: {e}")
             except Exception as e:
@@ -132,9 +127,7 @@ class DeepSeekProvider(LLMProvider):
                 if "disconnected" in str(e).lower() or "RemoteDisconnected" in str(
                     type(e).__name__
                 ):
-                    last_error = LLMConnectionError(
-                        f"DeepSeek server disconnected: {e}"
-                    )
+                    last_error = LLMConnectionError(f"DeepSeek server disconnected: {e}")
                 else:
                     raise LLMError(f"DeepSeek API error: {e}")
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -80,8 +80,8 @@ class TestModelsEndpoint:
         r = client.get("/v1/models", headers={"Authorization": "Bearer test-key"})
         assert r.status_code == 404
 
-    def test_list_models_no_key_configured_returns_404(self):
-        """When METATRON_OPENAI_COMPAT_KEY is empty, feature is disabled."""
+    def test_list_models_no_key_configured_returns_401(self):
+        """When METATRON_OPENAI_COMPAT_KEY is empty and no api_key_store, returns 401."""
         settings = Settings(
             METATRON_ENV="development",
             METATRON_OPENAI_COMPAT_KEY="",
@@ -90,7 +90,7 @@ class TestModelsEndpoint:
         app = create_app(settings)
         client = TestClient(app, raise_server_exceptions=False)
         r = client.get("/v1/models", headers={"Authorization": "Bearer anything"})
-        assert r.status_code == 404
+        assert r.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +102,7 @@ class TestChatCompletions:
     """POST /v1/chat/completions"""
 
     @patch("metatron.workspaces.get_workspace_manager")
-    @patch("metatron.retrieval.search.hybrid_search_and_answer")
+    @patch("metatron.retrieval.search.hybrid_search_and_answer", new_callable=AsyncMock)
     def test_non_streaming_returns_openai_format(self, mock_search, mock_mgr, client):
         mock_mgr.return_value.get_workspace.return_value = _TEST_WS
         mock_search.return_value = "The answer is 42."
@@ -161,7 +161,7 @@ class TestChatCompletions:
         assert r.status_code == 400
 
     @patch("metatron.workspaces.get_workspace_manager")
-    @patch("metatron.retrieval.search.hybrid_search_and_answer")
+    @patch("metatron.retrieval.search.hybrid_search_and_answer", new_callable=AsyncMock)
     def test_sources_converted_to_markdown_links(self, mock_search, mock_mgr, client):
         mock_mgr.return_value.get_workspace.return_value = _TEST_WS
         mock_search.return_value = (
@@ -183,7 +183,7 @@ class TestChatCompletions:
         assert "[\U0001f4cb JIRA-123](https://jira.example.com/JIRA-123)" in content
 
     @patch("metatron.workspaces.get_workspace_manager")
-    @patch("metatron.retrieval.search.hybrid_search_and_answer")
+    @patch("metatron.retrieval.search.hybrid_search_and_answer", new_callable=AsyncMock)
     def test_extra_openai_params_ignored(self, mock_search, mock_mgr, client):
         """temperature, max_tokens etc. are accepted but ignored."""
         mock_mgr.return_value.get_workspace.return_value = _TEST_WS
@@ -213,7 +213,7 @@ class TestChatCompletionsStreaming:
     """POST /v1/chat/completions with stream=true"""
 
     @patch("metatron.workspaces.get_workspace_manager")
-    @patch("metatron.retrieval.search.hybrid_search_and_answer")
+    @patch("metatron.retrieval.search.hybrid_search_and_answer", new_callable=AsyncMock)
     def test_streaming_returns_sse_chunks(self, mock_search, mock_mgr, client):
         mock_mgr.return_value.get_workspace.return_value = _TEST_WS
         mock_search.return_value = "The answer is 42."
@@ -245,7 +245,7 @@ class TestChatCompletionsStreaming:
         assert last_chunk["choices"][0]["finish_reason"] == "stop"
 
     @patch("metatron.workspaces.get_workspace_manager")
-    @patch("metatron.retrieval.search.hybrid_search_and_answer")
+    @patch("metatron.retrieval.search.hybrid_search_and_answer", new_callable=AsyncMock)
     def test_streaming_includes_sources_as_markdown(self, mock_search, mock_mgr, client):
         mock_mgr.return_value.get_workspace.return_value = _TEST_WS
         mock_search.return_value = (

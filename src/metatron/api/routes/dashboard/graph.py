@@ -8,8 +8,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from .overview import get_valid_workspace
 from metatron.workspaces.models import Workspace
+
+from .overview import get_valid_workspace
 
 router = APIRouter()
 
@@ -53,16 +54,15 @@ async def get_graph_stats(
         Graph statistics including nodes, edges, orphans, and lineage.
     """
     from metatron.storage.dashboard_queries import get_graph_stats_data
-    
+
     stats = await asyncio.to_thread(get_graph_stats_data, workspace.workspace_id)
-    
+
     return GraphStatsResponse(
         total_nodes=stats["total_nodes"],
         total_edges=stats["total_edges"],
         orphan_nodes=stats["orphan_nodes"],
         orphan_list=[
-            OrphanNode(id=o["id"], label=o["label"], name=o["name"])
-            for o in stats["orphan_list"]
+            OrphanNode(id=o["id"], label=o["label"], name=o["name"]) for o in stats["orphan_list"]
         ],
         lineage=GraphLineage(
             raw_documents=stats["raw_documents"],

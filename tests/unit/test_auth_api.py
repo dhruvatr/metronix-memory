@@ -11,10 +11,10 @@ from metatron.api.app import create_app
 from metatron.auth.jwt import create_token
 from metatron.core.config import Settings
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def settings() -> Settings:
@@ -50,14 +50,17 @@ def client_auth(settings_auth_on: Settings) -> TestClient:
 
 def _make_token(secret: str = "test-secret") -> str:
     return create_token(
-        user_id="admin", role="admin",
-        workspace_ids=["*"], secret_key=secret,
+        user_id="admin",
+        role="admin",
+        workspace_ids=["*"],
+        secret_key=secret,
     )
 
 
 # ---------------------------------------------------------------------------
 # POST /api/v1/auth/login
 # ---------------------------------------------------------------------------
+
 
 class TestLogin:
     @patch("metatron.api.routes.auth.get_settings")
@@ -71,7 +74,9 @@ class TestLogin:
         assert body["role"] == "admin"
 
     @patch("metatron.api.routes.auth.get_settings")
-    def test_login_wrong_password(self, mock_settings, client: TestClient, settings: Settings) -> None:
+    def test_login_wrong_password(
+        self, mock_settings, client: TestClient, settings: Settings
+    ) -> None:
         mock_settings.return_value = settings
         r = client.post("/api/v1/auth/login", json={"password": "wrong"})
         assert r.status_code == 401
@@ -81,6 +86,7 @@ class TestLogin:
 # ---------------------------------------------------------------------------
 # GET /api/v1/auth/me
 # ---------------------------------------------------------------------------
+
 
 class TestMe:
     def test_me_returns_user(self, client: TestClient) -> None:
@@ -95,6 +101,7 @@ class TestMe:
 # Middleware — auth disabled (default)
 # ---------------------------------------------------------------------------
 
+
 class TestMiddlewareDisabled:
     def test_endpoints_open_when_disabled(self, client: TestClient) -> None:
         r = client.get("/health")
@@ -107,6 +114,7 @@ class TestMiddlewareDisabled:
 # ---------------------------------------------------------------------------
 # Middleware — auth enabled
 # ---------------------------------------------------------------------------
+
 
 class TestMiddlewareEnabled:
     def test_no_token_returns_401(self, client_auth: TestClient) -> None:
@@ -136,8 +144,60 @@ class TestMiddlewareEnabled:
 
     @patch("metatron.api.routes.auth.get_settings")
     def test_login_open_when_auth_enabled(
-        self, mock_settings, client_auth: TestClient, settings_auth_on: Settings,
+        self,
+        mock_settings,
+        client_auth: TestClient,
+        settings_auth_on: Settings,
     ) -> None:
         mock_settings.return_value = settings_auth_on
         r = client_auth.post("/api/v1/auth/login", json={"password": "testpass"})
         assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Middleware — MCP API key auth (independent of AUTH_ENABLED)
+# ---------------------------------------------------------------------------
+
+
+class TestMcpAuth:
+    """MCP endpoint uses METATRON_MCP_API_KEY, not JWT, regardless of AUTH_ENABLED."""
+
+    def test_mcp_no_key_configured_allows_all(self, client: TestClient) -> None:
+        """When METATRON_MCP_API_KEY is not set, /mcp is open (dev mode)."""
+        with patch("metatron.api.middleware.validate_api_key", return_value=True):
+            r = client.post("/mcp")
+            # MCP handler may return an error (no valid MCP request), but not 401
+            assert r.status_code != 401
+
+    def test_mcp_rejects_without_key(self, client: TestClient) -> None:
+        """When METATRON_MCP_API_KEY is set, /mcp rejects requests without key."""
+        with patch("metatron.api.middleware.validate_api_key", return_value=False):
+            r = client.post("/mcp")
+            assert r.status_code == 401
+            assert "MCP API key" in r.json()["error"]
+
+    def test_mcp_rejects_wrong_key(self, client: TestClient) -> None:
+        """When METATRON_MCP_API_KEY is set, /mcp rejects wrong key."""
+        with patch("metatron.api.middleware.validate_api_key", return_value=False):
+            r = client.post("/mcp", headers={"Authorization": "Bearer wrong"})
+            assert r.status_code == 401
+
+    def test_mcp_accepts_correct_key(self, client: TestClient) -> None:
+        """When correct key is provided, /mcp passes through."""
+        with patch("metatron.api.middleware.validate_api_key", return_value=True):
+            r = client.post("/mcp")
+            assert r.status_code != 401
+
+    def test_mcp_auth_works_with_auth_enabled(self, client_auth: TestClient) -> None:
+        """MCP uses API key auth even when AUTH_ENABLED=true (not JWT)."""
+        with patch("metatron.api.middleware.validate_api_key", return_value=True):
+            r = client_auth.post("/mcp")
+            # Should not get JWT 401
+            assert r.status_code != 401
+
+    def test_mcp_rejects_with_auth_enabled(self, client_auth: TestClient) -> None:
+        """MCP rejects bad key even when AUTH_ENABLED=true."""
+        with patch("metatron.api.middleware.validate_api_key", return_value=False):
+            r = client_auth.post("/mcp")
+            assert r.status_code == 401
+            assert "MCP API key" in r.json()["error"]

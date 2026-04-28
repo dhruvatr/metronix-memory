@@ -52,21 +52,21 @@ from typing import Any, Dict, List, Optional, Union
 import structlog
 
 from metatron.llm.base import (
+    LLMAuthenticationError,
+    LLMConnectionError,
+    LLMError,
     LLMProvider,
+    LLMRateLimitError,
     LLMResponse,
     Message,
-    LLMError,
-    LLMConnectionError,
-    LLMRateLimitError,
-    LLMAuthenticationError,
 )
 from metatron.llm.provider import (
-    get_llm,
-    create_provider,
-    get_provider_class,
-    get_fallback_provider,
-    _get_cached_fallback,
     PROVIDERS,
+    _get_cached_fallback,
+    create_provider,
+    get_fallback_provider,
+    get_llm,
+    get_provider_class,
 )
 from metatron.observability.metrics import timed
 
@@ -95,13 +95,13 @@ __all__ = [
 
 @timed("llm_completion")
 def chat_completion(  # TODO: async migration
-    messages: List[Union[Dict[str, str], Message]],
+    messages: list[dict[str, str] | Message],
     temperature: float = 0.7,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
     json_mode: bool = False,
     timeout: int = 60,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
+    provider: str | None = None,
+    model: str | None = None,
     use_fallback: bool = True,
     **kwargs: Any,
 ) -> str:
@@ -128,7 +128,7 @@ def chat_completion(  # TODO: async migration
         LLMError: If all providers fail.
     """
     # Convert dicts to Message objects
-    msg_objects: List[Message] = []
+    msg_objects: list[Message] = []
     for m in messages:
         if isinstance(m, Message):
             msg_objects.append(m)
@@ -136,9 +136,7 @@ def chat_completion(  # TODO: async migration
             role = m.get("role")
             content = m.get("content")
             if not role or content is None:
-                raise ValueError(
-                    f"Invalid message format: missing 'role' or 'content' in {m}"
-                )
+                raise ValueError(f"Invalid message format: missing 'role' or 'content' in {m}")
             msg_objects.append(Message(role=role, content=content))
         else:
             raise ValueError(f"Invalid message type: {type(m)}")
@@ -194,7 +192,7 @@ def chat_completion(  # TODO: async migration
 
 
 def chat_completion_with_retry(
-    messages: List[Union[Dict[str, str], Message]],
+    messages: list[dict[str, str] | Message],
     max_retries: int = 3,
     **kwargs: Any,
 ) -> str:
@@ -224,7 +222,7 @@ def chat_completion_with_retry(
         except LLMConnectionError as e:
             last_error = e
             if attempt < max_retries:
-                delay = 2 ** attempt  # 2s, 4s
+                delay = 2**attempt  # 2s, 4s
                 logger.warning(
                     "llm.retry",
                     attempt=attempt,

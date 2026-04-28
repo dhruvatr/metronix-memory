@@ -8,8 +8,6 @@ The POST endpoint accepts results from the frontend and saves them to the DB.
 from __future__ import annotations
 
 import structlog
-from typing import List, Optional
-
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
@@ -26,32 +24,36 @@ router = APIRouter(prefix="/test-runs", tags=["benchmarker-test-runs"])
 # Pydantic schemas for POST
 # ============================================================================
 
+
 class TestResultData(BaseModel):
     """Single test result payload for saving."""
-    question: Optional[dict] = None
+
+    question: dict | None = None
     actual_answer: str
-    correctness: Optional[float] = None
-    answer_relevancy: Optional[float] = None
-    faithfulness: Optional[float] = None
-    context_precision: Optional[float] = None
-    context_recall: Optional[float] = None
-    confidence: Optional[float] = None
-    claim_scores: Optional[list] = None
-    context: Optional[dict] = None
+    correctness: float | None = None
+    answer_relevancy: float | None = None
+    faithfulness: float | None = None
+    context_precision: float | None = None
+    context_recall: float | None = None
+    confidence: float | None = None
+    claim_scores: list | None = None
+    context: dict | None = None
 
 
 class SaveTestRunRequest(BaseModel):
     """Request body for POST /test-runs."""
+
     benchmark_set_id: str
     workspace_id: str
     name: str
-    description: Optional[str] = None
-    results: List[TestResultData]
+    description: str | None = None
+    results: list[TestResultData]
 
 
 # ============================================================================
 # Endpoints
 # ============================================================================
+
 
 @router.post("/")
 def save_test_run(request: SaveTestRunRequest) -> dict:
@@ -66,8 +68,15 @@ def save_test_run(request: SaveTestRunRequest) -> dict:
 
         # Compute averages from the already-computed metric values
         metric_names = [
-            "correctness", "answer_relevancy", "faithfulness",
-            "context_precision", "context_recall", "confidence",
+            "correctness",
+            "answer_relevancy",
+            "faithfulness",
+            "context_precision",
+            "context_recall",
+            "confidence",
+            "ndcg_at_10",
+            "mrr",
+            "precision_at_k",
         ]
         avg_metrics: dict[str, float | None] = {}
         for metric in metric_names:
@@ -76,10 +85,14 @@ def save_test_run(request: SaveTestRunRequest) -> dict:
 
         with get_session() as session:
             # Validate benchmark exists and belongs to workspace
-            bs = session.query(BenchmarkSetRow).filter(
-                BenchmarkSetRow.id == request.benchmark_set_id,
-                BenchmarkSetRow.workspace_id == request.workspace_id,
-            ).first()
+            bs = (
+                session.query(BenchmarkSetRow)
+                .filter(
+                    BenchmarkSetRow.id == request.benchmark_set_id,
+                    BenchmarkSetRow.workspace_id == request.workspace_id,
+                )
+                .first()
+            )
             if not bs:
                 raise HTTPException(
                     status_code=404,
@@ -98,6 +111,9 @@ def save_test_run(request: SaveTestRunRequest) -> dict:
                 avg_context_precision=avg_metrics["context_precision"],
                 avg_context_recall=avg_metrics["context_recall"],
                 avg_confidence=avg_metrics["confidence"],
+                avg_ndcg_at_10=avg_metrics["ndcg_at_10"],
+                avg_mrr=avg_metrics["mrr"],
+                avg_precision_at_k=avg_metrics["precision_at_k"],
             )
 
             crud.create_test_results(session, run.id, results_dicts)

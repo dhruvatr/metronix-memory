@@ -9,18 +9,20 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
-    JSON,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
@@ -40,11 +42,17 @@ class WorkspaceRow(Base):  # type: ignore[misc]
     is_default = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
     created_by = Column(String(64), nullable=True)
 
-    members = relationship("WorkspaceMemberRow", back_populates="workspace", cascade="all, delete-orphan")
-    connections = relationship("ConnectionRow", back_populates="workspace", cascade="all, delete-orphan")
+    members = relationship(
+        "WorkspaceMemberRow", back_populates="workspace", cascade="all, delete-orphan"
+    )
+    connections = relationship(
+        "ConnectionRow", back_populates="workspace", cascade="all, delete-orphan"
+    )
     configs = relationship("ConfigRow", back_populates="workspace", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -78,10 +86,14 @@ class UserRow(Base):  # type: ignore[misc]
     role = Column(String(20), default="user", nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
     last_login_at = Column(DateTime, nullable=True)
 
-    memberships = relationship("WorkspaceMemberRow", back_populates="user", cascade="all, delete-orphan")
+    memberships = relationship(
+        "WorkspaceMemberRow", back_populates="user", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         Index("ix_users_email", "email"),
@@ -106,7 +118,9 @@ class WorkspaceMemberRow(Base):  # type: ignore[misc]
     __tablename__ = "workspace_members"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(
+        String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     user_id = Column(String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(20), default="member", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -126,16 +140,18 @@ class ConnectionRow(Base):  # type: ignore[misc]
     __tablename__ = "connections"
 
     id = Column(String(64), primary_key=True)
-    workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(
+        String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     connector_type = Column(String(64), nullable=False)
     name = Column(String(255), nullable=False)
     config_encrypted = Column(LargeBinary, nullable=False)
     status = Column(String(32), nullable=False, server_default="active")
     enabled = Column(Boolean, server_default="true")
     error_message = Column(Text, nullable=True)
-    last_synced_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, nullable=True)
+    last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
 
     workspace = relationship("WorkspaceRow", back_populates="connections")
 
@@ -159,18 +175,21 @@ class ConnectionRow(Base):  # type: ignore[misc]
         }
 
 
-
 class ConfigRow(Base):  # type: ignore[misc]
     """Key-value configuration per workspace."""
 
     __tablename__ = "configs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(
+        String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     key = Column(String(100), nullable=False)
     value = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
     workspace = relationship("WorkspaceRow", back_populates="configs")
 
@@ -180,14 +199,48 @@ class ConfigRow(Base):  # type: ignore[misc]
     )
 
 
+class UserPlatformMappingRow(Base):  # type: ignore[misc]
+    """Maps channel platform identities to internal users."""
+
+    __tablename__ = "user_platform_mappings"
+
+    channel = Column(Text, nullable=False, primary_key=True)
+    channel_user_id = Column(Text, nullable=False, primary_key=True)
+    workspace_id = Column(Text, nullable=False, primary_key=True)
+    user_id = Column(
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "channel",
+            "channel_user_id",
+            "workspace_id",
+            name="uq_user_platform_mapping",
+        ),
+        Index("ix_upm_user_id", "user_id"),
+    )
+
+
 class SyncLogRow(Base):  # type: ignore[misc]
     """Sync log entry for connector synchronization runs."""
 
     __tablename__ = "sync_logs"
 
     id = Column(String(64), primary_key=True)
-    workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    connection_id = Column(String(64), ForeignKey("connections.id", ondelete="CASCADE"), nullable=True)
+    workspace_id = Column(
+        String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    connection_id = Column(
+        String(64), ForeignKey("connections.id", ondelete="CASCADE"), nullable=True
+    )
     connector_type = Column(String(64), nullable=False)
     status = Column(String(32), nullable=False)
     documents_fetched = Column(Integer, nullable=False, server_default="0")
@@ -230,7 +283,9 @@ class QueryTraceRow(Base):  # type: ignore[misc]
     __tablename__ = "query_traces"
 
     id = Column(String(64), primary_key=True)
-    workspace_id = Column(String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(
+        String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
     query = Column(Text, nullable=False)
     trace = Column(JSONB, nullable=False)
     total_ms = Column(Float, nullable=False, server_default="0")
@@ -250,3 +305,26 @@ class QueryTraceRow(Base):  # type: ignore[misc]
             "total_ms": self.total_ms,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class DocumentFetchStatsRow(Base):  # type: ignore[misc]
+    """Per-day document fetch statistics for FinOps cost savings."""
+
+    __tablename__ = "document_fetch_stats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(
+        String(64), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    doc_label = Column(String(512), nullable=False)
+    title = Column(String(1024), nullable=False, server_default="")
+    fetch_count = Column(Integer, nullable=False, server_default="0")
+    total_context_words = Column(Integer, nullable=False, server_default="0")
+    fetch_date = Column(Date, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "doc_label", "fetch_date", name="uq_doc_fetch_stats"),
+        Index("ix_doc_fetch_stats_workspace", "workspace_id"),
+        Index("ix_doc_fetch_stats_date", "workspace_id", "fetch_date"),
+    )

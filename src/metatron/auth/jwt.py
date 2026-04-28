@@ -6,7 +6,7 @@ Payload includes: user_id, role, workspace_ids, exp.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 import structlog
@@ -39,7 +39,7 @@ def create_token(
     Returns:
         Encoded JWT string.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": user_id,
         "role": role,

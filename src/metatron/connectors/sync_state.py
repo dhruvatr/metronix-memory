@@ -7,7 +7,7 @@ mapping "workspace_id:source_type" → ISO timestamp string.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -52,9 +52,7 @@ class SyncState:
         ts: datetime | None = None,
     ) -> None:
         """Record successful sync time. Defaults to now (UTC)."""
-        self._state[self._key(workspace_id, source_type)] = (
-            ts or datetime.now(timezone.utc)
-        ).isoformat()
+        self._state[self._key(workspace_id, source_type)] = (ts or datetime.now(UTC)).isoformat()
         self._save()
 
     def clear(self, workspace_id: str, source_type: str) -> None:

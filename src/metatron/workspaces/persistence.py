@@ -1,23 +1,20 @@
-"""Workspace persistence in Memgraph.
+"""Workspace persistence in Neo4j.
 
-Migrated from PoC metatron/workspaces/persistence.py.
-Stores workspace metadata in Memgraph for sync between environments.
-
-# TODO: async migration
+Stores workspace metadata in Neo4j for sync between environments.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Callable, Optional, TypeVar
+from typing import TypeVar
 
 import structlog
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
-from metatron.storage.memgraph import _esc
 from metatron.workspaces.models import Workspace, WorkspaceStats
 
 logger = structlog.get_logger()
@@ -37,7 +34,12 @@ def with_retry(max_attempts: int = 3):
                 except (ServiceUnavailable, SessionExpired, BrokenPipeError, ConnectionError) as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        logger.warning("persistence.retry", func=func.__name__, attempt=attempt + 1, error=str(e))
+                        logger.warning(
+                            "persistence.retry",
+                            func=func.__name__,
+                            attempt=attempt + 1,
+                            error=str(e),
+                        )
                         self._close()
                 except Exception as e:
                     if "broken pipe" in str(e).lower() or "connection" in str(e).lower():
@@ -55,8 +57,8 @@ def with_retry(max_attempts: int = 3):
     return decorator
 
 
-class MemgraphWorkspacePersistence:
-    """Persist workspaces to Memgraph graph database."""
+class Neo4jWorkspacePersistence:
+    """Persist workspaces to Neo4j graph database."""
 
     def __init__(self) -> None:
         self._driver = None
@@ -64,10 +66,13 @@ class MemgraphWorkspacePersistence:
     def _get_driver(self):
         if self._driver is None:
             from metatron.core.config import Settings
+
             settings = Settings()
             self._driver = GraphDatabase.driver(
-                settings.memgraph_uri,
-                auth=(settings.memgraph_user, settings.memgraph_password) if settings.memgraph_user else None,
+                settings.neo4j_uri,
+                auth=(settings.neo4j_user, settings.neo4j_password)
+                if settings.neo4j_user
+                else None,
             )
         return self._driver
 
@@ -81,14 +86,21 @@ class MemgraphWorkspacePersistence:
         driver = self._get_driver()
         with driver.session() as session:
             session.run(
-                f"MERGE (w:Workspace {{workspace_id: {_esc(workspace.workspace_id)}}})"
-                f" SET w.name = {_esc(workspace.name)},"
-                f" w.description = {_esc(workspace.description or '')},"
-                f" w.created_at = {_esc(workspace.created_at)},"
-                f" w.user_id = {_esc(workspace.user_id)},"
-                f" w.is_active = {_esc(workspace.is_active)},"
-                f" w.config = {_esc(json.dumps(workspace.config or {}))},"
-                f" w.updated_at = {_esc(datetime.now(timezone.utc).isoformat())}"
+                "MERGE (w:Workspace {workspace_id: $wid}) "
+                "SET w.name = $name, w.description = $desc, "
+                "    w.created_at = $ca, w.user_id = $uid, "
+                "    w.is_active = $active, w.config = $config, "
+                "    w.updated_at = $ua",
+                {
+                    "wid": workspace.workspace_id,
+                    "name": workspace.name,
+                    "desc": workspace.description or "",
+                    "ca": workspace.created_at,
+                    "uid": workspace.user_id,
+                    "active": workspace.is_active,
+                    "config": json.dumps(workspace.config or {}),
+                    "ua": datetime.now(UTC).isoformat(),
+                },
             )
 
     @with_retry()
@@ -108,8 +120,8 @@ class MemgraphWorkspacePersistence:
         driver = self._get_driver()
         with driver.session() as session:
             result = session.run(
-                f"MATCH (w:Workspace {{workspace_id: {_esc(workspace_id)}}})"
-                f" DELETE w RETURN count(w)"
+                "MATCH (w:Workspace {workspace_id: $wid}) DELETE w RETURN count(w)",
+                {"wid": workspace_id},
             )
             record = result.single()
             return record[0] > 0 if record else False
@@ -119,9 +131,14 @@ class MemgraphWorkspacePersistence:
         driver = self._get_driver()
         with driver.session() as session:
             session.run(
-                f"MERGE (s:WorkspaceSetting {{user_id: {_esc(user_id)}}})"
-                f" SET s.active_workspace_id = {_esc(workspace_id)},"
-                f" s.updated_at = {_esc(datetime.now(timezone.utc).isoformat())}"
+                "MERGE (s:WorkspaceSetting {user_id: $uid}) "
+                "SET s.active_workspace_id = $wid, "
+                "    s.updated_at = $ua",
+                {
+                    "uid": user_id,
+                    "wid": workspace_id,
+                    "ua": datetime.now(UTC).isoformat(),
+                },
             )
 
     @with_retry()
@@ -129,8 +146,8 @@ class MemgraphWorkspacePersistence:
         driver = self._get_driver()
         with driver.session() as session:
             result = session.run(
-                f"MATCH (s:WorkspaceSetting {{user_id: {_esc(user_id)}}})"
-                f" RETURN s.active_workspace_id"
+                "MATCH (s:WorkspaceSetting {user_id: $uid}) RETURN s.active_workspace_id",
+                {"uid": user_id},
             )
             record = result.single()
             return record[0] if record else None
@@ -140,13 +157,20 @@ class MemgraphWorkspacePersistence:
         driver = self._get_driver()
         with driver.session() as session:
             session.run(
-                f"MERGE (s:WorkspaceStats {{workspace_id: {_esc(workspace_id)}}})"
-                f" SET s.document_count = {_esc(stats.document_count)},"
-                f" s.entity_count = {_esc(stats.entity_count)},"
-                f" s.jira_issue_count = {_esc(stats.jira_issue_count)},"
-                f" s.total_chunks = {_esc(stats.total_chunks)},"
-                f" s.last_upload_time = {_esc(stats.last_upload_time)},"
-                f" s.updated_at = {_esc(datetime.now(timezone.utc).isoformat())}"
+                "MERGE (s:WorkspaceStats {workspace_id: $wid}) "
+                "SET s.document_count = $dc, s.entity_count = $ec, "
+                "    s.jira_issue_count = $jc, s.total_chunks = $tc, "
+                "    s.last_upload_time = $lut, "
+                "    s.updated_at = $ua",
+                {
+                    "wid": workspace_id,
+                    "dc": stats.document_count,
+                    "ec": stats.entity_count,
+                    "jc": stats.jira_issue_count,
+                    "tc": stats.total_chunks,
+                    "lut": stats.last_upload_time,
+                    "ua": datetime.now(UTC).isoformat(),
+                },
             )
 
     @with_retry()
@@ -154,7 +178,8 @@ class MemgraphWorkspacePersistence:
         driver = self._get_driver()
         with driver.session() as session:
             result = session.run(
-                f"MATCH (s:WorkspaceStats {{workspace_id: {_esc(workspace_id)}}}) RETURN s"
+                "MATCH (s:WorkspaceStats {workspace_id: $wid}) RETURN s",
+                {"wid": workspace_id},
             )
             record = result.single()
             if record:
@@ -205,11 +230,11 @@ class MemgraphWorkspacePersistence:
             return None
 
 
-_persistence: Optional[MemgraphWorkspacePersistence] = None
+_persistence: Neo4jWorkspacePersistence | None = None
 
 
-def get_workspace_persistence() -> MemgraphWorkspacePersistence:
+def get_workspace_persistence() -> Neo4jWorkspacePersistence:
     global _persistence
     if _persistence is None:
-        _persistence = MemgraphWorkspacePersistence()
+        _persistence = Neo4jWorkspacePersistence()
     return _persistence

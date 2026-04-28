@@ -3,6 +3,10 @@ name: Build CORE
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -10,32 +14,31 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /usr/local/share/boost
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/hostedtoolcache
-        sudo docker system prune -a -f
-        df -h
-    
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
         driver-opts: image=moby/buildkit:latest
     
-    - name: Login to DockerHub
+    - name: Login to GitHub Container Registry
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Determine branch name
       id: branch
       run: |
         BRANCH_NAME="${GITHUB_REF#refs/heads/}"
-        echo "tag=$BRANCH_NAME" >> $GITHUB_OUTPUT
+        TAG_NAME=$(echo "$BRANCH_NAME" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+        echo "branch=$BRANCH_NAME" >> $GITHUB_OUTPUT
+    
+    - name: Convert repository name to lowercase
+      id: repo
+      run: |
+        REPO_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+        echo "name=$REPO_NAME" >> $GITHUB_OUTPUT
     
     - name: Build and push
       uses: docker/build-push-action@v5
@@ -44,9 +47,7 @@ jobs:
         file: ./Dockerfile
         push: true
         tags: |
-          ${{ secrets.DOCKER_USERNAME }}/unix:metatroncore-${{ steps.branch.outputs.tag }}
-        cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/unix:buildcache
-        cache-to: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/unix:buildcache,mode=max
+          ghcr.io/${{ steps.repo.outputs.name }}:metatroncore-${{ steps.branch.outputs.tag }}
         provenance: false
         sbom: false
         build-args: |

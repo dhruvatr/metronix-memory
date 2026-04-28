@@ -7,14 +7,13 @@ and from Markdown content, with fallback heuristics.
 from __future__ import annotations
 
 import json
-from typing import Optional, Union
 
 import structlog
 
 logger = structlog.get_logger()
 
 
-def extract_title_from_body(body: Union[bytes, str]) -> Optional[str]:
+def extract_title_from_body(body: bytes | str) -> str | None:
     """Extract title from a JSON message body (Confluence/Jira).
 
     Args:
@@ -38,7 +37,7 @@ def extract_title_from_body(body: Union[bytes, str]) -> Optional[str]:
 
 def extract_title_from_markdown(
     md: str,
-    body: Union[bytes, str, None] = None,
+    body: bytes | str | None = None,
 ) -> str:
     """Extract a document title with priority-based fallbacks.
 
@@ -55,7 +54,7 @@ def extract_title_from_markdown(
     Returns:
         Document title.
     """
-    title: Optional[str] = None
+    title: str | None = None
 
     if body:
         title = extract_title_from_body(body)

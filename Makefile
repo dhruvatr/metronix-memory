@@ -1,4 +1,4 @@
-.PHONY: setup dev test lint migrate docker-up docker-down clean test-installer verify-checksum update-checksum prepare-release
+.PHONY: setup dev test lint migrate docker-up docker-down clean test-installer verify-checksum update-checksum prepare-release eval eval-all eval-save eval-compare eval-history grid-search graph-rebuild graph-rebuild-dry graph-process
 
 setup:
 	python -m venv .venv
@@ -44,6 +44,43 @@ clean:
 	rm -rf .venv dist/ *.egg-info src/*.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
+
+# ============================================================================
+# Search Quality Eval
+# ============================================================================
+
+eval:
+	.venv/bin/python scripts/run_eval.py --workspace $(or $(WORKSPACE),MTRNIX)
+
+eval-all:
+	.venv/bin/python scripts/run_eval.py --workspace $(or $(WORKSPACE),MTRNIX) --all
+
+eval-save:
+	.venv/bin/python scripts/run_eval.py --workspace $(or $(WORKSPACE),MTRNIX) --save
+
+eval-compare:
+	.venv/bin/python scripts/run_eval.py --workspace $(or $(WORKSPACE),MTRNIX) --compare
+
+eval-history:
+	.venv/bin/python scripts/run_eval.py --history
+
+grid-search:
+	.venv/bin/python scripts/grid_search_weights.py --workspace $(or $(WORKSPACE),MTRNIX) --step 0.10
+
+grid-search-cache:
+	.venv/bin/python scripts/grid_search_weights.py --cache --workspace $(or $(WORKSPACE),MTRNIX)
+
+grid-search-fine:
+	.venv/bin/python scripts/grid_search_weights.py --workspace $(or $(WORKSPACE),MTRNIX) --step 0.05
+
+graph-rebuild:
+	.venv/bin/python scripts/graph_rebuild.py --workspace $(or $(WORKSPACE),MTRNIX)
+
+graph-rebuild-dry:
+	.venv/bin/python scripts/graph_rebuild.py --workspace $(or $(WORKSPACE),MTRNIX) --dry-run
+
+graph-process:
+	.venv/bin/python scripts/graph_process.py --workspace $(or $(WORKSPACE),MTRNIX)
 
 # ============================================================================
 # Installer Distribution Targets

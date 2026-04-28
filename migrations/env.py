@@ -3,17 +3,35 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
-from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from alembic import context  # noqa: E402
+from sqlalchemy import pool  # noqa: E402
+from sqlalchemy.ext.asyncio import async_engine_from_config  # noqa: E402
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = None
+
+# Override alembic.ini DSN with POSTGRES_* env vars when present, so
+# `make migrate` and the app lifespan hit the same database.
+if os.environ.get("POSTGRES_HOST"):
+    _host = os.environ.get("POSTGRES_HOST", "localhost")
+    _port = os.environ.get("POSTGRES_PORT", "5432")
+    _user = os.environ.get("POSTGRES_USER", "metatron")
+    _pass = os.environ.get("POSTGRES_PASSWORD", "metatron_dev")
+    _db = os.environ.get("POSTGRES_DB", "metatron")
+    config.set_main_option(
+        "sqlalchemy.url",
+        f"postgresql+asyncpg://{_user}:{_pass}@{_host}:{_port}/{_db}",
+    )
 
 
 def run_migrations_offline() -> None:

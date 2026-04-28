@@ -5,13 +5,12 @@ Migrated from PoC metatron/api_workspaces.py.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from metatron.storage.memgraph import _esc
 from metatron.workspaces import get_workspace_manager
 
 logger = structlog.get_logger()
@@ -22,19 +21,19 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 class WorkspaceCreate(BaseModel):
     model_config = ConfigDict(strict=True)
     name: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = Field(None, max_length=500)
+    description: str | None = Field(None, max_length=500)
     user_id: str = Field("user")
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
 
 
 class WorkspaceResponse(BaseModel):
     workspace_id: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     created_at: str
     user_id: str
     is_active: bool
-    config: Optional[dict[str, Any]] = None
+    config: dict[str, Any] | None = None
 
 
 class WorkspaceListResponse(BaseModel):
@@ -49,7 +48,7 @@ class WorkspaceStatsResponse(BaseModel):
     chunk_count: int = 0
     entity_count: int = 0
     jira_issue_count: int = 0
-    last_upload_time: Optional[str] = None
+    last_upload_time: str | None = None
 
 
 class ActivateResponse(BaseModel):
@@ -59,22 +58,22 @@ class ActivateResponse(BaseModel):
 
 
 @router.get("/", response_model=WorkspaceListResponse)
-def list_workspaces(user_id: Optional[str] = Query("user")) -> WorkspaceListResponse:
+def list_workspaces(user_id: str | None = Query("user")) -> WorkspaceListResponse:
     """List all workspaces."""
     manager = get_workspace_manager()
     workspaces = manager.list_workspaces(user_id=user_id)
-    
+
     # Get active workspace for this user
     active_workspace = manager.get_active_workspace(user_id or "user")
     active_workspace_id = active_workspace.workspace_id
-    
+
     # Mark only the active workspace as is_active=True
     workspace_responses = []
     for ws in workspaces:
         ws_dict = ws.to_dict()
-        ws_dict["is_active"] = (ws.workspace_id == active_workspace_id)
+        ws_dict["is_active"] = ws.workspace_id == active_workspace_id
         workspace_responses.append(WorkspaceResponse(**ws_dict))
-    
+
     return WorkspaceListResponse(
         workspaces=workspace_responses,
         count=len(workspaces),
@@ -123,6 +122,7 @@ def delete_workspace(workspace_id: str, user_id: str = Query("user")) -> dict[st
         errors = []
         try:
             from metatron.storage.qdrant import get_hybrid_store
+
             store = get_hybrid_store(workspace_id)
             store.delete()
         except Exception as e:
@@ -130,10 +130,11 @@ def delete_workspace(workspace_id: str, user_id: str = Query("user")) -> dict[st
             errors.append(f"Qdrant: {e}")
 
         try:
-            from metatron.storage.memgraph import delete_workspace_graph
+            from metatron.storage.neo4j_graph import delete_workspace_graph
+
             delete_workspace_graph(workspace_id)
         except Exception as e:
-            logger.error("api.workspace.delete.memgraph.error", error=str(e))
+            logger.error("api.workspace.delete.neo4j.error", error=str(e))
             errors.append(f"Memgraph: {e}")
 
         if errors:
@@ -175,6 +176,7 @@ def get_workspace_stats(workspace_id: str) -> WorkspaceStatsResponse:
 
     try:
         from metatron.storage.qdrant import get_hybrid_store
+
         store = get_hybrid_store(workspace_id)
         qdrant_stats = store.get_stats()
         file_count = qdrant_stats.get("file_count", 0)
@@ -183,21 +185,24 @@ def get_workspace_stats(workspace_id: str) -> WorkspaceStatsResponse:
         logger.warning("api.workspace.stats.qdrant.error", error=str(e))
 
     try:
-        from metatron.storage.memgraph import get_memgraph_driver
-        driver = get_memgraph_driver()
+        from metatron.storage.neo4j_graph import get_graph_driver
+
+        driver = get_graph_driver()
         with driver.session() as session:
             r = session.run(
-                f"MATCH (e:Entity) WHERE e.workspace_id = {_esc(workspace_id)} RETURN count(e)",
+                "MATCH (e:Entity) WHERE e.workspace_id = $ws RETURN count(e)",
+                {"ws": workspace_id},
             )
             rec = r.single()
             entity_count = rec[0] if rec else 0
             r = session.run(
-                f"MATCH (j:JiraIssue) WHERE j.workspace_id = {_esc(workspace_id)} RETURN count(j)",
+                "MATCH (j:JiraIssue) WHERE j.workspace_id = $ws RETURN count(j)",
+                {"ws": workspace_id},
             )
             rec = r.single()
             jira_issue_count = rec[0] if rec else 0
     except Exception as e:
-        logger.warning("api.workspace.stats.memgraph.error", error=str(e))
+        logger.warning("api.workspace.stats.neo4j.error", error=str(e))
 
     return WorkspaceStatsResponse(
         workspace_id=workspace_id,

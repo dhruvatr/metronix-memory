@@ -8,11 +8,10 @@ indicator, long message splitting, and file uploads.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import discord
 import structlog
-
-from typing import Any
 
 from metatron.agent.router import AgentRouter
 
@@ -39,9 +38,7 @@ class DiscordChannel:
     ) -> None:
         self._token = bot_token
         self._router = router
-        self._workspace_id = (
-            workspace_id or router._settings.default_workspace_id
-        )
+        self._workspace_id = workspace_id or router._settings.default_workspace_id
         self._mapper = mapper
         self._event_bus = event_bus
 
@@ -128,6 +125,19 @@ class DiscordChannel:
         """Handle file uploads from Discord DM."""
         user_id = str(message.author.id)
 
+        # Map platform user to internal user
+        if self._mapper:
+            display_name = message.author.display_name or message.author.name
+            user = await self._mapper.map_platform_user(
+                channel="discord",
+                channel_user_id=str(message.author.id),
+                workspace_id=self._workspace_id,
+                event_bus=self._event_bus,
+                display_name=display_name,
+            )
+            if user:
+                user_id = user.id
+
         for attachment in message.attachments:
             logger.info(
                 "discord.document.received",
@@ -142,7 +152,8 @@ class DiscordChannel:
                 except Exception as e:
                     logger.error(
                         "discord.document.download_error",
-                        error=str(e), exc_info=True,
+                        error=str(e),
+                        exc_info=True,
                     )
                     await self._send_response(
                         message.channel,
@@ -160,7 +171,9 @@ class DiscordChannel:
                     )
                 except Exception as e:
                     logger.error(
-                        "discord.document.error", error=str(e), exc_info=True,
+                        "discord.document.error",
+                        error=str(e),
+                        exc_info=True,
                     )
                     answer = "Something went wrong. The error has been logged."
 

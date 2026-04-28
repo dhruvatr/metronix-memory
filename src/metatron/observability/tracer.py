@@ -7,8 +7,8 @@ benchmarker API to return full query traces.
 from __future__ import annotations
 
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 from uuid import uuid4
 
 import structlog

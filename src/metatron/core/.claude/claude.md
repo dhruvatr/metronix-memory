@@ -10,11 +10,11 @@ Every other layer imports from core; core never imports upward.
 ### `config.py`
 `Settings` (pydantic-settings) — single source of truth for all env vars.
 All env vars use `METATRON_` prefix (or explicit aliases like `POSTGRES_HOST`).
-Key groups: Application, Auth, PostgreSQL, Qdrant, Memgraph, Ollama, LLM providers,
+Key groups: Application, Auth, PostgreSQL, Qdrant, Neo4j, Ollama, LLM providers,
 Search tuning, Graph extraction, Embedding cache, Retrieval weights.
 
 Computed properties: `postgres_dsn` (asyncpg), `postgres_sync_dsn` (psycopg2),
-`memgraph_uri` (bolt://), `ollama_llm_url` (handles full URL or host:port).
+`neo4j_uri` (bolt://), `ollama_llm_url` (handles full URL or host:port).
 
 `get_settings()` — module-level cached singleton, created once from env.
 
@@ -23,11 +23,22 @@ Key search-tuning constants:
 - `rrf_k=60`, `embedding_dim=768`
 - `search_pool_multiplier=3`, `search_pool_min=15`
 
+Feature flags:
+- `hierarchical_chunking_enabled=True` — root-child chunking pattern
+- `adaptive_rrf_enabled=False` — adaptive RRF fusion (regresses metrics)
+- `rrf_k_low=20`, `rrf_k_high=80` — adaptive RRF k range
+- `rrf_overlap_threshold_low=0.2`, `rrf_overlap_threshold_high=0.7` — adaptive RRF overlap thresholds
+- `hyde_enabled=False` — HyDE for short/vague queries
+- `hyde_max_words=4`, `hyde_timeout=8` — HyDE parameters
+- `splade_enabled=True` — SPLADE learned sparse representations (replaces BM25)
+- `splade_model="naver/splade-cocondenser-ensembledistil"`, `splade_max_length=256`
+
 ### `models.py`
 Pure dataclasses — no ORM, no Pydantic, no business logic. These shapes flow between all layers.
 
 - `Document` — fetched from connector before chunking (id, workspace_id, source_type, source_id, title, content, url, tags, metadata)
 - `Chunk` — post-chunking unit for embedding (chunk_type: ROOT/CHILD/STANDALONE, parent_id, content, token_count, simhash, embedding)
+- `RawDocument` — source of truth stored in PostgreSQL (workspace_id, source_type, source_id, title, content, content_hash, url, metadata, synced_at, graph_synced_at)
 - `DocumentVersion` — temporal tracking with content_hash and changed_fields
 - `IncomingMessage` / `OutgoingMessage` — channel messaging shapes
 - `Skill` — Markdown document teaching LLM tool usage (name, content, triggers, builtin flag)
@@ -38,7 +49,12 @@ Pure dataclasses — no ORM, no Pydantic, no business logic. These shapes flow b
 - `SyncResult` — connector sync outcome with counts and errors
 - `QueryStep` — single step in 7-step query trace for benchmarker
 
-Enums: `ChunkType` (ROOT, CHILD, STANDALONE), `Role` (VIEWER, EDITOR, ADMIN), `ConnectionStatus` (ACTIVE, SYNCING, ERROR, DISABLED)
+Enums: `ChunkType` (ROOT, CHILD, STANDALONE), `Role` (VIEWER, EDITOR, ADMIN), `ConnectionStatus` (ACTIVE, SYNCING, ERROR, DISABLED), `MemoryScope` (GLOBAL, PER_AGENT, SESSION)
+
+WS1 memory shapes (MTRNIX-240):
+- `MemoryRecord` — single memory entry (id, workspace_id, agent_id, scope, source_type, content, tags, importance_score, ttl_expires_at, content_hash, session_id, metadata, created_at)
+- `MemorySnapshot` — snapshot metadata pointing at an external JSONL+gzip dump (id, workspace_id, agent_id, label, trigger, record_count, content_hash, size_bytes, storage_path, created_at)
+- `MemorySearchResult` — memory query hit with score and record
 
 ### `interfaces.py`
 8 ABCs + 2 Protocols — the extension contracts for enterprise.
@@ -52,6 +68,8 @@ ABCs:
 - `ProcessorInterface` — `supported_types()`, `extract_text(content, filename)`
 - `AuthBackendInterface` — `authenticate(token) -> User | None`, `create_token(user)`
 - `RetrieverInterface` — `retrieve(workspace_id, query, top_k)`
+- `MemoryStoreInterface` (WS1) — 8 async methods: `save`, `get`, `search`, `delete`, `list`, `reset`, `create_snapshot`, `restore_snapshot`
+- `SessionMemoryInterface` (WS1) — 6 async methods for per-session conversational memory: `cache`, `get`, `list`, `invalidate`, `extend_ttl`, `promote`
 
 Protocols (`@runtime_checkable`):
 - `EventHandler` — `async __call__(event_name, payload)` — for event bus subscribers
@@ -64,7 +82,8 @@ Protocols (`@runtime_checkable`):
 - `clear(event_name)` — remove handlers (used in tests)
 
 Constants: `DOCUMENT_INDEXED`, `CHUNK_CREATED`, `QUERY_EXECUTED`, `USER_AUTHENTICATED`,
-`SYNC_STARTED`, `SYNC_COMPLETED`, `SYNC_FAILED`
+`SYNC_STARTED`, `SYNC_COMPLETED`, `SYNC_FAILED`,
+`MEMORY_STORED`, `MEMORY_DELETED`, `MEMORY_RESET`, `MEMORY_SNAPSHOT_CREATED`, `MEMORY_RESTORED` (WS1)
 
 ### `plugin.py`
 `PluginManager` — central registry for enterprise extensions.
@@ -96,7 +115,10 @@ MetatronError
 ├── IntegrityError
 ├── SecurityError
 ├── ToolDisabledError
-└── ToolTimeoutError
+├── ToolTimeoutError
+└── AgentMemoryError  (WS1)
+    ├── MemoryNotFoundError
+    └── SnapshotCorruptError
 ```
 
 ### `logging.py`

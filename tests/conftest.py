@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from metatron.core.config import Settings
-from metatron.core.models import Chunk, ChunkType, Document, Skill, User, Role, Workspace
+from metatron.core.models import Chunk, ChunkType, Document, Role, Skill, User, Workspace
 
 
 @pytest.fixture

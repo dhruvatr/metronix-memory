@@ -49,6 +49,12 @@ Defines JSON schemas passed to LLM for structured tool invocation:
 - `sync_connector` — trigger connector sync
 - `get_document` — fetch specific document
 
+### `memory_service.py` (backward-compat shim)
+Re-exports `MemoryService` from `metatron.memory.service`. The class itself now lives in
+L3 `memory/` (see `src/metatron/memory/.claude/CLAUDE.md`). The shim is kept so older
+callers and enterprise plugins that import `from metatron.agent.memory_service import
+MemoryService` keep working. New code should import from `metatron.memory.service`.
+
 ### `commands.py`
 Legacy stub — slash-command handlers (`/help`, `/sync`, `/clear`).
 Not currently used by `AgentRouter` (commands handled inline in router).

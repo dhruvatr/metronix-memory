@@ -9,7 +9,7 @@ import asyncio
 import json
 import re
 import threading
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 from uuid import uuid4
 
 import structlog
@@ -28,7 +28,7 @@ _history_lock = threading.Lock()
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=1)
-    workspace_id: Optional[str] = None
+    workspace_id: str | None = None
     user_id: str = "user"
     top_k: int = Field(25, ge=1, le=50)
     history_turns: int = Field(6, ge=0, le=20)
@@ -48,7 +48,7 @@ class UploadResponse(BaseModel):
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest, request: Request) -> ChatResponse:
+async def chat(req: ChatRequest, request: Request) -> ChatResponse:
     """Hybrid search with conversation history and workspace isolation."""
     from metatron.workspaces import get_workspace_manager
 
@@ -60,7 +60,7 @@ def chat(req: ChatRequest, request: Request) -> ChatResponse:
         workspace_id = workspace.workspace_id
 
     with _history_lock:
-        history = _conversation_history.get(req.user_id, [])[-req.history_turns:]
+        history = _conversation_history.get(req.user_id, [])[-req.history_turns :]
 
     MAX_HISTORY_CHARS = 4000
     history_lines = []
@@ -83,13 +83,15 @@ def chat(req: ChatRequest, request: Request) -> ChatResponse:
 
     try:
         from metatron.retrieval.search import hybrid_search_and_answer
-        answer = hybrid_search_and_answer(
+
+        answer = await hybrid_search_and_answer(
             query=composite_query,
             user_id=req.user_id,
             workspace_id=req.workspace_id,
             k=req.top_k,
             intent_query=req.question,
             plugin_manager=plugin_manager,
+            source="rest",
         )
     except Exception as exc:
         logger.error("chat.error", error=str(exc), exc_info=True)
@@ -113,7 +115,7 @@ def chat(req: ChatRequest, request: Request) -> ChatResponse:
 
 def split_into_sentences(text: str) -> list[str]:
     """Split text into sentence-like chunks for progressive SSE streaming."""
-    parts = re.split(r'(?<=[.!?])\s+', text)
+    parts = re.split(r"(?<=[.!?])\s+", text)
     chunks: list[str] = []
     current = ""
     for part in parts:
@@ -156,7 +158,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
         workspace_id = workspace.workspace_id
 
     with _history_lock:
-        history = _conversation_history.get(req.user_id, [])[-req.history_turns:]
+        history = _conversation_history.get(req.user_id, [])[-req.history_turns :]
 
     MAX_HISTORY_CHARS = 4000
     history_lines: list[str] = []
@@ -182,30 +184,24 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
 
         try:
             from metatron.retrieval.search import hybrid_search_and_answer
-            _pm = plugin_manager  # capture for closure
-            task = asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda _pm=_pm: hybrid_search_and_answer(
-                    query=composite_query,
-                    user_id=req.user_id,
-                    workspace_id=workspace_id,
-                    k=req.top_k,
-                    intent_query=req.question,
-                    plugin_manager=_pm,
-                ),
+
+            answer: str = await hybrid_search_and_answer(
+                query=composite_query,
+                user_id=req.user_id,
+                workspace_id=workspace_id,
+                k=req.top_k,
+                intent_query=req.question,
+                plugin_manager=plugin_manager,
+                source="rest",
             )
-            # Send heartbeat every 5s while search is running
-            while not task.done():
-                try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": "{}"}
-            answer: str = task.result()
         except Exception as exc:
             logger.error("chat.stream.error", error=str(exc), exc_info=True)
-            yield {"event": "error", "data": json.dumps(
-                {"error": "Search failed. Please try again."},
-            )}
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {"error": "Search failed. Please try again."},
+                ),
+            }
             yield {"event": "done", "data": "{}"}
             return
 
@@ -236,7 +232,7 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
 async def upload_file(
     file: UploadFile = File(...),
     user_id: str = Form("user"),
-    workspace_id: Optional[str] = Form(None),
+    workspace_id: str | None = Form(None),
     extract_graph: bool = Form(True),
 ) -> UploadResponse:
     """Upload and index a document to a workspace."""
@@ -249,6 +245,7 @@ async def upload_file(
     # Persist original file for later download
     from metatron.core.config import get_settings
     from metatron.storage.file_store import FileStore
+
     file_id = uuid4().hex
     settings = get_settings()
     file_store = FileStore(settings.file_store_path)
@@ -270,7 +267,12 @@ async def upload_file(
 
         if file_name.lower().endswith(".pdf"):
             from metatron.ingestion.processors.pdf import extract_text_from_pdf
+
             text = extract_text_from_pdf(raw_bytes, file_name)
+        elif file_name.lower().endswith(".docx"):
+            from metatron.ingestion.processors.office import extract_text_from_docx
+
+            text = extract_text_from_docx(raw_bytes)
         elif is_tabular_file(file_name):
             text, _meta = process_tabular_file(raw_bytes, file_name)
         elif file_name.lower().endswith((".html", ".htm")):
@@ -331,11 +333,14 @@ def _ingest_text(
         raise ValueError("Document is empty")
 
     from metatron.storage.qdrant import get_hybrid_store
+
     store = get_hybrid_store(workspace_id)
 
     doc_date = extract_date_from_text(file_name) or extract_date_from_text(text[:500])
     doc_label, upload_time = build_doc_label(
-        source_id=file_name, user_id=user_id, workspace_id=workspace_id,
+        source_id=file_name,
+        user_id=user_id,
+        workspace_id=workspace_id,
     )
 
     metadata = {
@@ -344,7 +349,10 @@ def _ingest_text(
         "workspace_id": workspace_id,
         "user_id": user_id,
         "doc_label": doc_label,
-        "url": f"/api/v1/files/{file_id}/download?workspace_id={workspace_id}" if file_id and workspace_id else "",
+        "source_role": "user_upload",
+        "url": f"/api/v1/files/{file_id}/download?workspace_id={workspace_id}"
+        if file_id and workspace_id
+        else "",
     }
     if doc_date:
         metadata["date"] = doc_date
@@ -354,9 +362,10 @@ def _ingest_text(
         store.add_document(text=chunk, metadata=metadata, doc_id=doc_label)
 
     if extract_graph:
-        from metatron.storage.memgraph import write_doc_graph_to_memgraph
+        from metatron.storage.neo4j_graph import write_doc_graph
+
         graph_text = chunks[0] if len(text) > 8000 else text
-        write_doc_graph_to_memgraph(
+        write_doc_graph(
             text=graph_text,
             file_name=file_name,
             user_id=user_id,

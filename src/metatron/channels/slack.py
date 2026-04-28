@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import structlog
-from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
-
-from typing import Any
+from slack_bolt.async_app import AsyncApp
 
 from metatron.agent.router import AgentRouter
 
@@ -44,9 +43,7 @@ class SlackChannel:
         self._bot_token = bot_token
         self._app_token = app_token
         self._router = router
-        self._workspace_id = (
-            workspace_id or router._settings.default_workspace_id
-        )
+        self._workspace_id = workspace_id or router._settings.default_workspace_id
         self._mapper = mapper
         self._event_bus = event_bus
 
@@ -104,7 +101,10 @@ class SlackChannel:
             await self._handler.close_async()
 
     async def _handle_message(
-        self, text: str, user_id: str, say: Callable,
+        self,
+        text: str,
+        user_id: str,
+        say: Callable,
     ) -> None:
         """Handle an incoming DM text message."""
         logger.info(
@@ -144,6 +144,17 @@ class SlackChannel:
         say: Callable,
     ) -> None:
         """Handle file uploads from Slack DM."""
+        if self._mapper:
+            user = await self._mapper.map_platform_user(
+                channel="slack",
+                channel_user_id=user_id,
+                workspace_id=self._workspace_id,
+                event_bus=self._event_bus,
+                display_name=user_id,
+            )
+            if user:
+                user_id = user.id
+
         for file_info in files:
             filename = file_info.get("name", "unknown")
             file_size = file_info.get("size", 0)
@@ -173,7 +184,8 @@ class SlackChannel:
             except Exception as e:
                 logger.error(
                     "slack.document.download_error",
-                    error=str(e), exc_info=True,
+                    error=str(e),
+                    exc_info=True,
                 )
                 await say("Could not download the file. Please try again.")
                 continue
@@ -188,7 +200,9 @@ class SlackChannel:
                 )
             except Exception as e:
                 logger.error(
-                    "slack.document.error", error=str(e), exc_info=True,
+                    "slack.document.error",
+                    error=str(e),
+                    exc_info=True,
                 )
                 answer = "Something went wrong. The error has been logged."
 

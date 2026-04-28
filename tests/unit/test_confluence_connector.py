@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from metatron.connectors.confluence_processing import process_confluence_page
 from metatron.connectors.confluence import ConfluenceConnector
+from metatron.connectors.confluence_processing import process_confluence_page
 from metatron.connectors.jira import JiraConnector
 from metatron.core.interfaces import ConnectorInterface
 

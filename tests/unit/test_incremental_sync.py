@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from metatron.connectors.sync_state import SyncState
-
 
 # ---------------------------------------------------------------------------
 # SyncState
@@ -20,7 +19,7 @@ class TestSyncState:
 
     def test_set_and_get(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
-        ts = datetime(2026, 2, 11, 10, 0, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 2, 11, 10, 0, 0, tzinfo=UTC)
         state.set_last_sync("WS1", "confluence", ts)
         result = state.get_last_sync("WS1", "confluence")
         assert result == ts
@@ -30,7 +29,7 @@ class TestSyncState:
         state.set_last_sync("WS1", "jira")
         result = state.get_last_sync("WS1", "jira")
         assert result is not None
-        assert result.year == datetime.now(timezone.utc).year
+        assert result.year == datetime.now(UTC).year
 
     def test_clear(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
@@ -40,8 +39,8 @@ class TestSyncState:
 
     def test_multiple_workspaces(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
-        ts1 = datetime(2026, 2, 10, tzinfo=timezone.utc)
-        ts2 = datetime(2026, 2, 11, tzinfo=timezone.utc)
+        ts1 = datetime(2026, 2, 10, tzinfo=UTC)
+        ts2 = datetime(2026, 2, 11, tzinfo=UTC)
         state.set_last_sync("WS1", "confluence", ts1)
         state.set_last_sync("WS2", "confluence", ts2)
         assert state.get_last_sync("WS1", "confluence") == ts1
@@ -49,15 +48,15 @@ class TestSyncState:
 
     def test_multiple_source_types(self, tmp_path) -> None:
         state = SyncState(state_dir=str(tmp_path))
-        ts1 = datetime(2026, 2, 10, tzinfo=timezone.utc)
-        ts2 = datetime(2026, 2, 11, tzinfo=timezone.utc)
+        ts1 = datetime(2026, 2, 10, tzinfo=UTC)
+        ts2 = datetime(2026, 2, 11, tzinfo=UTC)
         state.set_last_sync("WS1", "confluence", ts1)
         state.set_last_sync("WS1", "jira", ts2)
         assert state.get_last_sync("WS1", "confluence") == ts1
         assert state.get_last_sync("WS1", "jira") == ts2
 
     def test_file_persistence(self, tmp_path) -> None:
-        ts = datetime(2026, 2, 11, 12, 30, 0, tzinfo=timezone.utc)
+        ts = datetime(2026, 2, 11, 12, 30, 0, tzinfo=UTC)
         state1 = SyncState(state_dir=str(tmp_path))
         state1.set_last_sync("WS1", "jira", ts)
 
@@ -109,7 +108,7 @@ class TestQdrantDeleteByDocLabels:
 
 
 class TestGraphDeleteDocumentNode:
-    @patch("metatron.storage.graph_ops.get_memgraph_driver")
+    @patch("metatron.storage.graph_ops.get_graph_driver")
     def test_delete_runs_cypher(self, mock_driver) -> None:
         from metatron.storage.graph_ops import delete_document_node
 
@@ -120,10 +119,11 @@ class TestGraphDeleteDocumentNode:
         delete_document_node("DOC-1", "MTRNIX")
         mock_session.run.assert_called_once()
         cypher = mock_session.run.call_args[0][0]
+        params = mock_session.run.call_args[0][1]
         assert "DETACH DELETE" in cypher
-        assert "doc_label" in cypher
-        assert "'DOC-1'" in cypher
-        assert "'MTRNIX'" in cypher
+        assert "$dl" in cypher
+        assert params["dl"] == "DOC-1"
+        assert params["ws"] == "MTRNIX"
 
 
 # ---------------------------------------------------------------------------
@@ -133,14 +133,18 @@ class TestGraphDeleteDocumentNode:
 
 class TestConnectorSinceParameter:
     def test_confluence_fetch_signature_accepts_since(self) -> None:
-        from metatron.connectors.confluence import ConfluenceConnector
         import inspect
+
+        from metatron.connectors.confluence import ConfluenceConnector
+
         sig = inspect.signature(ConfluenceConnector.fetch)
         assert "since" in sig.parameters
 
     def test_jira_fetch_signature_accepts_since(self) -> None:
-        from metatron.connectors.jira import JiraConnector
         import inspect
+
+        from metatron.connectors.jira import JiraConnector
+
         sig = inspect.signature(JiraConnector.fetch)
         assert "since" in sig.parameters
 
@@ -151,22 +155,30 @@ class TestConnectorSinceParameter:
 
 
 class TestPipelineDedup:
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_duplicate_chunks_across_docs_skipped(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_duplicate_chunks_across_docs_skipped(self, mock_get_store) -> None:
         """When two docs produce identical chunks, the second is skipped."""
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         mock_get_store.return_value = store
 
         # Two docs with identical content → same chunks
-        doc1 = Document(source_type="confluence", source_id="PAGE-1",
-                        title="Doc A", content="The quick brown fox jumps over the lazy dog in the park every single morning")
-        doc2 = Document(source_type="confluence", source_id="PAGE-2",
-                        title="Doc B", content="The quick brown fox jumps over the lazy dog in the park every single morning")
+        doc1 = Document(
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Doc A",
+            content="The quick brown fox jumps over the lazy dog in the park every single morning",
+        )
+        doc2 = Document(
+            source_type="confluence",
+            source_id="PAGE-2",
+            title="Doc B",
+            content="The quick brown fox jumps over the lazy dog in the park every single morning",
+        )
 
-        result = ingest_documents([doc1, doc2], "WS1", "confluence")
+        result = await ingest_documents([doc1, doc2], "WS1", "confluence")
 
         # Both docs should count as new (document-level), but doc2's chunks
         # should be skipped at the chunk level (dedup)
@@ -176,19 +188,23 @@ class TestPipelineDedup:
         # doc1 should have stored at least 1 chunk
         assert calls_count >= 1
 
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_simhash_stored_in_metadata(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_simhash_stored_in_metadata(self, mock_get_store) -> None:
         """Chunk metadata includes simhash value."""
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         mock_get_store.return_value = store
 
-        doc = Document(source_type="confluence", source_id="PAGE-1",
-                       title="Test", content="Unique content that should be indexed normally here")
+        doc = Document(
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Test",
+            content="Unique content that should be indexed normally here",
+        )
 
-        ingest_documents([doc], "WS1", "confluence")
+        await ingest_documents([doc], "WS1", "confluence")
 
         assert store.add_document.call_count >= 1
         # Check metadata of first call
@@ -197,102 +213,138 @@ class TestPipelineDedup:
         assert "simhash" in metadata
         assert isinstance(metadata["simhash"], int)
 
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_same_doc_chunks_not_deduped(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_same_doc_chunks_not_deduped(self, mock_get_store) -> None:
         """Chunks from the same document are NOT flagged as duplicates."""
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         mock_get_store.return_value = store
 
-        doc = Document(source_type="confluence", source_id="PAGE-1",
-                       title="Test", content="Repeated content. " * 50)
+        doc = Document(
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Test",
+            content="Repeated content. " * 50,
+        )
 
-        result = ingest_documents([doc], "WS1", "confluence")
+        result = await ingest_documents([doc], "WS1", "confluence")
         assert result.documents_new == 1
         # All chunks from same doc should be stored (not deduped against each other)
         assert store.add_document.call_count >= 1
 
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_incremental_removes_doc_from_dedup_index(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_incremental_removes_doc_from_dedup_index(
+        self,
+        mock_get_store,
+    ) -> None:
         """Incremental reingest calls dedup_index.remove_doc before processing."""
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         store.delete_by_doc_labels.return_value = 2  # had old chunks
         mock_get_store.return_value = store
 
-        doc1 = Document(source_type="confluence", source_id="PAGE-1",
-                        title="Original", content="The quick brown fox jumps over the lazy dog in the park every morning")
-        doc2 = Document(source_type="confluence", source_id="PAGE-1",
-                        title="Updated", content="The quick brown fox jumps over the lazy dog in the park every morning")
+        doc1 = Document(
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Original",
+            content="The quick brown fox jumps over the lazy dog in the park every morning",
+        )
+        doc2 = Document(
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Updated",
+            content="The quick brown fox jumps over the lazy dog in the park every morning",
+        )
 
         with patch("metatron.ingestion.pipeline._delete_graph_node"):
-            result = ingest_documents([doc1, doc2], "WS1", "confluence", incremental=True)
+            result = await ingest_documents(
+                [doc1, doc2],
+                "WS1",
+                "confluence",
+                incremental=True,
+            )
 
         # Both should be updated (incremental delete found old chunks)
         assert result.documents_updated == 2
 
 
 class TestPipelineIncremental:
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_incremental_deletes_old_chunks(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_incremental_deletes_old_chunks(self, mock_get_store) -> None:
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         store.delete_by_doc_labels.return_value = 3
         mock_get_store.return_value = store
 
         doc = Document(
-            source_type="confluence", source_id="PAGE-1",
-            title="Test", content="Some content for chunking.",
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Test",
+            content="Some content for chunking.",
         )
 
         with patch("metatron.ingestion.pipeline._delete_graph_node") as mock_gd:
-            result = ingest_documents([doc], "WS1", "confluence", incremental=True)
+            result = await ingest_documents(
+                [doc],
+                "WS1",
+                "confluence",
+                incremental=True,
+            )
 
             store.delete_by_doc_labels.assert_called_once_with(["PAGE-1"])
             mock_gd.assert_called_once_with("PAGE-1", "WS1")
             assert result.documents_updated == 1
             assert result.documents_new == 0
 
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_incremental_new_doc_counted_as_new(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_incremental_new_doc_counted_as_new(self, mock_get_store) -> None:
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         store.delete_by_doc_labels.return_value = 0
         mock_get_store.return_value = store
 
         doc = Document(
-            source_type="confluence", source_id="PAGE-NEW",
-            title="New Page", content="Brand new content.",
+            source_type="confluence",
+            source_id="PAGE-NEW",
+            title="New Page",
+            content="Brand new content.",
         )
 
         with patch("metatron.ingestion.pipeline._delete_graph_node") as mock_gd:
-            result = ingest_documents([doc], "WS1", "confluence", incremental=True)
+            result = await ingest_documents(
+                [doc],
+                "WS1",
+                "confluence",
+                incremental=True,
+            )
 
             assert result.documents_new == 1
             assert result.documents_updated == 0
             mock_gd.assert_not_called()
 
-    @patch("metatron.storage.qdrant.get_hybrid_store")
-    def test_non_incremental_skips_delete(self, mock_get_store) -> None:
+    @patch("metatron.storage.qdrant.get_async_hybrid_store", new_callable=AsyncMock)
+    async def test_non_incremental_skips_delete(self, mock_get_store) -> None:
         from metatron.core.models import Document
         from metatron.ingestion.pipeline import ingest_documents
 
-        store = MagicMock()
+        store = AsyncMock()
         mock_get_store.return_value = store
 
         doc = Document(
-            source_type="confluence", source_id="PAGE-1",
-            title="Test", content="Content.",
+            source_type="confluence",
+            source_id="PAGE-1",
+            title="Test",
+            content="Content.",
         )
-        ingest_documents([doc], "WS1", "confluence", incremental=False)
+        await ingest_documents([doc], "WS1", "confluence", incremental=False)
 
         store.delete_by_doc_labels.assert_not_called()
 

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from metatron.core.models import Document, DocumentVersion
 from metatron.ingestion.sync import BackgroundSyncManager, check_and_version_document
-
 
 # ---------------------------------------------------------------------------
 # check_and_version_document

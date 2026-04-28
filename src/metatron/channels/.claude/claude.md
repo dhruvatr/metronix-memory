@@ -90,6 +90,16 @@ Responses split at `_SLACK_MAX_LENGTH = 4000` characters.
 - **Crash isolation** — each channel runs in its own task; a crash in one doesn't affect others
 - **Graceful shutdown** — `stop_all()` called in `app.py` finally block
 
+## Platform User Mapping
+Messages from Telegram/Slack/Discord are mapped to internal `User` objects via
+`auth/user_mapping.py`. The `user_platform_mappings` table (migration 010) stores
+`(platform, platform_user_id) → user_id` mappings.
+
+Auto-creation: when `auto_create=True` (default), unknown platform users get a new
+internal User created automatically. Results are cached with 30-second TTL.
+
+API endpoints for managing mappings: `GET/PUT/DELETE /api/v1/users/.../platform-mappings`
+
 ## Dependencies
-- **Depends on**: `core.models`, `agent.router` (AgentRouter), `storage.postgres` (PostgresStore), `connectors.schemas` (CONNECTOR_SCHEMAS)
+- **Depends on**: `core.models`, `agent.router` (AgentRouter), `storage.postgres` (PostgresStore), `connectors.schemas` (CONNECTOR_SCHEMAS), `auth.user_mapping` (PlatformUserMapper)
 - **Depended on by**: `app.py` (top-level entry — ChannelManager started alongside API)

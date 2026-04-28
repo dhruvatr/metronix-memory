@@ -7,14 +7,11 @@ All BenchmarkSet queries are scoped by workspace_id.
 
 from __future__ import annotations
 
-import structlog
 from datetime import datetime
-from typing import Optional
 from uuid import uuid4
 
+import structlog
 from sqlalchemy.orm import Session, joinedload
-
-from metatron.storage.pg_connection import get_session
 
 from .models import (
     BenchmarkQuestionRow,
@@ -33,12 +30,16 @@ _METRIC_NAMES = (
     "context_precision",
     "context_recall",
     "confidence",
+    "ndcg_at_10",
+    "mrr",
+    "precision_at_k",
 )
 
 
 # ============================================================================
 # Helper
 # ============================================================================
+
 
 def compute_avg_metrics(results: list[TestResultRow]) -> dict:
     """Compute average of non-None values for each of the 6 metrics.
@@ -48,11 +49,7 @@ def compute_avg_metrics(results: list[TestResultRow]) -> dict:
     """
     avg: dict[str, float | None] = {}
     for metric in _METRIC_NAMES:
-        values = [
-            getattr(r, metric)
-            for r in results
-            if getattr(r, metric) is not None
-        ]
+        values = [getattr(r, metric) for r in results if getattr(r, metric) is not None]
         avg[f"avg_{metric}"] = sum(values) / len(values) if values else None
     return avg
 
@@ -67,9 +64,9 @@ def upsert_benchmark_set(
     workspace_id: str,
     connection_id: str,
     questions: list[dict],
-    benchmark_id: Optional[str] = None,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
+    benchmark_id: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
     tokens_used: int = 0,
 ) -> BenchmarkSetRow:
     """Create or update a benchmark set (upsert).
@@ -114,15 +111,17 @@ def upsert_benchmark_set(
                     eq.references = qdata.get("references")
                     eq.attributes = qdata["attributes"]
                 else:
-                    session.add(BenchmarkQuestionRow(
-                        id=qid,
-                        benchmark_set_id=benchmark_id,
-                        text=qdata["text"],
-                        question_type=qdata["question_type"],
-                        references=qdata.get("references"),
-                        attributes=qdata["attributes"],
-                        created_at=datetime.utcnow(),
-                    ))
+                    session.add(
+                        BenchmarkQuestionRow(
+                            id=qid,
+                            benchmark_set_id=benchmark_id,
+                            text=qdata["text"],
+                            question_type=qdata["question_type"],
+                            references=qdata.get("references"),
+                            attributes=qdata["attributes"],
+                            created_at=datetime.utcnow(),
+                        )
+                    )
             for qid, eq in existing_qs.items():
                 if qid not in keep_ids:
                     session.delete(eq)
@@ -145,15 +144,17 @@ def upsert_benchmark_set(
     )
     session.add(benchmark)
     for qdata in questions:
-        session.add(BenchmarkQuestionRow(
-            id=qdata.get("id", str(uuid4())),
-            benchmark_set_id=bid,
-            text=qdata["text"],
-            question_type=qdata["question_type"],
-            references=qdata.get("references"),
-            attributes=qdata["attributes"],
-            created_at=datetime.utcnow(),
-        ))
+        session.add(
+            BenchmarkQuestionRow(
+                id=qdata.get("id", str(uuid4())),
+                benchmark_set_id=bid,
+                text=qdata["text"],
+                question_type=qdata["question_type"],
+                references=qdata.get("references"),
+                attributes=qdata["attributes"],
+                created_at=datetime.utcnow(),
+            )
+        )
     session.flush()
     logger.info("Benchmark set created (upsert): id=%s workspace=%s", bid, workspace_id)
     return benchmark
@@ -164,7 +165,7 @@ def create_benchmark_set(
     workspace_id: str,
     connection_id: str,
     name: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     tokens_used: int = 0,
     question_count: int = 0,
 ) -> BenchmarkSetRow:
@@ -199,7 +200,7 @@ def get_benchmark_set(
     session: Session,
     benchmark_set_id: str,
     workspace_id: str,
-) -> Optional[BenchmarkSetRow]:
+) -> BenchmarkSetRow | None:
     """Return a single benchmark set by id, filtered by workspace_id."""
     return (
         session.query(BenchmarkSetRow)
@@ -216,7 +217,7 @@ def update_benchmark_set(
     benchmark_set_id: str,
     workspace_id: str,
     **kwargs,
-) -> Optional[BenchmarkSetRow]:
+) -> BenchmarkSetRow | None:
     """Update fields on an existing benchmark set.
 
     Only the supplied keyword arguments are applied.
@@ -255,7 +256,7 @@ def clone_benchmark_set(
     session: Session,
     benchmark_set_id: str,
     workspace_id: str,
-) -> Optional[BenchmarkSetRow]:
+) -> BenchmarkSetRow | None:
     """Clone a benchmark set with all its questions.
 
     Creates a new set with name ``"<original> copy"`` and fresh UUIDs for
@@ -334,9 +335,7 @@ def create_benchmark_questions(
         rows.append(row)
 
     session.flush()
-    logger.info(
-        "Created %d questions for benchmark_set=%s", len(rows), benchmark_set_id
-    )
+    logger.info("Created %d questions for benchmark_set=%s", len(rows), benchmark_set_id)
     return rows
 
 
@@ -361,14 +360,17 @@ def create_test_run(
     session: Session,
     benchmark_set_id: str,
     name: str,
-    description: Optional[str] = None,
+    description: str | None = None,
     total_tests: int = 0,
-    avg_correctness: Optional[float] = None,
-    avg_answer_relevancy: Optional[float] = None,
-    avg_faithfulness: Optional[float] = None,
-    avg_context_precision: Optional[float] = None,
-    avg_context_recall: Optional[float] = None,
-    avg_confidence: Optional[float] = None,
+    avg_correctness: float | None = None,
+    avg_answer_relevancy: float | None = None,
+    avg_faithfulness: float | None = None,
+    avg_context_precision: float | None = None,
+    avg_context_recall: float | None = None,
+    avg_confidence: float | None = None,
+    avg_ndcg_at_10: float | None = None,
+    avg_mrr: float | None = None,
+    avg_precision_at_k: float | None = None,
 ) -> TestRunRow:
     """Create a new test run with pre-computed average metrics."""
     run = TestRunRow(
@@ -383,6 +385,9 @@ def create_test_run(
         avg_context_precision=avg_context_precision,
         avg_context_recall=avg_context_recall,
         avg_confidence=avg_confidence,
+        avg_ndcg_at_10=avg_ndcg_at_10,
+        avg_mrr=avg_mrr,
+        avg_precision_at_k=avg_precision_at_k,
         created_at=datetime.utcnow(),
     )
     session.add(run)
@@ -406,7 +411,7 @@ def get_test_run(
     session: Session,
     test_run_id: str,
     workspace_id: str,
-) -> Optional[TestRunRow]:
+) -> TestRunRow | None:
     """Return a test run by id with test_results eagerly loaded.
 
     Filters through benchmark_sets.workspace_id for tenant isolation.
@@ -478,6 +483,9 @@ def create_test_results(
             context_precision=r.get("context_precision"),
             context_recall=r.get("context_recall"),
             confidence=r.get("confidence"),
+            ndcg_at_10=r.get("ndcg_at_10"),
+            mrr=r.get("mrr"),
+            precision_at_k=r.get("precision_at_k"),
             claim_scores=r.get("claim_scores"),
             context=r.get("context"),
         )

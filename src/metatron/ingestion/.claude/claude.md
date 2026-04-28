@@ -2,8 +2,9 @@
 
 ## Overview
 L2 — document ingestion pipeline. Takes raw `Document` objects from connectors,
-processes them through parse → chunk → dedup → embed → store, and writes
-results to Qdrant (vectors) and Memgraph (knowledge graph).
+stores them in PostgreSQL (raw_documents, source of truth), processes through
+parse → chunk → dedup → embed → store, and writes results to Qdrant (vectors).
+Graph extraction is decoupled from sync and runs separately.
 
 ## Files
 
@@ -11,22 +12,30 @@ results to Qdrant (vectors) and Memgraph (knowledge graph).
 `IngestionPipeline` — main orchestrator.
 Initialized with `LLMProviderInterface`, `VectorStoreInterface`, `ProcessorInterface`.
 
-`ingest_documents(documents, workspace_id, settings) -> SyncResult`
+`ingest_documents(documents, workspace_id, settings, skip_graph=False) -> SyncResult`
 — Full pipeline per document:
-1. `extract_document_date()` — extracts best date from title/content/updated_at/created_at
-2. File type detection → appropriate processor → `extract_text()`
-3. `root_child_chunk()` or `chunk_text()` → list of chunks
-4. `simhash()` + `DeduplicationIndex.is_duplicate()` → skip near-dups
-5. Embedding via `LLMProviderInterface.embed()`
-6. `VectorStoreInterface.upsert(workspace_id, chunks)`
-7. Graph extraction: `_extract_graphs_parallel()` → `_write_doc_to_graph()` / `_write_jira_to_graph()`
+1. Save to PostgreSQL raw_documents (source of truth, content_hash comparison)
+2. Skip re-ingestion of unchanged documents (content_hash match)
+3. `extract_document_date()` — extracts best date from title/content/updated_at/created_at
+4. File type detection → appropriate processor → `extract_text()`
+5. `root_child_chunk()` or `chunk_text()` → list of chunks (HIERARCHICAL_CHUNKING_ENABLED)
+6. `simhash()` + persistent `DeduplicationIndex` (PostgreSQL fingerprints) → skip near-dups
+7. SPLADE sparse vectors (if SPLADE_ENABLED) or BM25 sparse vectors
+8. Embedding via `LLMProviderInterface.embed()`
+9. `VectorStoreInterface.upsert(workspace_id, chunks)`
+10. Graph extraction (unless skip_graph=True): `_extract_graphs_parallel()` → `_write_doc_to_graph()` / `_write_jira_to_graph()`
+
+`process_all_unsynced_graphs(workspace_id, store) -> dict`
+— Processes documents in raw_documents that have not been graph-extracted yet
+(graph_synced_at IS NULL). Sequential processing with fresh connections and auto-retry.
+Used by `graph-process` CLI and connections sync endpoint.
 
 `extract_document_date(title, content, updated_at, created_at) -> str`
 — Priority: date in title → date in first 500 chars → updated_at → created_at → "".
 
 `_extract_graphs_parallel(docs, workspace_id)` — ThreadPoolExecutor for concurrent NER extraction.
 `_write_jira_to_graph(doc, workspace_id)` — Jira-specific graph schema (Issue → Sprint → Person).
-`_write_doc_to_graph(doc, workspace_id)` — generic document NER → Memgraph.
+`_write_doc_to_graph(doc, workspace_id)` — generic document NER → Neo4j.
 `_register_persons(doc)` — adds author/assignee names to `AliasRegistry`.
 
 ### `chunking.py`
@@ -52,11 +61,20 @@ Uses sentence-aware splitting (`_split_sentences()` + `_merge_sentences_to_chunk
 `is_near_duplicate(hash1, hash2, threshold=3) -> bool` — hamming distance ≤ threshold.
 
 `DeduplicationIndex`
-— In-memory set of seen simhashes. `add(hash)`, `is_duplicate(hash, threshold)`.
-One instance per pipeline run, discarded after sync.
+— Persistent dedup index backed by PostgreSQL (dedup_fingerprints table, migration 012).
+`add(hash)`, `is_duplicate(hash, threshold)`.
+Fingerprints are loaded from PostgreSQL at pipeline start and saved after ingestion.
+
+### `splade.py`
+SPLADE learned sparse representations for semantic search.
+`compute_splade_sparse_vector(text, settings) -> dict[int, float]`
+— SPLADE sparse vector for a document chunk. Uses `log(1 + ReLU(logits))`, max-pool over sequence.
+`compute_splade_query_vector(query, settings) -> dict[int, float]`
+— SPLADE sparse vector for a query (shorter max_length).
+Lazy-loaded singleton model (thread-safe). Used when `SPLADE_ENABLED=true` (default).
 
 ### `bm25.py`
-BM25 sparse vector generation for Qdrant hybrid search.
+BM25 sparse vector generation for Qdrant hybrid search (fallback when SPLADE disabled).
 `tokenize(text) -> list[str]` — lowercase, strip punctuation (EN + transliterated text).
 `build_sparse_vector(text, vocab_size=30000) -> dict[int, float]`
 — Consistent hash of tokens → sparse {token_hash: tf-idf weight} dict.
@@ -73,6 +91,45 @@ Creates `DocumentVersion` record on change.
 `stop_sync(connection_id)`
 `get_status() -> dict[str, str]`
 
+### `freshness/` — MTRNIX-313 Phase B (KB adapter site)
+
+KB-side plug-in for the shared freshness pipeline (`metatron.freshness.*`).
+Feature-flagged via `METATRON_FRESHNESS_KB_ENABLED` (default `false`) and
+additionally requires `METATRON_FRESHNESS_ENABLED=true`.
+
+Files:
+- `producer.py` — `enqueue_raw_document_if_enabled(workspace_id, raw_document_id, event_type, ...)`.
+  Builds a `FreshnessJob` with `target_kind="raw_document"` and enqueues it
+  via `CoordinationStore`. Fail-soft: any Redis/serialization error is logged
+  and swallowed so KB ingestion is never blocked by a degraded queue.
+  Wired in `api/routes/connections.py` after the connector sync path calls
+  `upsert_raw_documents` (enqueues one job per affected row when both flags
+  are on; zero Redis traffic otherwise).
+- `target_raw_document.py` — `RawDocumentTarget` adapter implementing the
+  `FreshnessTarget` protocol over `PostgresStore` + `AsyncQdrantVectorStore`
+  + `raw_document_graph`. Key traits: `supports_candidate_promotion = False`
+  (no CANDIDATE state in Phase B, so Curator short-circuits),
+  `similarity_search` deduplicates by `doc_label`, and
+  `sync_downstream_stores` mirrors `(status, freshness_score)` onto every
+  chunk payload via `AsyncQdrantVectorStore.update_payload_by_doc_label` plus
+  the `:Document.status` property via `set_raw_document_status`. Both
+  downstream calls key by `doc_label = raw_documents.source_id` (the
+  Confluence page id, Jira issue key, etc.), so the adapter resolves the
+  freshness job's `target_id` (the raw_documents.id UUID) to the
+  `source_id` via PG before invoking either store (PR #95 — the original
+  Phase B implementation passed UUID directly and the downstream sync
+  was a silent no-op).
+- **Monitor age-gate (KB-only).** On the first FreshnessMonitor run for
+  a raw_document (`last_freshness_run_at IS NULL`), the stage only
+  stamps the timestamp and returns — it does not transition to STALE
+  even if the staleness predicate fires. The next run actually
+  transitions. This is a defensive gate to avoid en-masse STALE
+  flagging at Phase B rollout. Memory records preserve Phase A
+  behaviour: STALE fires on the first run across the threshold.
+
+All behaviour is gated by `METATRON_FRESHNESS_KB_ENABLED`; when off, neither
+the producer nor the adapter is exercised by core code paths.
+
 ### `processors/`
 File format processors implementing `ProcessorInterface`.
 
@@ -88,12 +145,16 @@ File format processors implementing `ProcessorInterface`.
 | `translation.py` | `translate_to_english()` | RU→EN via LLM (`is_russian()`, `is_english()` detection) |
 
 ## Key Patterns
-- **Sync pipeline** — all ingestion is synchronous (TODO: async migration)
-- **Graph extraction workers** — `GRAPH_EXTRACTION_WORKERS=4` (ThreadPoolExecutor) for NER parallelism
-- **Dedup per run** — `DeduplicationIndex` is created fresh per sync run, not persistent
+- **Async pipeline** — ingestion is async, uses AsyncQdrantVectorStore
+- **Document store layer** — Connector → PostgreSQL (raw_documents) → Qdrant + Neo4j
+- **Content hash skipping** — unchanged documents (same content_hash) are skipped on re-sync
+- **Graph extraction decoupled** — `skip_graph=True` during sync, `process_all_unsynced_graphs()` runs separately with sequential processing, fresh connections, and auto-retry
+- **Graph extraction workers** — `GRAPH_EXTRACTION_WORKERS=1` (default, keep low to avoid graph conflicts)
+- **Persistent dedup** — `DeduplicationIndex` backed by PostgreSQL dedup_fingerprints table (migration 012)
 - **SimHash threshold** — hamming distance ≤ 3 treated as near-duplicate
+- **SPLADE by default** — SPLADE sparse vectors used when `SPLADE_ENABLED=true` (default), BM25 as fallback
 - **Date extraction priority** — title date > content date > connector timestamp (title date most reliable)
 
 ## Dependencies
-- **Depends on**: `core.models` (Document, Chunk, SyncResult), `core.interfaces` (LLMProviderInterface, VectorStoreInterface, ProcessorInterface), `storage.qdrant`, `storage.memgraph`, `storage.graph_ops`, `retrieval.alias_registry`
+- **Depends on**: `core.models` (Document, Chunk, SyncResult), `core.interfaces` (LLMProviderInterface, VectorStoreInterface, ProcessorInterface), `storage.qdrant`, `storage.neo4j_graph`, `storage.graph_ops`, `retrieval.alias_registry`
 - **Depended on by**: `api.routes.chat` (upload endpoint), `api.routes.connections` (sync trigger), `connectors` (pass documents to pipeline)

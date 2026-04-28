@@ -40,10 +40,34 @@ Open-source core (metatron-core). Enterprise features tracked separately in meta
 - [x] Action planner + executor — LLM picks tool + args, executes via MCP — `mcp/action_planner.py`, `mcp/action_executor.py`
 - [x] ACTION intent classification — "create", "update", "send" keywords → MCP execution
 
+### 2026-04-21 — Agent Memory Freshness Worker, Phase A (MTRNIX-304)
+- [x] `src/metatron/memory/freshness/` module — 5-stage bounded-loop pipeline
+      (Linker → Reconciler → FreshnessMonitor → Curator → DecisionEngine)
+- [x] Per-workspace Redis coordination queue + Lua-scripted locks
+- [x] Standalone worker process: `python -m metatron.memory.freshness`
+- [x] 7 lifecycle fields on `memory_records` + `review_entries` + `machine_events`
+      tables (migration 016)
+- [x] 14 `METATRON_FRESHNESS_*` env vars; master flag off by default
+- [x] 4 new event constants in `core/events.py` (`FRESHNESS_JOB_ENQUEUED` /
+      `FRESHNESS_JOB_PROCESSED` / `FRESHNESS_DECISION_APPLIED` /
+      `FRESHNESS_REVIEW_CREATED`)
+- [x] Optional `freshness-worker` compose service under `--profile freshness`
+- [x] Follow-ups split off: MTRNIX-313 (KB Phase B), MTRNIX-314 (MCP status filter
+      + review queue)
+
+### 2026-04-21 — WS4 Agent Registry backend (MTRNIX-270)
+- [x] `src/metatron/agents/` module — models, service, persistence (PG-only)
+- [x] Migration 017: `agents` + `agent_config_versions` tables
+- [x] REST API `/api/v1/agents/*` — CRUD, soft-delete, start/stop/pause, versions
+- [x] Versioned config with snapshot-per-row history (rollback-ready)
+- [x] Soft-reference to memory (no FK on `memory_records.agent_id`)
+- [x] Opaque JSONB for `memory_bindings` and `budget` (enforcement deferred to CC)
+- [x] RBAC: `require_viewer` for reads, `require_editor` for writes/lifecycle
+
 ### 2026-02-15 — REST API & Infrastructure
 - [x] REST API polish — CORS, SSE streaming, error sanitization, async health probes
 - [x] File upload API — PDF/DOCX/TXT/MD via multipart upload — `api/routes/files.py`
-- [x] Memgraph retry decorator — auto-reconnect on stale connections — `storage/memgraph.py`
+- [x] Neo4j retry decorator — auto-reconnect on stale connections — `storage/neo4j.py`
 - [x] Jira key exact match — PROJ-123 patterns get direct doc_label lookup — `retrieval/search.py`
 - [x] Russian case ending normalization — "Вадима"/"Вадимом" → "Вадим" — `retrieval/alias_registry.py`
 - [x] Slack bot — Socket Mode — `channels/slack_bot.py`
@@ -123,7 +147,7 @@ Replace per-source hardcoded metadata with universal LLM-based extraction at ing
 - [ ] Connection credentials in PostgreSQL (encrypted), not just .env
 - [ ] Docker Compose production hardening (limits, healthchecks, restart)
 - [ ] Centralized structured logging
-- [ ] **Workspace storage consolidation** — currently workspaces are duplicated in Memgraph (source of truth) and PostgreSQL (for foreign keys). Consider: (1) moving to PostgreSQL-only with optional Memgraph sync for graph queries, or (2) removing foreign key constraints and using workspace_id as plain string
+- [ ] **Workspace storage consolidation** — currently workspaces are duplicated in Neo4j (source of truth) and PostgreSQL (for foreign keys). Consider: (1) moving to PostgreSQL-only with optional Neo4j sync for graph queries, or (2) removing foreign key constraints and using workspace_id as plain string
 
 ### Auth
 - [ ] Telegram user → internal role mapping
@@ -165,9 +189,9 @@ Replace standalone Discord transcription bot with native audio processing in Met
 **Decision:** GenericMCPAdapter classifies each tool as "read" (for sync) or "action" (for execution) based on naming conventions and schema heuristics.
 **Rationale:** MCP servers expose both read-only tools (list_pages, search_issues) and write tools (create_issue, send_message). Sync should only call read tools. Action execution should only call write tools.
 
-### 2026-02-15: Memgraph Retry over Connection Pooling
+### 2026-02-15: Neo4j Retry over Connection Pooling
 **Decision:** Retry decorator with driver reset on ServiceUnavailable/SessionExpired, rather than connection pool tuning.
-**Rationale:** Long LLM extraction calls (10-16s) cause Memgraph connections to go stale. Pool settings don't help because the idle timeout is server-side. Resetting the driver singleton and retrying is simpler and more reliable.
+**Rationale:** Long LLM extraction calls (10-16s) cause Neo4j connections to go stale. Pool settings don't help because the idle timeout is server-side. Resetting the driver singleton and retrying is simpler and more reliable.
 
 ---
 

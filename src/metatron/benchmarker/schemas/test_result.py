@@ -10,7 +10,6 @@ ConfidenceResult is a lightweight container for the Confidence metric
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 
 @dataclass
@@ -19,8 +18,8 @@ class ConfidenceResult:
 
     score: float = 0.0
     avg_similarity: float = 0.0
-    min_similarity: Optional[float] = None
-    max_similarity: Optional[float] = None
+    min_similarity: float | None = None
+    max_similarity: float | None = None
     num_responses: int = 0
 
 
@@ -29,23 +28,28 @@ class MetricsResult:
     """Results of all 6 metrics for one test question."""
 
     # Black-box metrics
-    correctness: Optional[float] = None       # 0-100 (percentage)
-    answer_relevancy: Optional[float] = None   # 0-1
+    correctness: float | None = None  # 0-100 (percentage)
+    answer_relevancy: float | None = None  # 0-1
 
     # White-box metrics (LLM-as-Judge)
-    faithfulness: Optional[float] = None       # 0-1
-    context_precision: Optional[float] = None  # 0-1
-    context_recall: Optional[float] = None     # 0-1
+    faithfulness: float | None = None  # 0-1
+    context_precision: float | None = None  # 0-1
+    context_recall: float | None = None  # 0-1
 
     # Confidence metric (stub: always 1.0)
-    confidence: Optional[float] = None         # 0-1
+    confidence: float | None = None  # 0-1
+
+    # Retrieval metrics (deterministic, doc_label based)
+    ndcg_at_10: float | None = None  # 0-1
+    mrr: float | None = None  # 0-1
+    precision_at_k: float | None = None  # 0-1
 
     # Detail data for Correctness
-    claim_scores: Optional[List[Dict]] = field(default=None)
+    claim_scores: list[dict] | None = field(default=None)
 
     # Detail data for Context Precision
-    chunk_scores: Optional[List[float]] = field(default=None)
+    chunk_scores: list[float] | None = field(default=None)
 
     # Reasoning strings from LLM-as-Judge metrics
-    faithfulness_reasoning: Optional[str] = None
-    recall_reasoning: Optional[str] = None
+    faithfulness_reasoning: str | None = None
+    recall_reasoning: str | None = None
