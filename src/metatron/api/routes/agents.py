@@ -237,7 +237,7 @@ def _version_to_response(version: AgentConfigVersion) -> AgentConfigVersionRespo
 
 
 @router.post(
-    "",
+    "/",
     response_model=AgentResponse,
     status_code=201,
 )
@@ -262,7 +262,7 @@ async def create_agent(
     return _agent_to_response(record)
 
 
-@router.get("", response_model=AgentListResponse)
+@router.get("/", response_model=AgentListResponse)
 async def list_agents(
     user: Annotated[User, Depends(require_viewer)],  # noqa: ARG001
     service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
