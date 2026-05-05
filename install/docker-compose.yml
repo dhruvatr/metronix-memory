@@ -168,7 +168,7 @@ services:
       METATRON_FRESHNESS_ENABLED: "true"
       HF_HOME: /app/data/hf_cache
     volumes:
-      - file_data:/app/data
+      - full_file_data:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -180,6 +180,7 @@ services:
         condition: service_healthy
     networks:
       - metatron_full
+    profiles: ["freshness"]
     restart: unless-stopped
 
   metatron-ui:
