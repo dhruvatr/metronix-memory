@@ -109,13 +109,12 @@ jobs:
               echo
               echo '── Workspaces in PG ──'
               sudo docker exec metatron-full-postgres psql -U metatron -d metatron -c \
-                \"SELECT id, name, is_active FROM workspaces;\"
+                \"SELECT id, name FROM workspaces;\"
               echo '── Document counts per workspace ──'
               sudo docker exec metatron-full-postgres psql -U metatron -d metatron -c \
                 \"SELECT workspace_id, COUNT(*) FROM dedup_fingerprints GROUP BY workspace_id;\"
               echo '── Qdrant collections ──'
-              sudo docker exec metatron-full-qdrant curl -s http://localhost:6333/collections \
-                | python3 -c 'import sys,json; print([c[\"name\"] for c in json.load(sys.stdin)[\"result\"][\"collections\"]])'"
+              sudo docker exec metatron-full-qdrant wget -qO- http://localhost:6333/collections 2>/dev/null || echo '(Qdrant check skipped)'"
 
       - name: Cleanup
         if: always()
