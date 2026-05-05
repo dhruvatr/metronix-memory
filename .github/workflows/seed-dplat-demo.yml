@@ -103,7 +103,7 @@ jobs:
               echo "── Document counts per workspace ──"
               sudo docker exec metatron-full-postgres psql -U metatron -d metatron -c "SELECT workspace_id, COUNT(*) FROM dedup_fingerprints GROUP BY workspace_id;"
               echo "── /v1/models ──"
-              sudo docker exec metatron-full-api curl -sf http://localhost:8000/v1/models || echo "(/v1/models failed)"
+              sudo docker exec metatron-full-api python3 -c "import urllib.request,json; r=urllib.request.urlopen('http://localhost:8000/v1/models'); print(json.dumps(json.loads(r.read()),indent=2))" || echo "(/v1/models failed)"
               echo ""
               echo "── WorkspaceManager state ──"
               sudo docker exec metatron-full-api python3 -c "from metatron.workspaces.manager import get_workspace_manager; mgr=get_workspace_manager(); [print(f\"  {w.workspace_id}: {w.name}\") for w in mgr.list_workspaces()]" || echo "(WorkspaceManager check failed)"
