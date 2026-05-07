@@ -663,6 +663,11 @@ class MemoryHealthResponse(BaseModel):
     duplicate_hamming_threshold: int
     source_distribution: dict[str, int]
     computed_at: datetime
+    # When the ACTIVE-record count exceeds the hard cap, dup detection is
+    # skipped to keep the endpoint cheap. The dashboard renders the badge
+    # as "Skipped — over Nk records" instead of misleading 0% duplicates.
+    duplicate_detection_skipped: bool = False
+    duplicate_active_population: int = 0
 
 
 def _health_to_response(h: AgentMemoryHealth) -> MemoryHealthResponse:
@@ -682,6 +687,8 @@ def _health_to_response(h: AgentMemoryHealth) -> MemoryHealthResponse:
         duplicate_hamming_threshold=h.duplicate_hamming_threshold,
         source_distribution=dict(h.source_distribution),
         computed_at=h.computed_at,
+        duplicate_detection_skipped=h.duplicate_detection_skipped,
+        duplicate_active_population=h.duplicate_active_population,
     )
 
 

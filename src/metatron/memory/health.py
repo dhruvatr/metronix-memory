@@ -50,6 +50,13 @@ class AgentMemoryHealth:
     duplicate_hamming_threshold: int
     source_distribution: dict[str, int]
     computed_at: datetime
+    # Disambiguates "no duplicates found" from "skipped because too large".
+    # When True, the dashboard should render "skipped — over Nk active records"
+    # instead of a misleading 0% duplicate badge.
+    duplicate_detection_skipped: bool = False
+    # Population over which the dup compute would have run (ACTIVE count when
+    # detection ran; same value when skipped — useful for the dashboard label).
+    duplicate_active_population: int = 0
 
 
 class MemoryHealthService:
@@ -107,6 +114,7 @@ class MemoryHealthService:
         growth_rate_per_day = recent / 7.0
         growth_ts = self._zero_fill_days(raw_buckets, days=30)
 
+        dup_skipped = False
         if total == 0:
             dup_ratio, dup_clusters = 0.0, 0
         elif total > _DUP_HARDCAP:
@@ -118,6 +126,7 @@ class MemoryHealthService:
                 cap=_DUP_HARDCAP,
             )
             dup_ratio, dup_clusters = 0.0, 0
+            dup_skipped = True
         else:
             dup_ratio, dup_clusters = await self._compute_duplicates(
                 ws,
@@ -139,6 +148,8 @@ class MemoryHealthService:
             duplicate_hamming_threshold=dup_threshold,
             source_distribution=source_dist,
             computed_at=datetime.now(UTC),
+            duplicate_detection_skipped=dup_skipped,
+            duplicate_active_population=total,
         )
 
     async def _compute_duplicates(
@@ -148,9 +159,12 @@ class MemoryHealthService:
         threshold: int,
         total_active: int,
     ) -> tuple[float, int]:
-        # Two independent reads — fan out.
+        # Two independent reads — fan out. A record created/updated between
+        # these two queries can show up in one but not the other, slightly
+        # skewing null_count. Acceptable for an observability snapshot — the
+        # next /health call self-corrects.
         rows, null_count = await asyncio.gather(
-            self._pg.iter_simhashes_active(workspace_id, agent_id),
+            self._pg.list_simhashes_active(workspace_id, agent_id),
             self._pg.count_active_with_null_simhash(workspace_id, agent_id),
         )
 

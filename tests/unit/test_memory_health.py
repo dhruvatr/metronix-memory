@@ -53,7 +53,7 @@ def _make_pg(
     pg.source_distribution_active = AsyncMock(return_value=source_dist or {})
     pg.count_created_since_active = AsyncMock(return_value=recent)
     pg.growth_timeseries_active = AsyncMock(return_value=timeseries or [])
-    pg.iter_simhashes_active = AsyncMock(return_value=simhashes or [])
+    pg.list_simhashes_active = AsyncMock(return_value=simhashes or [])
     pg.count_active_with_null_simhash = AsyncMock(return_value=null_count)
     return pg
 
@@ -243,7 +243,7 @@ class TestDuplicateDetection:
     async def test_zero_simhash_excluded_from_cluster_detection(self) -> None:
         """simhash == 0 means 'not computed'; must be excluded from dup detection."""
         pg = _make_pg(total_active=2, simhashes=[("r1", 0), ("r2", 42)])
-        # iter_simhashes_active already filters NULL, but 0-valued rows can
+        # list_simhashes_active already filters NULL, but 0-valued rows can
         # still exist (empty content). The service's defensive `if s` removes them.
         service = _make_service(pg)
         h = await service.compute("a1")
@@ -258,8 +258,30 @@ class TestDuplicateDetection:
 
         assert h.duplicate_ratio == 0.0
         assert h.duplicate_clusters_count == 0
-        # iter_simhashes_active must NOT have been called.
-        pg.iter_simhashes_active.assert_not_awaited()
+        # list_simhashes_active must NOT have been called.
+        pg.list_simhashes_active.assert_not_awaited()
+        # The skip is surfaced explicitly so the dashboard renders
+        # "skipped — over Nk records" instead of misleading 0% duplicates.
+        assert h.duplicate_detection_skipped is True
+        assert h.duplicate_active_population == _DUP_HARDCAP + 1
+
+    async def test_skipped_flag_false_when_dup_detection_runs(self) -> None:
+        """Below the hardcap, the skipped flag is False and population matches total."""
+        pg = _make_pg(total_active=4, simhashes=[("r1", 1), ("r2", 2)])
+        service = _make_service(pg)
+        h = await service.compute("a1")
+
+        assert h.duplicate_detection_skipped is False
+        assert h.duplicate_active_population == 4
+
+    async def test_skipped_flag_false_when_no_records(self) -> None:
+        """Empty agent: skipped=False, population=0."""
+        pg = _make_pg(total_active=0)
+        service = _make_service(pg)
+        h = await service.compute("a1")
+
+        assert h.duplicate_detection_skipped is False
+        assert h.duplicate_active_population == 0
 
     async def test_null_simhash_warning_logged(self) -> None:
         from unittest.mock import patch

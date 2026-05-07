@@ -13,6 +13,15 @@ Usage:
 When ``--workspace-id`` is omitted the script processes every workspace
 in a single global pass (no per-workspace loop). Pass an explicit
 ``--workspace-id`` to restrict scope.
+
+**Production recommendation (multi-tenant DBs).** The ``--workspace-id`` flag
+exists to drive a per-tenant external loop on production-scale databases.
+The default global pass holds one transaction per batch with no concurrency
+between tenants and may starve other writers under load. For multi-million-row
+deployments, prefer iterating workspace ids externally (shell loop or
+Kubernetes Job array) and running the script with ``--workspace-id`` per
+tenant — that way batches across tenants can interleave on the connection
+pool and partial failures are scoped.
 """
 
 from __future__ import annotations

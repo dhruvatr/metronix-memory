@@ -131,6 +131,24 @@ class TestBulkTouchLastAccessed:
         assert params["agent_id"] == "ag-y"
         assert params["ids"] == ["id1"]
 
+    async def test_throttles_recent_touches(self) -> None:
+        """SQL must skip rows touched within the last minute (write-amp guard)."""
+        store, engine = _make_store()
+        conn = _mock_conn()
+        conn.execute.return_value.rowcount = 0
+        engine.begin.return_value = _engine_context(conn)
+
+        await store.bulk_touch_last_accessed("ws1", "a1", ["id1"])
+
+        call_args = conn.execute.call_args
+        sql_clause = str(call_args[0][0])
+        # The freshness predicate keeps a hot-search-loop from rewriting the
+        # same row repeatedly. 1-minute resolution is more than enough for
+        # a 30-day staleness window and collapses N*K updates/min to ~1
+        # update/record/min.
+        assert "last_accessed_at IS NULL" in sql_clause
+        assert "INTERVAL '1 minute'" in sql_clause
+
 
 # ---------------------------------------------------------------------------
 # count_by_status
@@ -251,7 +269,7 @@ class TestCountCreatedSinceActive:
 
 
 # ---------------------------------------------------------------------------
-# iter_simhashes_active
+# list_simhashes_active
 # ---------------------------------------------------------------------------
 
 
@@ -267,7 +285,7 @@ class TestIterSimhashesActive:
         conn.execute = AsyncMock(return_value=result)
         engine.begin.return_value = _engine_context(conn)
 
-        rows = await store.iter_simhashes_active("ws1", "a1")
+        rows = await store.list_simhashes_active("ws1", "a1")
         assert len(rows) == 1
         rid, h = rows[0]
         assert rid == "rid1"
@@ -281,7 +299,7 @@ class TestIterSimhashesActive:
         conn.execute = AsyncMock(return_value=result)
         engine.begin.return_value = _engine_context(conn)
 
-        rows = await store.iter_simhashes_active("ws1", "a1")
+        rows = await store.list_simhashes_active("ws1", "a1")
         assert rows == []
 
 

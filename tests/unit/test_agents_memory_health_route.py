@@ -144,6 +144,9 @@ class TestGetAgentMemoryHealthHappyPath:
         assert data["source_distribution"] == {"chat": 30, "api": 12}
         assert len(data["growth_timeseries"]) == 1
         assert "computed_at" in data
+        # New fields disambiguate "skipped due to size" from "no duplicates".
+        assert data["duplicate_detection_skipped"] is False
+        assert data["duplicate_active_population"] == 0  # _sample_health default
 
     def test_growth_timeseries_item_has_day_and_count(
         self,

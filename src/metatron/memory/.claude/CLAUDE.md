@@ -50,12 +50,13 @@ Public method:
   - `growth_rate_per_day` (last-7-day ACTIVE creates / 7), `growth_timeseries` (30-day zero-filled `list[GrowthBucket]`, ascending)
   - `unused_records`, `unused_threshold_days` — records whose `last_accessed_at < cutoff OR (NULL AND created_at < cutoff)` within ACTIVE set
   - `duplicate_ratio` ∈ [0,1], `duplicate_clusters_count` (≥2-member clusters via union-find + hamming distance), `duplicate_hamming_threshold`
+  - `duplicate_detection_skipped: bool`, `duplicate_active_population: int` — when ACTIVE count exceeds `_DUP_HARDCAP`, dup fields return `(0.0, 0)` and the `skipped` flag is `True` so the dashboard renders "Skipped — over Nk records" instead of misleading 0%
   - `source_distribution` (`dict[str, int]`, ACTIVE-only, zero counts omitted), `computed_at` (UTC ISO8601)
 
 Implementation notes:
 - Six independent PG aggregations fan out concurrently via `asyncio.gather`; avoids serialising pool acquisitions on the W9 polling dashboard.
 - O(N²) SimHash hamming compare + union-find runs in `asyncio.to_thread` so the event loop stays responsive.
-- `_DUP_HARDCAP = 5000` — when ACTIVE count exceeds this, duplicate fields return `(0.0, 0)` with a `memory_health.dup_skipped_size_cap` warn-log.
+- `_DUP_HARDCAP = 5000` — when ACTIVE count exceeds this, duplicate fields return `(0.0, 0)`, the `duplicate_detection_skipped` flag flips to `True`, and a `memory_health.dup_skipped_size_cap` warn-log fires.
 - NULL simhash rows (legacy records lacking a backfilled fingerprint) are skipped from cluster computation with a `memory_health.simhash_null_skipped` warn-log.
 - No cache — recomputed on every call.
 

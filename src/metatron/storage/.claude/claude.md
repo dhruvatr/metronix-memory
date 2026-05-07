@@ -256,7 +256,7 @@ Class: `MemoryPostgresStore(engine: AsyncEngine)`
 - `source_distribution_active(workspace_id, agent_id) -> dict[str, int]` — `{source_type: count}` for ACTIVE records; zero counts omitted.
 - `count_created_since_active(workspace_id, agent_id, *, days: int) -> int` — count ACTIVE records created within the last `days` days.
 - `growth_timeseries_active(workspace_id, agent_id, *, days: int) -> list[tuple[date, int]]` — daily ACTIVE-record creation counts for the last `days` days (sparse; zero days absent).
-- `iter_simhashes_active(workspace_id, agent_id) -> list[tuple[str, int]]` — `[(record_id, simhash)]` for ACTIVE records with non-NULL `content_simhash`.
+- `list_simhashes_active(workspace_id, agent_id) -> list[tuple[str, int]]` — `[(record_id, simhash)]` for ACTIVE records with non-NULL `content_simhash`.
 - `count_active_with_null_simhash(workspace_id, agent_id) -> int` — count ACTIVE records whose `content_simhash` is NULL (legacy rows awaiting backfill).
 
 **Backfill helpers (MTRNIX-277):**

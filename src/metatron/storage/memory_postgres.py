@@ -850,6 +850,13 @@ class MemoryPostgresStore:
 
         Workspace+agent scoped — defence in depth so a stray id from a
         different agent or workspace cannot be touched. Returns rowcount.
+
+        **Throttle predicate:** the UPDATE no-ops on rows already touched in
+        the last minute. Without this, a hot agent doing N searches/min over
+        K records each writes ``N*K`` UPDATEs/min — pure WAL/autovacuum churn
+        with no observability gain (1-min resolution is plenty for a 30-day
+        staleness window). Returned ``rowcount`` is therefore *touched-now*
+        rows, not *matched* rows.
         """
         if not record_ids:
             return 0
@@ -858,7 +865,11 @@ class MemoryPostgresStore:
                 text(
                     "UPDATE memory_records SET last_accessed_at = NOW() "
                     "WHERE workspace_id = :ws AND agent_id = :agent_id "
-                    "AND id = ANY(:ids)"
+                    "AND id = ANY(:ids) "
+                    "AND ("
+                    "  last_accessed_at IS NULL "
+                    "  OR last_accessed_at < NOW() - INTERVAL '1 minute'"
+                    ")"
                 ),
                 {"ws": workspace_id, "agent_id": agent_id, "ids": list(record_ids)},
             )
@@ -1003,7 +1014,7 @@ class MemoryPostgresStore:
             )
             return [(r[0], int(r[1])) for r in result]
 
-    async def iter_simhashes_active(
+    async def list_simhashes_active(
         self,
         workspace_id: str,
         agent_id: str,
