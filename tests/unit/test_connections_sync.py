@@ -146,22 +146,79 @@ async def test_run_connection_sync_marks_failed_on_exception(store, seeded_ids):
         assert "Jira 500" in (conn.error_message or "")
 
 
+async def test_run_connection_sync_failed_does_not_advance_cursor(store, seeded_ids):
+    """Regression for MTRNIX-332 B1: failed sync must NOT move last_synced_at.
+
+    Without the guard, the cursor advances unconditionally in the finally
+    block — documents updated between the last good sync and the failure
+    are then filtered out on next sync (silent data loss).
+    """
+    ws, cid = seeded_ids
+    sync_id = f"sync_fail_cursor_{uuid4().hex[:10]}"
+
+    # Seed an existing cursor — sync_id_prev "successful" — on the connection.
+    prior_cursor = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    with get_session() as s:
+        s.query(ConnectionRow).filter_by(id=cid).update({"last_synced_at": prior_cursor})
+
+    await store.create_sync_log(sync_id, ws, cid, "jira")
+
+    fake_connector = MagicMock()
+    fake_connector.source_role = "task_tracker"
+    fake_connector.configure = AsyncMock()
+    fake_connector.fetch = AsyncMock(side_effect=RuntimeError("transient network blip"))
+
+    fake_registry = MagicMock()
+    fake_registry.create.return_value = fake_connector
+
+    with patch("metatron.api.routes.connections._get_registry", return_value=fake_registry):
+        await _run_connection_sync(
+            sync_id=sync_id,
+            connection_id=cid,
+            connector_type="jira",
+            config={"url": "http://x"},
+            workspace_id=ws,
+            store=store,
+            event_bus=None,
+            last_synced_at=prior_cursor,
+        )
+
+    with get_session() as s:
+        conn = s.query(ConnectionRow).filter_by(id=cid).first()
+        # status flipped to error, but the cursor must be unchanged.
+        assert conn.status == "error"
+        # Compare with tolerance: PG may strip TZ depending on column type;
+        # we only care that the value is the prior cursor, not "now()".
+        stored = conn.last_synced_at
+        if stored.tzinfo is None:
+            stored = stored.replace(tzinfo=UTC)
+        assert stored == prior_cursor, (
+            f"failed sync MUST NOT advance last_synced_at — was {prior_cursor!r}, "
+            f"now {conn.last_synced_at!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # force_full flag (MTRNIX-332)
 # ---------------------------------------------------------------------------
 
 
-async def test_run_connection_sync_force_full_bypasses_sync_state(store, seeded_ids):
-    """force_full=True must pass since=None to fetch and skip SyncState read."""
+def _empty_ingest_result() -> MagicMock:
+    return MagicMock(
+        documents_new=0,
+        documents_updated=0,
+        documents_skipped=0,
+        errors=[],
+    )
+
+
+async def test_run_connection_sync_force_full_bypasses_cursor(store, seeded_ids):
+    """force_full=True passes since=None even when PG has a stale cursor."""
     ws, cid = seeded_ids
     sync_id = f"sync_force_{uuid4().hex[:10]}"
     await store.create_sync_log(sync_id, ws, cid, "jira")
 
-    # SyncState would normally return a stale cursor — verify we ignore it.
     stale_cursor = datetime(2099, 1, 1, tzinfo=UTC)
-    mock_sync_state = MagicMock()
-    mock_sync_state.get_last_sync = MagicMock(return_value=stale_cursor)
-    mock_sync_state.set_last_sync = MagicMock()
 
     fake_connector = MagicMock()
     fake_connector.source_role = "task_tracker"
@@ -173,17 +230,9 @@ async def test_run_connection_sync_force_full_bypasses_sync_state(store, seeded_
 
     with (
         patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
-        patch("metatron.connectors.sync_state.SyncState", return_value=mock_sync_state),
         patch(
             "metatron.ingestion.pipeline.ingest_documents",
-            AsyncMock(
-                return_value=MagicMock(
-                    documents_new=0,
-                    documents_updated=0,
-                    documents_skipped=0,
-                    errors=[],
-                )
-            ),
+            AsyncMock(return_value=_empty_ingest_result()),
         ),
     ):
         await _run_connection_sync(
@@ -195,28 +244,23 @@ async def test_run_connection_sync_force_full_bypasses_sync_state(store, seeded_
             store=store,
             event_bus=None,
             force_full=True,
+            last_synced_at=stale_cursor,
         )
 
-    # The whole point: fetch was called with since=None despite the stale cursor.
     fake_connector.fetch.assert_awaited_once()
-    call_kwargs = fake_connector.fetch.await_args.kwargs
-    assert call_kwargs.get("since") is None, (
-        f"force_full=True must pass since=None, got {call_kwargs.get('since')!r}"
+    assert fake_connector.fetch.await_args.kwargs.get("since") is None, (
+        f"force_full=True must pass since=None, got "
+        f"{fake_connector.fetch.await_args.kwargs.get('since')!r}"
     )
-    # SyncState.get_last_sync must NOT have been called — we bypass it entirely.
-    mock_sync_state.get_last_sync.assert_not_called()
 
 
-async def test_run_connection_sync_default_reads_sync_state(store, seeded_ids):
-    """force_full=False (default) keeps the cursor read — regression guard."""
+async def test_run_connection_sync_default_uses_pg_cursor(store, seeded_ids):
+    """force_full=False (default) reads cursor from last_synced_at param (PG)."""
     ws, cid = seeded_ids
     sync_id = f"sync_default_{uuid4().hex[:10]}"
     await store.create_sync_log(sync_id, ws, cid, "jira")
 
     cursor = datetime(2026, 5, 1, tzinfo=UTC)
-    mock_sync_state = MagicMock()
-    mock_sync_state.get_last_sync = MagicMock(return_value=cursor)
-    mock_sync_state.set_last_sync = MagicMock()
 
     fake_connector = MagicMock()
     fake_connector.source_role = "task_tracker"
@@ -228,17 +272,9 @@ async def test_run_connection_sync_default_reads_sync_state(store, seeded_ids):
 
     with (
         patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
-        patch("metatron.connectors.sync_state.SyncState", return_value=mock_sync_state),
         patch(
             "metatron.ingestion.pipeline.ingest_documents",
-            AsyncMock(
-                return_value=MagicMock(
-                    documents_new=0,
-                    documents_updated=0,
-                    documents_skipped=0,
-                    errors=[],
-                )
-            ),
+            AsyncMock(return_value=_empty_ingest_result()),
         ),
     ):
         await _run_connection_sync(
@@ -249,12 +285,47 @@ async def test_run_connection_sync_default_reads_sync_state(store, seeded_ids):
             workspace_id=ws,
             store=store,
             event_bus=None,
-            # force_full omitted — defaults to False
+            last_synced_at=cursor,
         )
 
     fake_connector.fetch.assert_awaited_once()
     assert fake_connector.fetch.await_args.kwargs.get("since") == cursor
-    mock_sync_state.get_last_sync.assert_called_once_with(ws, "jira")
+
+
+async def test_run_connection_sync_null_cursor_means_full_fetch(store, seeded_ids):
+    """Freshly-created connection has last_synced_at=NULL → since=None → full fetch."""
+    ws, cid = seeded_ids
+    sync_id = f"sync_fresh_{uuid4().hex[:10]}"
+    await store.create_sync_log(sync_id, ws, cid, "jira")
+
+    fake_connector = MagicMock()
+    fake_connector.source_role = "task_tracker"
+    fake_connector.configure = AsyncMock()
+    fake_connector.fetch = AsyncMock(return_value=[])
+
+    fake_registry = MagicMock()
+    fake_registry.create.return_value = fake_connector
+
+    with (
+        patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
+        patch(
+            "metatron.ingestion.pipeline.ingest_documents",
+            AsyncMock(return_value=_empty_ingest_result()),
+        ),
+    ):
+        await _run_connection_sync(
+            sync_id=sync_id,
+            connection_id=cid,
+            connector_type="jira",
+            config={"url": "http://x", "username": "u", "api_token": "t", "project_key": "P"},
+            workspace_id=ws,
+            store=store,
+            event_bus=None,
+            last_synced_at=None,  # explicit: never synced before
+        )
+
+    fake_connector.fetch.assert_awaited_once()
+    assert fake_connector.fetch.await_args.kwargs.get("since") is None
 
 
 # ---------------------------------------------------------------------------
