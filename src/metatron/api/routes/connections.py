@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -623,6 +624,22 @@ async def trigger_sync(
     pm = getattr(request.app.state, "plugin_manager", None)
     event_bus = pm.get_event_bus() if pm is not None else None
 
+    # PG cursor for incremental fetch (MTRNIX-332). ``get_connection_decrypted``
+    # returns ``last_synced_at`` as an ISO string (or None for freshly-created
+    # connections); the connector's ``fetch`` expects ``datetime | None`` so we
+    # parse here at the boundary.
+    last_synced_iso = conn.get("last_synced_at")
+    last_synced_dt: datetime | None = None
+    if last_synced_iso:
+        try:
+            last_synced_dt = datetime.fromisoformat(last_synced_iso)
+        except (ValueError, TypeError):
+            logger.warning(
+                "sync.cursor_parse_failed",
+                connection_id=connection_id,
+                raw=last_synced_iso,
+            )
+
     background_tasks.add_task(
         _run_connection_sync,
         sync_id=sync_id,
@@ -633,6 +650,7 @@ async def trigger_sync(
         store=store,
         event_bus=event_bus,
         force_full=force_full,
+        last_synced_at=last_synced_dt,
     )
 
     return {
@@ -677,6 +695,7 @@ async def _run_connection_sync(
     store: PostgresStore,
     event_bus: EventBus | None = None,
     force_full: bool = False,
+    last_synced_at: datetime | None = None,
 ) -> None:
     """Run sync for a DB-based connection. Async background task.
 
@@ -684,10 +703,15 @@ async def _run_connection_sync(
     `trigger_sync` with status='running'. Updates that row on
     completion, failure, or exception.
 
-    ``force_full=True`` bypasses the persistent sync_state cursor (the
-    connector receives ``since=None`` and performs a full refetch). The
-    cursor is still stamped on success — this is a one-off reset, not a
-    permanent mode flip.
+    ``last_synced_at`` is the cursor for incremental fetch — read from
+    ``connections.last_synced_at`` by the caller. ``None`` means "no
+    prior sync" (fresh connection) and the connector performs a full
+    fetch. After successful sync, the cursor is advanced by
+    ``update_connection_status`` in the finally block.
+
+    ``force_full=True`` ignores ``last_synced_at`` entirely and performs
+    a full refetch. The cursor is still stamped on success — this is a
+    one-off reset, not a permanent mode flip.
     """
     import time
     from datetime import UTC, datetime
@@ -695,6 +719,15 @@ async def _run_connection_sync(
     from metatron.ingestion.pipeline import ingest_documents
 
     start_time = time.perf_counter()
+    # Capture the wall-clock instant BEFORE the remote fetch. The cursor must
+    # be stamped with this value (not datetime.now() in the finally block) so
+    # any source-side update that happens DURING fetch+ingest+graph is still
+    # captured by the next sync. Otherwise, a long sync (Confluence/Jira can
+    # take minutes) silently drops every doc whose `updated` falls inside
+    # that window (MTRNIX-332 review B1). Re-fetching one doc next time
+    # (content_hash dedup makes it cheap) is strictly better than losing one
+    # forever.
+    fetch_started_at = datetime.now(UTC)
     status = "failed"
     documents_fetched = 0
     documents_new = 0
@@ -721,9 +754,10 @@ async def _run_connection_sync(
 
         await connector.configure(connection_obj, config)
 
-        from metatron.connectors.sync_state import SyncState
-
-        sync_state = SyncState()
+        # Incremental cursor from PG (connections.last_synced_at). For a
+        # freshly-created connection this is NULL → ``since=None`` → full
+        # fetch (correct: nothing has been ingested yet). The cursor is
+        # advanced in the finally block via update_connection_status.
         if force_full:
             since = None
             logger.info(
@@ -733,7 +767,7 @@ async def _run_connection_sync(
                 workspace_id=workspace_id,
             )
         else:
-            since = sync_state.get_last_sync(workspace_id, connector_type)
+            since = last_synced_at
         documents = await connector.fetch(workspace_id, since=since)
         documents_fetched = len(documents)
 
@@ -895,13 +929,17 @@ async def _run_connection_sync(
         except Exception as e:
             logger.warning("sync.log_failed", sync_id=sync_id, error=str(e))
 
-        # Update connection status
+        # Update connection status. The cursor (last_synced_at) is advanced
+        # ONLY on success/partial, and stamped with ``fetch_started_at`` (NOT
+        # ``now()``) — see the explanation at the top of this function.
+        # Passing ``last_synced_at=None`` means "leave the column unchanged"
+        # — see ``update_connection_status`` for the conditional SET clause.
         try:
             await store.update_connection_status(
                 connection_id,
                 status=final_conn_status,
                 error_message=error_msg,
-                last_synced_at=datetime.now(UTC),
+                last_synced_at=(fetch_started_at if status in ("success", "partial") else None),
             )
         except Exception as e:
             logger.warning(
@@ -909,16 +947,6 @@ async def _run_connection_sync(
                 connection_id=connection_id,
                 error=str(e),
             )
-
-        # Persist sync timestamp so next sync is incremental (not full)
-        if status in ("success", "partial"):
-            try:
-                from metatron.connectors.sync_state import SyncState
-
-                sync_state = SyncState()
-                sync_state.set_last_sync(workspace_id, connector_type)
-            except Exception as e:
-                logger.warning("sync.state_save.error", error=str(e))
 
         # Emit SYNC_COMPLETED for cache invalidation and plugin hooks
         if event_bus is not None:
