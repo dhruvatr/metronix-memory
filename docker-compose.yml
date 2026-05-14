@@ -126,7 +126,7 @@ services:
   freshness-worker:
     build: .
     container_name: metatron-freshness-worker
-    command: python -m metatron.memory.freshness
+    entrypoint: ["python", "-m", "metatron.memory.freshness"]
     env_file: .env
     environment:
       # Override hosts to Docker service names

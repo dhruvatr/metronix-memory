@@ -155,7 +155,7 @@ services:
   freshness-worker:
     image: ghcr.io/mtrnix/metatroncore:metatroncore-develop
     container_name: metatron-freshness-worker
-    command: python -m metatron.memory.freshness
+    entrypoint: ["python", "-m", "metatron.memory.freshness"]
     env_file: .env
     environment:
       # Override hosts to Docker service names
