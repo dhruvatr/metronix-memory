@@ -63,7 +63,7 @@ jobs:
         echo "$BASE_ENV" > /tmp/complete_env
         echo "✅ Environment prepared successfully"
 
-    - name: Show ENV_FILE_DEV variables (names only)
+    - name: Show ENV_FILE_MAIN variables (names only)
       run: |
         echo "========================================="
         echo "📋 Variables in final environment:"
@@ -71,7 +71,7 @@ jobs:
         
         # Show base variables
         echo "📦 Base variables:"
-        echo "${{ secrets.ENV_FILE_DEV }}" | grep -o '^[A-Za-z_][A-Za-z0-9_]*=' | sed 's/=$//' | while read var; do
+        echo "${{ secrets.ENV_FILE_MAIN }}" | grep -o '^[A-Za-z_][A-Za-z0-9_]*=' | sed 's/=$//' | while read var; do
           echo "  - $var"
         done
         
