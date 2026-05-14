@@ -2,6 +2,15 @@ name: Deploy MAIN
 
 on:
   workflow_dispatch:
+    inputs:
+      extra_var_1:
+        description: 'Optional variable 1 (format: VAR_NAME=VALUE)'
+        required: false
+        type: string
+      extra_var_2:
+        description: 'Optional variable 2 (format: VAR_NAME=VALUE)'
+        required: false
+        type: string
 
 jobs:
   deploy:
@@ -24,25 +33,114 @@ jobs:
         ssh -o StrictHostKeyChecking=no \
             -o ConnectTimeout=10 \
             -i /tmp/ssh_key \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_MAIN }} \
             "echo '✅ SSH test successful'; whoami; pwd"
             
     - name: Test sudo access
       run: |
         ssh -o StrictHostKeyChecking=no \
             -i /tmp/ssh_key \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_MAIN }} \
             "sudo whoami && echo '✅ Sudo works' || echo '❌ Sudo failed'"
+
+    - name: Prepare environment variables
+      run: |
+        # Create base env content
+        BASE_ENV="${{ secrets.ENV_FILE_MAIN }}"
+        
+        # Add extra variables if provided
+        if [ -n "${{ github.event.inputs.extra_var_1 }}" ]; then
+          echo "➕ Adding optional variable 1: ${{ github.event.inputs.extra_var_1 }}"
+          BASE_ENV="$BASE_ENV"$'\n'"${{ github.event.inputs.extra_var_1 }}"
+        fi
+        
+        if [ -n "${{ github.event.inputs.extra_var_2 }}" ]; then
+          echo "➕ Adding optional variable 2: ${{ github.event.inputs.extra_var_2 }}"
+          BASE_ENV="$BASE_ENV"$'\n'"${{ github.event.inputs.extra_var_2 }}"
+        fi
+        
+        # Save for later use
+        echo "$BASE_ENV" > /tmp/complete_env
+        echo "✅ Environment prepared successfully"
+
+    - name: Show ENV_FILE_MAIN variables (names only)
+      run: |
+        echo "========================================="
+        echo "📋 Variables in final environment:"
+        echo "========================================="
+        
+        # Show base variables
+        echo "📦 Base variables:"
+        echo "${{ secrets.ENV_FILE_MAIN }}" | grep -o '^[A-Za-z_][A-Za-z0-9_]*=' | sed 's/=$//' | while read var; do
+          echo "  - $var"
+        done
+        
+        # Show extra variables if any
+        if [ -n "${{ github.event.inputs.extra_var_1 }}" ] || [ -n "${{ github.event.inputs.extra_var_2 }}" ]; then
+          echo ""
+          echo "📦 Extra variables:"
+          if [ -n "${{ github.event.inputs.extra_var_1 }}" ]; then
+            echo "  - $(echo "${{ github.event.inputs.extra_var_1 }}" | cut -d= -f1)"
+          fi
+          if [ -n "${{ github.event.inputs.extra_var_2 }}" ]; then
+            echo "  - $(echo "${{ github.event.inputs.extra_var_2 }}" | cut -d= -f1)"
+          fi
+        fi
+        
+        echo ""
+        echo "📊 Total variables: $(cat /tmp/complete_env | grep -c '^[A-Za-z_][A-Za-z0-9_]*=')"
+        echo "========================================="
+
+    - name: Create .env file on remote server
+      run: |
+        # Pass content directly via pipe to avoid any shell interpretation
+        cat /tmp/complete_env | ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_MAIN }} \
+            "sudo bash -c '
+              # Remove old files
+              rm -f /usr/local/bin/.env /usr/local/bin/.env.p
+              
+              # Read from stdin and write to .env
+              cat > /usr/local/bin/.env
+              
+              # Copy .env -> .env.p
+              cp /usr/local/bin/.env /usr/local/bin/.env.p
+              
+              # Set permissions to 777
+              chmod 777 /usr/local/bin/.env /usr/local/bin/.env.p
+              
+              # Verify file creation
+              echo \"✅ .env files created successfully\"
+              ls -la /usr/local/bin/.env*
+            '"
             
+    - name: Checkout repo for compose file
+      uses: actions/checkout@v4
+
+    - name: Copy updated docker-compose.yml to dev server
+      run: |
+        scp -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            install/docker-compose.yml \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_MAIN }}:/tmp/docker-compose.yml
+        ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_MAIN }} \
+            "sudo cp /tmp/docker-compose.yml /usr/local/bin/docker-compose.yml && \
+             sudo chmod 644 /usr/local/bin/docker-compose.yml && \
+             echo '✅ docker-compose.yml updated' && \
+             rm -f /tmp/docker-compose.yml"
+
     - name: Deploy application
       run: |
         ssh -o StrictHostKeyChecking=no \
             -i /tmp/ssh_key \
-            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_MAIN }} \
             "/usr/local/bin/deploy-app"
             
     - name: Cleanup
       if: always()
       run: |
-        rm -f /tmp/ssh_key
+        rm -f /tmp/ssh_key /tmp/complete_env
         echo "Deployment completed"
