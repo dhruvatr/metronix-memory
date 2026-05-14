@@ -14,7 +14,10 @@ from metatron.core.config import Settings  # noqa: TC001 — runtime annotations
 
 if TYPE_CHECKING:
     from metatron.agents.service import AgentRegistryService
+    from metatron.knowledge.service import RawDocumentReadService
+    from metatron.memory.health import MemoryHealthService
     from metatron.memory.service import MemoryService
+    from metatron.memory.snapshot import MemorySnapshotService
 
 
 async def get_settings(request: Request) -> Settings:
@@ -136,7 +139,20 @@ def get_memory_service(request: Request) -> MemoryService:
         host=settings.qdrant_host,
         port=settings.qdrant_http_port,
     )
-    search = MemorySearchService(qdrant=qdrant_store, redis=redis_cache)
+
+    # Wire pg_store into search so graph-leg status post-filter works on the
+    # REST path — parity with the MCP path (_memory_deps.py). MTRNIX-324.
+    search = MemorySearchService(qdrant=qdrant_store, redis=redis_cache, pg_store=pg_store)
+
+    # Wire freshness_store so review-queue REST endpoints work. MTRNIX-324.
+    from metatron.storage.freshness_pg import FreshnessStore
+
+    freshness_store = getattr(request.app.state, "memory_freshness_store", None)
+    if freshness_store is None:
+        # Engine is already initialised above — reuse it.
+        engine = request.app.state.memory_pg_engine
+        freshness_store = FreshnessStore(engine)
+        request.app.state.memory_freshness_store = freshness_store
 
     plugin_manager = request.app.state.plugin_manager
     service = MemoryService(
@@ -145,6 +161,7 @@ def get_memory_service(request: Request) -> MemoryService:
         pg_store=pg_store,
         workspace_id=workspace_id,
         search=search,
+        freshness_store=freshness_store,
         event_bus=plugin_manager.get_event_bus(),
     )
 
@@ -196,4 +213,155 @@ def get_agent_registry_service(request: Request) -> AgentRegistryService:
 
     services[workspace_id] = service
     request.app.state.agent_registry_services = services
+    return service
+
+
+def get_memory_health_service(request: Request) -> MemoryHealthService:
+    """Return (and lazily construct) a per-workspace :class:`MemoryHealthService`.
+
+    Shares the PostgreSQL async engine / ``MemoryPostgresStore`` with
+    :func:`get_memory_service` so a single connection pool serves both.
+    Settings are read from ``app.state.settings``.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from metatron.memory.health import MemoryHealthService
+    from metatron.storage.memory_postgres import MemoryPostgresStore
+
+    settings: Settings = request.app.state.settings
+    workspace_id = _resolve_workspace_id(request)
+
+    services: dict[str, MemoryHealthService] = getattr(
+        request.app.state,
+        "memory_health_services",
+        {},
+    )
+    cached = services.get(workspace_id)
+    if cached is not None:
+        return cached
+
+    pg_store: MemoryPostgresStore | None = getattr(
+        request.app.state,
+        "memory_pg_store",
+        None,
+    )
+    if pg_store is None:
+        engine = getattr(request.app.state, "memory_pg_engine", None)
+        if engine is None:
+            engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
+            request.app.state.memory_pg_engine = engine
+        pg_store = MemoryPostgresStore(engine)
+        request.app.state.memory_pg_store = pg_store
+
+    health_service = MemoryHealthService(
+        pg_store=pg_store,
+        workspace_id=workspace_id,
+        settings=settings,
+    )
+
+    services[workspace_id] = health_service
+    request.app.state.memory_health_services = services
+    return health_service
+
+
+def get_memory_snapshot_service(request: Request) -> MemorySnapshotService:
+    """Return (and lazily construct) a per-workspace :class:`MemorySnapshotService`.
+
+    Shares the PostgreSQL async engine / ``MemoryPostgresStore`` with
+    :func:`get_memory_service` so a single connection pool serves both. The
+    Qdrant store is workspace-scoped (collection name embeds the workspace),
+    so we construct it inline — same pattern as :func:`get_memory_service`.
+    """
+    from pathlib import Path
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from metatron.memory.snapshot import MemorySnapshotService
+    from metatron.storage.memory_postgres import MemoryPostgresStore
+    from metatron.storage.memory_qdrant import MemoryQdrantStore
+
+    settings: Settings = request.app.state.settings
+    workspace_id = _resolve_workspace_id(request)
+
+    services: dict[str, MemorySnapshotService] = getattr(
+        request.app.state,
+        "memory_snapshot_services",
+        {},
+    )
+    cached = services.get(workspace_id)
+    if cached is not None:
+        return cached
+
+    pg_store: MemoryPostgresStore | None = getattr(
+        request.app.state,
+        "memory_pg_store",
+        None,
+    )
+    if pg_store is None:
+        engine = getattr(request.app.state, "memory_pg_engine", None)
+        if engine is None:
+            engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
+            request.app.state.memory_pg_engine = engine
+        pg_store = MemoryPostgresStore(engine)
+        request.app.state.memory_pg_store = pg_store
+
+    qdrant_store = MemoryQdrantStore(
+        workspace_id=workspace_id,
+        host=settings.qdrant_host,
+        port=settings.qdrant_http_port,
+    )
+
+    plugin_manager = request.app.state.plugin_manager
+    snapshot_service = MemorySnapshotService(
+        pg_store=pg_store,
+        qdrant_store=qdrant_store,
+        workspace_id=workspace_id,
+        snapshot_dir=Path(settings.snapshot_dir),
+        max_file_bytes=settings.snapshot_max_file_bytes,
+        event_bus=plugin_manager.get_event_bus(),
+    )
+
+    services[workspace_id] = snapshot_service
+    request.app.state.memory_snapshot_services = services
+    return snapshot_service
+
+
+def get_raw_document_service(request: Request) -> RawDocumentReadService:
+    """Return (and lazily construct) a per-workspace :class:`RawDocumentReadService`.
+
+    Reuses ``app.state.postgres`` (the shared :class:`~metatron.storage.postgres.PostgresStore`
+    initialised in the lifespan) so no new connection pool is created.  If the
+    lifespan store is not yet available — e.g. in isolated test setups — a new
+    ``PostgresStore`` is constructed from ``settings.postgres_dsn``.
+
+    Cached per workspace on ``app.state.raw_document_services`` (same pattern
+    as :func:`get_memory_health_service`).
+    """
+    from metatron.knowledge.service import RawDocumentReadService
+    from metatron.storage.postgres import PostgresStore
+
+    settings: Settings = request.app.state.settings
+    workspace_id = _resolve_workspace_id(request)
+
+    services: dict[str, RawDocumentReadService] = getattr(
+        request.app.state,
+        "raw_document_services",
+        {},
+    )
+    cached = services.get(workspace_id)
+    if cached is not None:
+        return cached
+
+    # Prefer the shared PostgresStore created in lifespan (app.state.postgres).
+    # Fall back to constructing a new one from settings if the lifespan store is
+    # not present (common in minimal test-app setups).
+    pg_store: PostgresStore | None = getattr(request.app.state, "postgres", None)
+    if pg_store is None:
+        pg_store = PostgresStore(settings.postgres_dsn)
+        request.app.state.postgres = pg_store
+
+    service = RawDocumentReadService(pg_store, workspace_id=workspace_id)
+
+    services[workspace_id] = service
+    request.app.state.raw_document_services = services
     return service

@@ -19,7 +19,16 @@ from metatron.api.dependencies import get_memory_service
 from metatron.api.routes.memory import router as memory_router
 from metatron.auth.dependencies import get_current_user
 from metatron.core.config import Settings
-from metatron.core.models import MemoryRecord, MemoryScope, MemorySearchResult, Role, User
+from metatron.core.exceptions import MemoryNotFoundError
+from metatron.core.models import (
+    LifecycleStatus,
+    MemoryRecord,
+    MemoryScope,
+    MemorySearchResult,
+    ReviewEntry,
+    Role,
+    User,
+)
 from metatron.memory.service import MemoryService
 
 if TYPE_CHECKING:
@@ -425,3 +434,586 @@ class TestMemoryCRUDCycle:
         delete = client.delete("/api/v1/memory/records/mem-cycle")
         assert delete.status_code == 204
         service.delete.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# MTRNIX-324: status field + status_filter
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# MTRNIX-324: GET /records/{record_id}
+# ---------------------------------------------------------------------------
+
+
+class TestGetRecordById:
+    def test_get_record_by_id_success(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """GET /records/{id} returns 200 with full MemoryRecordResponse."""
+        stored = _sample_record(id="mem-get-1")
+        service.get.return_value = stored
+
+        response = client.get("/api/v1/memory/records/mem-get-1")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == "mem-get-1"
+        assert body["agent_id"] == "agent-1"
+        assert "status" in body
+
+    def test_get_record_by_id_404_when_missing(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """GET /records/{id} returns 404 when service.get returns None."""
+        service.get.return_value = None
+
+        response = client.get("/api/v1/memory/records/missing-id")
+
+        assert response.status_code == 404
+
+    def test_get_record_by_id_workspace_scoped(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """service.get must be called with workspace_id from JWT, not path."""
+        stored = _sample_record(id="mem-1")
+        service.get.return_value = stored
+
+        client.get("/api/v1/memory/records/mem-1")
+
+        service.get.assert_awaited_once()
+        ws, rid = service.get.await_args.args
+        assert ws == "ws-test"
+        assert rid == "mem-1"
+
+    def test_get_record_by_id_viewer_role_allowed(
+        self,
+        make_client: Callable[..., TestClient],
+        service: AsyncMock,
+    ) -> None:
+        """Viewer role is sufficient for GET /records/{id}."""
+        viewer_client = make_client(Role.VIEWER)
+        stored = _sample_record(id="mem-1")
+        service.get.return_value = stored
+
+        response = viewer_client.get("/api/v1/memory/records/mem-1")
+        assert response.status_code == 200
+
+
+class TestStatusField:
+    def test_response_includes_status_field_active_default(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """Response must carry status='active' for a default-status record."""
+        stored = _sample_record()  # status defaults to ACTIVE
+        service.save.return_value = stored
+
+        response = client.post(
+            "/api/v1/memory/records",
+            json={"content": "x", "agent_id": "agent-1"},
+        )
+        assert response.status_code == 201
+        assert response.json()["status"] == "active"
+
+    def test_response_includes_status_field_archived(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """Records with ARCHIVED status round-trip to 'archived'."""
+        stored = _sample_record(status=LifecycleStatus.ARCHIVED)
+        service.save.return_value = stored
+
+        response = client.post(
+            "/api/v1/memory/records",
+            json={"content": "x", "agent_id": "agent-1"},
+        )
+        assert response.status_code == 201
+        assert response.json()["status"] == "archived"
+
+
+class TestSearchStatusFilter:
+    def test_search_default_excludes_archived_and_superseded(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """POST /search without status_filter calls service with all statuses
+        EXCEPT ARCHIVED and SUPERSEDED."""
+        service.search.return_value = []
+
+        client.post("/api/v1/memory/search", json={"query": "test"})
+
+        service.search.assert_awaited_once()
+        call_kwargs = service.search.await_args.kwargs
+        assert "status_filter" in call_kwargs
+        effective = set(call_kwargs["status_filter"])
+        assert LifecycleStatus.ARCHIVED not in effective
+        assert LifecycleStatus.SUPERSEDED not in effective
+        # All other statuses should be present
+        for status in LifecycleStatus:
+            if status not in (LifecycleStatus.ARCHIVED, LifecycleStatus.SUPERSEDED):
+                assert status in effective
+
+    def test_search_explicit_status_filter_overrides_default(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """POST /search with explicit status_filter passes it through unchanged."""
+        service.search.return_value = []
+
+        client.post(
+            "/api/v1/memory/search",
+            json={"query": "test", "status_filter": ["archived"]},
+        )
+
+        service.search.assert_awaited_once()
+        call_kwargs = service.search.await_args.kwargs
+        assert call_kwargs["status_filter"] == [LifecycleStatus.ARCHIVED]
+
+    def test_search_status_filter_invalid_value_422(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """Non-enum status_filter value is rejected by Pydantic as 422."""
+        response = client.post(
+            "/api/v1/memory/search",
+            json={"query": "test", "status_filter": ["all"]},
+        )
+        # "all" is an MCP-only sentinel; REST rejects it with 422
+        assert response.status_code == 422
+        service.search.assert_not_awaited()
+
+
+class TestListStatusFilter:
+    def test_list_records_status_filter_pushes_through(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """GET /records?status_filter=active&status_filter=stale pushes through."""
+        service.list_records.return_value = []
+
+        client.get(
+            "/api/v1/memory/records",
+            params={"status_filter": ["active", "stale"]},
+        )
+
+        service.list_records.assert_awaited_once()
+        call_kwargs = service.list_records.await_args.kwargs
+        assert set(call_kwargs["status"]) == {LifecycleStatus.ACTIVE, LifecycleStatus.STALE}
+
+    def test_list_records_default_no_status_filter(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """GET /records without status_filter calls service with status=None."""
+        service.list_records.return_value = []
+
+        client.get("/api/v1/memory/records")
+
+        service.list_records.assert_awaited_once()
+        call_kwargs = service.list_records.await_args.kwargs
+        assert call_kwargs["status"] is None
+
+
+# ---------------------------------------------------------------------------
+# MTRNIX-324: GET /memory/graph
+# ---------------------------------------------------------------------------
+
+
+class TestMemoryGraph:
+    def test_memory_graph_uses_jwt_workspace(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """service.get_graph_neighborhood must be called with workspace_id from JWT."""
+        seed = _sample_record(id="seed-1")
+        service.get_graph_neighborhood.return_value = ([seed], [])
+
+        response = client.get(
+            "/api/v1/memory/graph",
+            params={"seed_record_id": "seed-1", "depth": 1},
+        )
+
+        assert response.status_code == 200
+        service.get_graph_neighborhood.assert_awaited_once()
+        call_args = service.get_graph_neighborhood.await_args
+        # First positional arg is workspace_id (from JWT), second is seed_record_id
+        assert call_args.args[0] == "ws-test"
+        assert call_args.args[1] == "seed-1"
+        assert call_args.kwargs["depth"] == 1
+
+    def test_memory_graph_depth_bounds(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """depth=0 and depth=4 are rejected with 422; depth=3 succeeds."""
+        seed = _sample_record(id="seed-1")
+        service.get_graph_neighborhood.return_value = ([seed], [])
+
+        response_0 = client.get(
+            "/api/v1/memory/graph",
+            params={"seed_record_id": "seed-1", "depth": 0},
+        )
+        assert response_0.status_code == 422
+
+        response_4 = client.get(
+            "/api/v1/memory/graph",
+            params={"seed_record_id": "seed-1", "depth": 4},
+        )
+        assert response_4.status_code == 422
+
+        response_3 = client.get(
+            "/api/v1/memory/graph",
+            params={"seed_record_id": "seed-1", "depth": 3},
+        )
+        assert response_3.status_code == 200
+
+    def test_memory_graph_neo4j_down_returns_seed_only(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """When service returns ([seed], []) (Neo4j down path), response has
+        nodes=[seed] and edges=[]."""
+        seed = _sample_record(id="seed-1")
+        service.get_graph_neighborhood.return_value = ([seed], [])
+
+        response = client.get(
+            "/api/v1/memory/graph",
+            params={"seed_record_id": "seed-1"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["nodes"]) == 1
+        assert body["nodes"][0]["id"] == "seed-1"
+        assert body["edges"] == []
+
+    def test_memory_graph_agent_id_filter(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """When agent_id query param is set, only records with matching agent_id survive."""
+        rec_a = _sample_record(id="mem-a", agent_id="agent-x")
+        rec_b = _sample_record(id="mem-b", agent_id="agent-y")
+        edge_ab = {
+            "source": "mem-a",
+            "target": "mem-b",
+            "type": "LINKED_TO",
+            "metadata": None,
+        }
+        # Edge between a and c (both for agent-x)
+        rec_c = _sample_record(id="mem-c", agent_id="agent-x")
+        edge_ac = {
+            "source": "mem-a",
+            "target": "mem-c",
+            "type": "LINKED_TO",
+            "metadata": None,
+        }
+        service.get_graph_neighborhood.return_value = ([rec_a, rec_b, rec_c], [edge_ab, edge_ac])
+
+        response = client.get(
+            "/api/v1/memory/graph",
+            params={"seed_record_id": "mem-a", "agent_id": "agent-x"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        node_ids = {n["id"] for n in body["nodes"]}
+        assert "mem-a" in node_ids
+        assert "mem-c" in node_ids
+        assert "mem-b" not in node_ids  # agent-y filtered out
+        # edge_ab is dropped (mem-b filtered out), edge_ac survives
+        assert len(body["edges"]) == 1
+        assert body["edges"][0]["source"] == "mem-a"
+        assert body["edges"][0]["target"] == "mem-c"
+
+
+# ---------------------------------------------------------------------------
+# MTRNIX-324: GET /memory/review + POST /memory/review/{id}
+# ---------------------------------------------------------------------------
+
+
+def _sample_review_entry(**overrides: Any) -> ReviewEntry:
+    defaults: dict[str, Any] = {
+        "id": "rev-1",
+        "workspace_id": "ws-test",
+        "target_id": "mem-1",
+        "target_kind": "memory_record",
+        "reason": "possible_duplicate",
+        "related_record_id": "mem-2",
+        "content": "some content",
+        "confidence": 0.85,
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+    }
+    defaults.update(overrides)
+    return ReviewEntry(**defaults)
+
+
+class TestReviewList:
+    def test_review_list_pagination(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """Mock returns 5 entries with total=42 ⇒ count=5, total=42, has_more=True."""
+        entries = [_sample_review_entry(id=f"rev-{i}") for i in range(5)]
+        service.list_review_entries.return_value = (entries, 42)
+
+        response = client.get(
+            "/api/v1/memory/review",
+            params={"limit": 5, "offset": 0},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 5
+        assert body["total"] == 42
+        assert body["has_more"] is True
+        assert len(body["entries"]) == 5
+
+    def test_review_list_503_when_freshness_store_missing(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """RuntimeError('freshness_store not configured') ⇒ 503."""
+        service.list_review_entries.side_effect = RuntimeError("freshness_store not configured")
+
+        response = client.get("/api/v1/memory/review")
+
+        assert response.status_code == 503
+        assert "Review queue" in response.json()["detail"]
+
+    def test_review_list_reason_filter(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """reason query param is forwarded to service.list_review_entries."""
+        service.list_review_entries.return_value = ([], 0)
+
+        client.get(
+            "/api/v1/memory/review",
+            params={"reason": "possible_duplicate"},
+        )
+
+        service.list_review_entries.assert_awaited_once()
+        call_kwargs = service.list_review_entries.await_args.kwargs
+        assert call_kwargs["reason"] == "possible_duplicate"
+
+    def test_review_list_viewer_only(
+        self,
+        make_client: Callable[..., TestClient],
+        service: AsyncMock,
+    ) -> None:
+        """Viewer role is sufficient for GET /review."""
+        viewer_client = make_client(Role.VIEWER)
+        service.list_review_entries.return_value = ([], 0)
+
+        response = viewer_client.get("/api/v1/memory/review")
+        assert response.status_code == 200
+
+    def test_review_list_has_more_false_when_last_page(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """has_more=False when offset + count >= total."""
+        entries = [_sample_review_entry(id=f"rev-{i}") for i in range(3)]
+        service.list_review_entries.return_value = (entries, 3)
+
+        response = client.get(
+            "/api/v1/memory/review",
+            params={"limit": 20, "offset": 0},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["has_more"] is False
+
+
+class TestReviewResolve:
+    def test_review_resolve_keep(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """POST /review/{id} with action=keep ⇒ service.resolve_review, 204."""
+        service.resolve_review.return_value = None  # return value unused by route
+
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "keep"},
+        )
+
+        assert response.status_code == 204
+        service.resolve_review.assert_awaited_once()
+        call_kwargs = service.resolve_review.await_args.kwargs
+        assert call_kwargs["action"] == "keep"
+        assert call_kwargs["review_id"] == "rev-1"
+
+    def test_review_resolve_merge_into(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """action=merge_into with target_record_id ⇒ service called with merge_into:<id>."""
+        service.resolve_review.return_value = None
+
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "merge_into", "target_record_id": "rec-2"},
+        )
+
+        assert response.status_code == 204
+        call_kwargs = service.resolve_review.await_args.kwargs
+        assert call_kwargs["action"] == "merge_into:rec-2"
+
+    def test_review_resolve_merge_into_missing_target_422(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """action=merge_into without target_record_id ⇒ Pydantic 422."""
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "merge_into"},
+        )
+        assert response.status_code == 422
+        service.resolve_review.assert_not_awaited()
+
+    def test_review_resolve_target_record_id_only_valid_for_merge(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """action=keep with target_record_id ⇒ 422 (only valid for merge_into)."""
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "keep", "target_record_id": "rec-x"},
+        )
+        assert response.status_code == 422
+        service.resolve_review.assert_not_awaited()
+
+    def test_review_resolve_archive(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """action=archive ⇒ service called with action='archive', 204."""
+        service.resolve_review.return_value = None
+
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "archive"},
+        )
+
+        assert response.status_code == 204
+        call_kwargs = service.resolve_review.await_args.kwargs
+        assert call_kwargs["action"] == "archive"
+
+    def test_review_resolve_discard(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """action=discard ⇒ 204."""
+        service.resolve_review.return_value = None
+
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "discard"},
+        )
+
+        assert response.status_code == 204
+        call_kwargs = service.resolve_review.await_args.kwargs
+        assert call_kwargs["action"] == "discard"
+
+    def test_review_resolve_404_when_entry_missing(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """MemoryNotFoundError ⇒ 404."""
+        service.resolve_review.side_effect = MemoryNotFoundError("review entry not found")
+
+        response = client.post(
+            "/api/v1/memory/review/missing-rev",
+            json={"action": "keep"},
+        )
+        assert response.status_code == 404
+
+    def test_review_resolve_400_on_invalid_action_value(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """Service raises ValueError ⇒ 400."""
+        service.resolve_review.side_effect = ValueError("unknown action")
+
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "keep"},
+        )
+        assert response.status_code == 400
+
+    def test_review_resolve_passes_user_id_as_actor(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """service.resolve_review must receive actor=user.id (not 'mcp_caller')."""
+        service.resolve_review.return_value = None
+
+        client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "keep"},
+        )
+
+        call_kwargs = service.resolve_review.await_args.kwargs
+        assert call_kwargs["actor"] == "u1"  # _make_user() uses id="u1"
+
+    def test_review_resolve_requires_editor_role(
+        self,
+        make_client: Callable[..., TestClient],
+        service: AsyncMock,
+    ) -> None:
+        """Viewer role is NOT sufficient for POST /review/{id} ⇒ 403."""
+        viewer_client = make_client(Role.VIEWER)
+
+        response = viewer_client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "keep"},
+        )
+        assert response.status_code == 403
+        service.resolve_review.assert_not_awaited()
+
+    def test_review_resolve_503_when_freshness_store_missing(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """RuntimeError('freshness_store not configured') ⇒ 503."""
+        service.resolve_review.side_effect = RuntimeError("freshness_store not configured")
+
+        response = client.post(
+            "/api/v1/memory/review/rev-1",
+            json={"action": "keep"},
+        )
+        assert response.status_code == 503

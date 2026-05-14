@@ -3,6 +3,23 @@
 ## [Unreleased]
 
 ### Added
+- feat(memory-scopes): Phase 2 — session memory dual-write to PG + `lifetime` filter in Memory Inspector. `MemoryService.cache_session` now writes through to `memory_records` (Redis remains hot cache; PG write is best-effort, failures log `memory.session.pg_write_failed`). `GET /api/v1/knowledge/records` accepts `lifetime=persistent|session|all` (default `persistent`); response gains optional `session_id` and `ttl_expires_at` fields. Expired session rows are GC'd by a new `SessionGCPass` inside the existing freshness scheduled-scan loop (grace period via `METATRON_MEMORY_SESSION_GC_GRACE_HOURS`, default 24h). `/api/v1/memory/records?session_id=X` stays Redis-only for MCP back-compat.
+- feat(memory-scopes): unified knowledge view in Memory Inspector — new `GET /api/v1/knowledge/records?origin=agent|kb|all` endpoint that fans out across `memory_records` and `raw_documents`. `origin=all` uses `asyncio.gather` with partial-failure semantics (one leg down → 200 + `partial=true`; both down → 503). New L3 module `knowledge/` provides the `RawDocumentReadService` read facade. Zero schema migrations; zero new env vars; no changes to existing memory, MCP, or freshness surfaces. Audit: `docs/superpowers/2026-05-12-memory-scopes-audit.md`.
+- feat(MTRNIX-277): per-agent memory health observability — `GET /api/v1/agents/{id}/memory/health` (viewer+, read-only) returns total ACTIVE / archived counts, 30-day growth timeseries (`growth_timeseries`), unused-record count (`unused_records`), near-duplicate cluster metrics (`duplicate_ratio`, `duplicate_clusters_count`) via SimHash + hamming distance, and source-type distribution. Adds `last_accessed_at` (TIMESTAMPTZ) and `content_simhash` (BIGINT) columns to `memory_records` (migration 021); hybrid search updates `last_accessed_at` fire-and-forget after every result set. Backfill script at `scripts/backfill_memory_simhash.py`. New env vars: `METATRON_MEMORY_STALE_AFTER_DAYS` (30), `METATRON_MEMORY_DUPLICATE_HAMMING_THRESHOLD` (3). Foundation for the W9 memory-health dashboard.
+- feat: Memory snapshot/restore/diff for agent memory (MTRNIX-272, WS1 S4-5).
+  `MemorySnapshotService` — JSONL+gzip+SHA256 backups with atomic file write
+  (tmp+rename for both gzip and sidecar). Pre-reset and pre-restore auto-snapshots
+  guarantee an undo point before any destructive operation. Restore uses a single
+  `MemoryPostgresStore.replace_for_agent` transaction (DELETE+INSERT) with best-effort
+  Qdrant+Neo4j repopulation (PG remains source of truth). New REST endpoints:
+  `POST /api/v1/agents/{id}/reset` (auto pre_reset snapshot → wipe, 413/422/500-with-snapshot-id),
+  `POST /api/v1/agents/{id}/snapshots` (manual snapshot, 201),
+  `GET /api/v1/agents/{id}/snapshots` (list newest-first),
+  `POST /api/v1/snapshots/{id}/restore` (checksum verify → pre_restore snapshot → transactional replace),
+  `GET /api/v1/snapshots/diff` (same-agent comparison, `key=source|content_hash`).
+  New events: `MEMORY_SNAPSHOT_CREATED` (`snapshot_id`, `trigger`, `record_count`),
+  `MEMORY_RESTORED` (`snapshot_id`, `record_count`, `pre_restore_snapshot_id`).
+  New env vars: `METATRON_SNAPSHOT_DIR` (./data/snapshots), `METATRON_SNAPSHOT_MAX_FILE_BYTES` (256 MiB).
 - docs: strategy ADR `docs/adr/2026-04-25-metatron-strategy.md` —
   authoritative snapshot of architectural decisions and pre-pilot plan
   (Memory Quality Layer with `kind=fact|preference|pinned`, Agent
@@ -67,6 +84,16 @@
   consecutive `make eval` runs now emit 0 fallback events.
 
 ### Added
+- feat(memory): REST API expanded with single-record GET (`/memory/records/{id}`),
+  neighbourhood graph (`/memory/graph`, depth 1..3, graceful Neo4j-down), and
+  review-queue endpoints (`GET /memory/review`, `POST /memory/review/{id}`).
+  `MemoryRecordResponse` now carries `status: LifecycleStatus`. `POST /memory/search`
+  and `GET /memory/records` accept `status_filter` (search default excludes
+  ARCHIVED+SUPERSEDED; list has no default exclusion). `GET /api/v1/agents` formally
+  documents default exclusion of ARCHIVED + opt-in `?include_archived=true` (mutually
+  exclusive with `?status=`). `api.dependencies.get_memory_service` now wires
+  `freshness_store` and passes `pg_store` to `MemorySearchService` for graph-leg
+  post-filter parity with the MCP path. (MTRNIX-324)
 - feat: Freshness queue reliability — processing-list reclaim + scheduled-scan
   safety net + env-prefixed Redis keys close the Phase A pre-prod gaps
   (MTRNIX-316). **Requires Redis >= 6.2 for `LMOVE`.** The worker no longer

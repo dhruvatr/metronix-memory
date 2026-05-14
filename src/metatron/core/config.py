@@ -77,10 +77,31 @@ class Settings(BaseSettings):
     redis_db: int = Field(0, alias="REDIS_DB")
     redis_password: str = Field("", alias="REDIS_PASSWORD")
     memory_session_ttl: int = Field(14400, alias="METATRON_MEMORY_SESSION_TTL")  # 4 hours
+    memory_session_gc_grace_hours: int = Field(
+        24,
+        alias="METATRON_MEMORY_SESSION_GC_GRACE_HOURS",
+        ge=0,
+        description=(
+            "Hours past ttl_expires_at before the scheduled-scan GC pass deletes the PG copy "
+            "of a session record. 0 = delete immediately on expiry."
+        ),
+    )
     memory_search_dense_weight: float = Field(0.6, alias="METATRON_MEMORY_SEARCH_DENSE_WEIGHT")
     memory_search_graph_weight: float = Field(0.3, alias="METATRON_MEMORY_SEARCH_GRAPH_WEIGHT")
     memory_search_session_weight: float = Field(0.1, alias="METATRON_MEMORY_SEARCH_SESSION_WEIGHT")
     memory_search_top_k_multiplier: int = Field(3, alias="METATRON_MEMORY_SEARCH_TOP_K_MULTIPLIER")
+    # --- Memory health (MTRNIX-277) ---
+    memory_stale_after_days: int = Field(30, alias="METATRON_MEMORY_STALE_AFTER_DAYS")
+    memory_duplicate_hamming_threshold: int = Field(
+        3, alias="METATRON_MEMORY_DUPLICATE_HAMMING_THRESHOLD"
+    )
+
+    # --- Memory snapshots (WS1 stages 4-5, MTRNIX-272) ---
+    snapshot_dir: str = Field("./data/snapshots", alias="METATRON_SNAPSHOT_DIR")
+    snapshot_max_file_bytes: int = Field(
+        256 * 1024 * 1024,
+        alias="METATRON_SNAPSHOT_MAX_FILE_BYTES",
+    )
 
     # --- Fast search profile (metatron_search_fast MCP tool) ---
     search_fast_top_k: int = Field(10, alias="METATRON_SEARCH_FAST_TOP_K")
@@ -293,6 +314,29 @@ class Settings(BaseSettings):
         default=90,
         alias="METATRON_FRESHNESS_KB_STALE_AFTER_DAYS",
         description="KB stale threshold in days (default 90 vs. memory's 30).",
+    )
+
+    # --- Memory Context Assembler (MTRNIX-275) ---
+    memory_injection_enabled: bool = Field(
+        default=False,
+        alias="METATRON_MEMORY_INJECTION_ENABLED",
+        description="Master flag for memory context injection. When off, assembler returns "
+        "empty context and MCP tool returns empty system_prompt.",
+    )
+    memory_injection_facts_top_k: int = Field(
+        default=10,
+        alias="METATRON_MEMORY_INJECTION_FACTS_TOP_K",
+        description="Number of fact-type memories to retrieve per assembly call.",
+    )
+    memory_injection_preferences_budget_tokens: int = Field(
+        default=2000,
+        alias="METATRON_MEMORY_INJECTION_PREFERENCES_BUDGET_TOKENS",
+        description="Soft token budget for <preferences> section. Warning-only (DD-5).",
+    )
+    memory_injection_facts_budget_tokens: int = Field(
+        default=3000,
+        alias="METATRON_MEMORY_INJECTION_FACTS_BUDGET_TOKENS",
+        description="Soft token budget for <relevant_memories> section. Warning-only (DD-5).",
     )
 
     # --- Agent activity logging (WS4 Stage 6) ---

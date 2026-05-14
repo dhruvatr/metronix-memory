@@ -49,7 +49,8 @@ pytest tests/unit/test_search.py::test_name -v  # single test
 L6  api/            REST + OAI-compat + MCP HTTP mount (FastAPI routes, middleware)
 L5  channels/       [LEGACY] Telegram, Discord, Slack bots — moving out, do NOT extend
 L4  agent/          Intent router, commands, executor (memory_service now a shim -> memory/service.py)
-L3  services        connectors/, llm/, mcp/, memory/, auth/, workspaces/, agents/
+L3  services        connectors/, llm/, mcp/, memory/, auth/, workspaces/, agents/,
+                    knowledge/ — [NEW] read-only facade over raw_documents
                     [INACTIVE] skills/ — engine unimplemented, kept as reserved capability
 L2  processing      ingestion/, retrieval/
                     [OPTIONAL] benchmarker/ — dev-eval tool, may move out of core
@@ -58,6 +59,11 @@ L0  core/           Config, Interfaces, Models, Events, Plugin (ZERO upward deps
 ```
 
 `memory/` (L3) is the first-class new module built in WS1. See `src/metatron/memory/.claude/CLAUDE.md`.
+
+`knowledge/` (L3) is a read-only facade over `raw_documents`. It backs the unified
+`/api/v1/knowledge/records` endpoint that merges agent memory and KB documents for the
+Memory Inspector. Does NOT bridge to `memory_records`; sources stay separate at the storage
+layer and are only merged at the view layer. See `src/metatron/knowledge/.claude/CLAUDE.md`.
 Legacy markers reflect the 2026-04 product transition — details and migration plan in `docs/LEGACY.md`.
 
 `freshness/` (L3) is a shared submodule (promoted from `memory/freshness/` in MTRNIX-313) — the
@@ -66,6 +72,7 @@ Legacy markers reflect the 2026-04 product transition — details and migration 
 adapter protocol. Concrete adapters live at `memory/freshness/target_memory.py` (agent memory)
 and `ingestion/freshness/target_raw_document.py` (KB raw_documents). A single worker process
 hosts both pipelines and routes jobs by `target_kind`.
+Phase 2 of memory-scopes adds `SessionGCPass` next to `ScheduledScan` in `freshness/scheduled_scan.py` — a plain DELETE pass for expired session memory rows past their grace period. NOT a lifecycle stage; reuses the scheduled-scan timer.
 
 ## Source Layout
 ```
@@ -115,7 +122,8 @@ src/metatron/
 ├── workspaces/                # L3 — manager.py, models.py, persistence.py (current "KB tenant" model; future agent-scoped)
 ├── skills/                    # L3 — [INACTIVE] engine.py — NotImplementedError; reserved for future declarative tool docs
 ├── memory/                    # L3 — service.py (MemoryService orchestration, PG source of truth),
-│                              #   search.py (hybrid MemorySearchService), serde.py (Qdrant payload deserializer)
+│                              #   search.py (hybrid MemorySearchService), serde.py (Qdrant payload deserializer),
+│                              #   health.py (MemoryHealthService — per-agent observability, W9 foundation)
 │                              #   First-class new module (WS1). Assertion lifecycle layer planned on top.
 │   └── freshness/             # [MTRNIX-304 / MTRNIX-313] memory adapter site — producer.py,
 │                              #   target_memory.py (MemoryTarget), worker.py, __main__.py.
@@ -124,6 +132,10 @@ src/metatron/
 │                              #   memory/freshness/): stages/ (linker, reconciler, monitor,
 │                              #   curator), coordination.py, decision_engine.py, apply_decision.py,
 │                              #   metrics.py, targets.py (FreshnessTarget protocol).
+├── knowledge/                 # L3 — [NEW] Read-only facade over raw_documents.
+│                              #   service.py (RawDocumentReadService) — list/count raw_documents
+│                              #   filtered by workspace_id, backs /api/v1/knowledge/records.
+│                              #   No writes, no ingestion, no bridge to memory_records.
 ├── agents/                    # L3 — Agent Registry (WS4, MTRNIX-270): models.py (AgentRecord,
 │                              #   AgentStatus), service.py (AgentRegistryService), persistence.py
 │                              #   (PG store). CRUD + lifecycle flag + versioned config. Hermes
@@ -251,6 +263,9 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - MEMORY_SEARCH_GRAPH_WEIGHT (0.3) — blend weight for Neo4j graph-presence signal (scaled by importance_score)
 - MEMORY_SEARCH_SESSION_WEIGHT (0.1) — blend weight for Redis session-cache presence boost
 - MEMORY_SEARCH_TOP_K_MULTIPLIER (3) — per-leg fetch multiplier for dedup/filter headroom
+- METATRON_MEMORY_DUPLICATE_HAMMING_THRESHOLD (3) — SimHash hamming distance ceiling for near-duplicate cluster membership in the memory health endpoint (MTRNIX-277)
+- METATRON_MEMORY_SESSION_GC_GRACE_HOURS (24) — hours past `ttl_expires_at` before the freshness scheduled-scan deletes the PG copy of a session memory record. 0 = delete immediately on expiry. Inspecting "what did the agent say yesterday" relies on this grace window. PG dual-write happens in `MemoryService.cache_session`; Redis remains the source of truth for the hot path.
+- METATRON_MEMORY_STALE_AFTER_DAYS (30) — recency-of-use threshold (days) for `unused_records` count in the memory health endpoint. Distinct from `METATRON_FRESHNESS_STALE_AFTER_DAYS` (content age in the freshness pipeline); naming uses `unused_*` deliberately to avoid confusion with `LifecycleStatus.STALE` (MTRNIX-277)
 - METATRON_ACTIVITY_LOG_ENABLED (true) — WS4 S6 observability foundation. When false, ActivityLogger is not constructed and /activity endpoints return 503.
 - METATRON_FRESHNESS_ENABLED (false) — master flag for freshness worker (MTRNIX-304 Phase A); when false, producer is a no-op and `python -m metatron.memory.freshness` exits immediately
 - METATRON_FRESHNESS_POLL_SECONDS (2.0) — worker poll interval when queue is idle
@@ -278,6 +293,8 @@ Graph extraction is decoupled from sync (process_all_unsynced_graphs, graph-proc
 - METATRON_FRESHNESS_KB_SEARCH_FILTER_ENABLED (false) — retrieval-side ARCHIVED/SUPERSEDED filter pushdown; when on, recall channels combine the filter with `access_filter` via `_combine_filters`
 - METATRON_FRESHNESS_WEIGHT (0.0) — scoring weight for the `freshness` signal in `compute_signal_score`; default 0.0 keeps the formula numerically identical to Phase A
 - METATRON_FRESHNESS_KB_STALE_AFTER_DAYS (90) — KB stale threshold in days (higher than memory's 30 because KB documents age more slowly)
+- METATRON_SNAPSHOT_DIR (./data/snapshots) — root directory for memory snapshot files (MTRNIX-272)
+- METATRON_SNAPSHOT_MAX_FILE_BYTES (268435456) — per-file size cap (256 MiB) for snapshot exports; exceeded → 413 (MTRNIX-272)
 - See core/config.py for full list
 
 ## External Agent Integration Surfaces
@@ -314,12 +331,57 @@ Memory context injection into system prompt on this endpoint is planned (MTRNIX-
 Today agent memory is not automatically added to /v1/chat/completions context.
 
 ### 3. Raw REST API
-- `/api/v1/memory/*` — agent memory CRUD + hybrid search
+- `/api/v1/memory/*` — agent memory CRUD + hybrid search. `MemoryRecordResponse` carries
+  `status: LifecycleStatus` (lowercase wire value, e.g. `"active"`, `"archived"`).
+  `POST /memory/search` accepts `status_filter: list[LifecycleStatus] | None` — **default
+  excludes ARCHIVED + SUPERSEDED** (intentionally broader than MCP default of `["active"]`
+  only; REST search is for inspection/admin use). `GET /memory/records` accepts the same
+  `status_filter` query param with no default exclusion (full list view for inspection).
+  Additional endpoints: `GET /memory/records/{id}` (single-record fetch, 404 cross-workspace,
+  viewer+); `GET /memory/graph` (neighbourhood traversal, `seed_record_id` required,
+  `depth=1..3`, `agent_id` optional, returns `{nodes, edges}`, graceful Neo4j-down, viewer+);
+  `GET /memory/review` (paginated review queue, filter by `reason`, viewer+);
+  `POST /memory/review/{id}` (resolve review entry — `keep|archive|merge_into|discard`,
+  emits `MachineEvent`, 204, editor+; returns 503 if `freshness_store` not configured).
 - `/api/v1/agents/*` — agent registry CRUD + lifecycle (start/stop/pause) + `POST /{id}/restore`
   (MTRNIX-323 — ARCHIVED → STOPPED) + versioned config (WS4, MTRNIX-270). Reads gated by
   `require_viewer`; writes/lifecycle by `require_editor`. Lifecycle endpoints enforce a strict
   state-transition matrix — `/start`, `/stop`, `/pause` reject invalid transitions with 400
-  (`AgentInvalidStateTransitionError`); un-archive is only via `/restore`.
+  (`AgentInvalidStateTransitionError`); un-archive is only via `/restore`. `GET /api/v1/agents`
+  defaults to excluding ARCHIVED agents; pass `?include_archived=true` to opt in (admin/inspection
+  use). `?status=` and `?include_archived=true` together return 400 (mutually exclusive).
+  Memory snapshot endpoints (MTRNIX-272, editor+ unless noted):
+  `POST /{id}/reset` — wipe agent memory; auto `pre_reset` snapshot taken first; returns
+  `{snapshot_id, deleted_count}`. 413 on >10k overflow, 422 on corrupt snapshot, 500 with
+  `snapshot_id` in detail when wipe fails after snapshot succeeds (operator can restore).
+  `POST /{id}/snapshots` — manual snapshot, body `{label?: str}`, returns snapshot record (201).
+  413 on overflow, 422 on corrupt. `GET /{id}/snapshots` (viewer+) — list snapshots newest-first.
+  Memory health endpoint (MTRNIX-277, viewer+, read-only):
+  `GET /{id}/memory/health` — point-in-time health snapshot for an agent's memory: total ACTIVE /
+  archived counts, 30-day growth timeseries, unused-record count (never accessed within
+  `METATRON_MEMORY_STALE_AFTER_DAYS`), near-duplicate cluster metrics (SimHash, hamming distance),
+  and source-type distribution. PG-only; queries fan out via `asyncio.gather`; O(N²) dup compute
+  runs in `asyncio.to_thread`. Hard cap at 5 000 ACTIVE records for dup analysis. Foundation for
+  the W9 memory-health dashboard.
+- `/api/v1/snapshots/*` — cross-snapshot operations (MTRNIX-272):
+  `POST /{id}/restore` (editor+) — SHA-256 verify → auto `pre_restore` snapshot → transactional
+  PG replace → best-effort Qdrant+Neo4j repopulation. Returns `{snapshot_id, pre_restore_snapshot,
+  restored_count}`. 404 if missing, 422 if corrupt.
+  `GET /diff?from=<id>&to=<id>&key=source|content_hash` (viewer+) — compare two snapshots of the
+  **same agent** (cross-agent → 400). Returns `{added, removed, changed}` record-id lists.
+- `/api/v1/knowledge/records` — unified read view across `memory_records` (origin=agent) and
+  `raw_documents` (origin=kb). Workspace-scoped, `require_viewer`. Query params: `origin=agent|kb|all`
+  (default `all`), `limit`, `offset`. Returns `KnowledgeRecordListResponse` with records tagged
+  `origin: "agent"|"kb"`, plus `partial: bool` and `failed_sources: list[Literal["agent","kb"]]`.
+  `origin=all` fans out via `asyncio.gather`: one leg failing → 200 with `partial=true`; both legs
+  failing → 503. `origin` is endpoint-derived, NOT a DB column. Pagination is approximate under
+  `origin=all` (per-leg fetch + merge + truncate). Backs the Memory Inspector unified view.
+  Query: `lifetime=persistent|session|all` (default `persistent` — preserves Phase 1 behaviour).
+  Response shape grows optional `session_id: str | None` and `ttl_expires_at: datetime | None`
+  (`None` for KB rows and persistent agent rows). `lifetime=session` returns only unexpired
+  sessions; rows in the GC grace window are filtered (use `lifetime=all` to include them).
+  Session memory records are dual-written by `MemoryService.cache_session` to Redis (hot path)
+  + PG (visible to Inspector); PG write is best-effort.
 - `/api/v1/documents`, `/api/v1/search` — document CRUD + search
 - `/api/v1/workspaces`, `/api/v1/connections`, `/api/v1/sync` — admin surfaces
 
@@ -371,6 +433,14 @@ Alembic in `migrations/`. Run `make migrate` after pulling. Create new: `make mi
 - Assume "workspace == KB tenant" forever — the agent-era model separates company from agent; `agent_id` is becoming a first-class field in memory records
 - Invest in the **enterprise RBAC plugin** — it is **frozen / DEPRECATED** as of 2026-04-25 (D-014 in the strategy ADR). Its model attaches permissions to ingestion; the correct model attaches permissions to documents/chunks at retrieval time. For multi-team isolation use **workspace isolation** (D-016). Permission Model v2 lives in the backlog with a "first enterprise client" trigger.
 - Treat memory records as flat. The next memory work introduces a `kind` enum (`fact` / `preference` / `pinned`, D-017) — `preference` and `pinned` are always-on, never-vanishing entries injected into the agent prompt without retrieval. New memory features must respect this categorisation; do NOT bury preferences in the same `memory_search` flow as facts.
+- Add an `origin` column to `memory_records` or `raw_documents`. `origin` is endpoint-derived (which
+  source returned the row — `"agent"` vs `"kb"`); it is computed by `/api/v1/knowledge/records` at
+  response time, not stored anywhere. The orthogonal `visibility / lifetime / kind` axes for
+  `memory_records` are planned for later memory-scopes work (separate from the `kind` rollout
+  in MTRNIX-275).
+- Add a `lifetime` column to `memory_records` in Phase 2 — `lifetime` is endpoint-derived from
+  `ttl_expires_at IS [NOT] NULL`. Phase 3 will introduce the canonical `visibility / lifetime / kind`
+  columns and a migration.
 - Bypass the **Agent Context Assembler** (D-020) once it lands. Both Hermes (via MCP wrapper) and `/v1/chat/completions` will go through one assembler that imposes `<constitution>` / `<preferences>` / `<relevant_memories>` / `<relevant_knowledge>` section boundaries. New consumers must use it; ad-hoc prompt assembly is forbidden.
 
 ## Agent Teams

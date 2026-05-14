@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from metatron.core.exceptions import MemoryNotFoundError
-from metatron.core.models import MemoryRecord, MemoryScope
+from metatron.core.models import (
+    LifecycleStatus,
+    MemoryKind,
+    MemoryRecord,
+    MemoryScope,
+)
+from metatron.ingestion.dedup import simhash
 from metatron.memory.service import MemoryService
 
 
@@ -53,11 +59,13 @@ class TestCacheSession:
             result = await service.cache_session("ws1", "sess1", record)
 
         assert result.id == "mem001"
+        # Phase 2: ttl_seconds is now resolved to the settings default (14400)
+        # before being forwarded to redis.cache — the call must include the resolved TTL.
         redis_cache.cache.assert_called_once_with(
             "ws1",
             "sess1",
             record,
-            ttl_seconds=None,
+            ttl_seconds=14400,
         )
         mock_graph.assert_called_once_with(record)
 
@@ -341,7 +349,14 @@ class TestListPersistent:
 
         assert len(result) == 2
         pg_store.list_records.assert_awaited_once_with(
-            "ws1", agent_id="agent1", scope=None, limit=100, offset=0
+            "ws1",
+            agent_id="agent1",
+            scope=None,
+            kind_filter=None,
+            status=None,
+            lifetime="all",
+            limit=100,
+            offset=0,
         )
 
 
@@ -448,6 +463,69 @@ class TestPromote:
 
 
 # ---------------------------------------------------------------------------
+# list_preferences (MTRNIX-275)
+# ---------------------------------------------------------------------------
+
+
+class TestListPreferences:
+    async def test_filters_kind_and_status(self) -> None:
+        """list_preferences() should request only preference+pinned
+        with active/candidate status."""
+        service, _, _, pg_store = _make_service()
+        preference = _sample_record(
+            id="pref1",
+            kind=MemoryKind.PREFERENCE,
+            status=LifecycleStatus.ACTIVE,
+        )
+        pg_store.list_records.return_value = [preference]
+
+        result = await service.list_preferences("ws1", agent_id="agent1")
+
+        assert result == [preference]
+        pg_store.list_records.assert_awaited_once_with(
+            "ws1",
+            agent_id="agent1",
+            kind_filter=[MemoryKind.PREFERENCE, MemoryKind.PINNED],
+            status=[LifecycleStatus.ACTIVE, LifecycleStatus.CANDIDATE],
+            limit=1000,
+        )
+
+    async def test_excludes_fact_records(self) -> None:
+        """list_preferences() must not return fact records even if PG somehow returns them."""
+        service, _, _, pg_store = _make_service()
+        # Simulate PG returning only what was asked — preference + pinned
+        pinned = _sample_record(
+            id="pin1",
+            kind=MemoryKind.PINNED,
+            status=LifecycleStatus.ACTIVE,
+        )
+        pg_store.list_records.return_value = [pinned]
+
+        await service.list_preferences("ws1", agent_id="agent1")
+
+        # Verify the kind_filter passed to PG excludes fact
+        call_args = pg_store.list_records.call_args
+        kind_filter = call_args.kwargs["kind_filter"]
+        assert MemoryKind.FACT not in kind_filter
+        assert MemoryKind.PREFERENCE in kind_filter
+        assert MemoryKind.PINNED in kind_filter
+
+    async def test_excludes_archived_status(self) -> None:
+        """list_preferences() must not include ARCHIVED or SUPERSEDED records."""
+        service, _, _, pg_store = _make_service()
+        pg_store.list_records.return_value = []
+
+        await service.list_preferences("ws1", agent_id="agent1")
+
+        call_args = pg_store.list_records.call_args
+        status_filter = call_args.kwargs["status"]
+        assert LifecycleStatus.ACTIVE in status_filter
+        assert LifecycleStatus.CANDIDATE in status_filter
+        assert LifecycleStatus.ARCHIVED not in status_filter
+        assert LifecycleStatus.SUPERSEDED not in status_filter
+
+
+# ---------------------------------------------------------------------------
 # Hybrid search delegation
 # ---------------------------------------------------------------------------
 
@@ -487,6 +565,7 @@ class TestServiceSearch:
             session_id="sess1",
             top_k=7,
             status_filter=None,
+            kind_filter=None,
         )
 
     async def test_raises_when_search_not_configured(self) -> None:
@@ -629,3 +708,47 @@ class TestFreshnessHook:
         mock_enqueue.assert_called_once()
         args, _kwargs = mock_enqueue.call_args
         assert args == ("ws1", "mem001", "knowledge_deleted")
+
+
+# ---------------------------------------------------------------------------
+# SimHash population on save (MTRNIX-277)
+# ---------------------------------------------------------------------------
+
+
+class TestSaveSimhash:
+    async def test_save_populates_content_simhash(self) -> None:
+        """After save(), record.content_simhash must equal simhash(content)."""
+        service, _, qdrant_store, pg_store = _make_service()
+        content = "the quick brown fox jumps over the lazy dog"
+        record = _sample_record(scope=MemoryScope.PER_AGENT, content=content)
+        record.content_simhash = 0  # start unset
+        pg_store.get_by_hash.return_value = None
+        pg_store.save.return_value = record
+
+        with patch("metatron.memory.service.save_memory_to_graph"):
+            result = await service.save("ws1", record)
+
+        expected_simhash = simhash(content)
+        assert result.content_simhash == expected_simhash
+        assert expected_simhash != 0  # non-trivial content must produce non-zero hash
+
+    async def test_dedup_hit_does_not_compute_simhash_on_new_record(self) -> None:
+        """When dedup hits, the new (rejected) record must not have its simhash set."""
+        service, _, _, pg_store = _make_service()
+        existing = _sample_record(id="existing001", scope=MemoryScope.PER_AGENT)
+        pg_store.get_by_hash.return_value = existing
+
+        new_record = _sample_record(
+            id="new001",
+            scope=MemoryScope.PER_AGENT,
+            content="some content",
+        )
+        new_record.content_simhash = 0  # start unset
+
+        with patch("metatron.memory.service.save_memory_to_graph"):
+            result = await service.save("ws1", new_record)
+
+        # The returned record is the *existing* one — the new record is discarded.
+        assert result.id == "existing001"
+        # The *new* record was NOT updated — dedup path returns before simhash.
+        assert new_record.content_simhash == 0

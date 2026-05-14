@@ -462,7 +462,22 @@ class PostgresStore:
         error_message: str | None = None,
         last_synced_at: datetime | None = None,
     ) -> None:
-        """Update connection status, error message, and optional sync timestamp."""
+        """Update connection status, error message, and optional sync timestamp.
+
+        **Asymmetric ``None`` semantics — read carefully:**
+
+        * ``error_message=None`` → SQL writes ``error_message = NULL``. This
+          unconditionally clears any previously-stored error message.
+          (Pre-existing behaviour; not changed by MTRNIX-332.)
+        * ``last_synced_at=None`` → the cursor column is NOT touched (the
+          ``SET last_synced_at = ...`` clause is omitted). This is the
+          mechanism used by ``_run_connection_sync`` to leave the cursor
+          unchanged on failed syncs — advancing it would silently drop
+          documents updated between the last good sync and the failure.
+
+        The divergence is an artefact of the cursor-trap fix in MTRNIX-332;
+        unifying the two patterns is a separate follow-up.
+        """
         logger.info(
             "postgres.connection.update_status",
             connection_id=connection_id,
@@ -1223,6 +1238,59 @@ class PostgresStore:
                 ),
                 {**updates, "workspace_id": workspace_id, "id": raw_doc_id},
             )
+
+    # --- Raw document list helpers (memory-scopes Phase 1, MTRNIX-memory-scopes) ---
+
+    async def list_raw_documents(
+        self,
+        workspace_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[RawDocument]:
+        """Return paginated raw_documents for a workspace, ordered by updated_at DESC, id ASC.
+
+        Workspace-scoped. Reuses :meth:`_row_to_raw_document` for consistent field mapping.
+        Stable pagination: ``updated_at DESC, id ASC`` ensures deterministic ordering even
+        when multiple rows share the same ``updated_at`` timestamp.
+        """
+        logger.info(
+            "postgres.raw_documents.list",
+            workspace_id=workspace_id,
+            limit=limit,
+            offset=offset,
+        )
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text("""
+                    SELECT * FROM raw_documents
+                    WHERE workspace_id = :workspace_id
+                    ORDER BY updated_at DESC, id ASC
+                    LIMIT :limit OFFSET :offset
+                """),
+                {"workspace_id": workspace_id, "limit": limit, "offset": offset},
+            )
+            return [self._row_to_raw_document(row) for row in result]
+
+    async def count_raw_documents(self, workspace_id: str) -> int:
+        """Return the total number of raw_documents for a workspace.
+
+        Used alongside :meth:`list_raw_documents` to populate ``has_more`` and
+        ``total`` fields in paginated responses. For workspaces with >100 k
+        documents a partial index or ``estimate_count`` should be considered —
+        see TODO in the knowledge route docstring.
+        """
+        logger.info(
+            "postgres.raw_documents.count",
+            workspace_id=workspace_id,
+        )
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text("SELECT count(*) FROM raw_documents WHERE workspace_id = :workspace_id"),
+                {"workspace_id": workspace_id},
+            )
+            row = result.first()
+            return int(row._mapping["count"]) if row else 0
 
     # --- Dedup Fingerprints ---
 

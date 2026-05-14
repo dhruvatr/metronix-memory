@@ -14,7 +14,7 @@ RBAC — aligns with the ``memory/`` module convention:
 from __future__ import annotations
 
 import json
-from datetime import datetime  # noqa: TC003 — runtime for pydantic field validation
+from datetime import date, datetime  # noqa: TC003 — runtime for pydantic field validation
 from typing import Annotated, Any
 
 import structlog
@@ -35,9 +35,29 @@ from metatron.agents.service import (
     AgentNotFoundError,
     AgentRegistryService,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
 )
-from metatron.api.dependencies import get_agent_registry_service
+from metatron.api.dependencies import (
+    get_agent_registry_service,
+    get_memory_health_service,
+    get_memory_service,
+    get_memory_snapshot_service,
+)
 from metatron.auth.dependencies import require_editor, require_viewer
-from metatron.core.models import User  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+from metatron.core.exceptions import SnapshotCorruptError, SnapshotOverflowError
+from metatron.core.models import (
+    MemorySnapshot,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+    User,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+)
+from metatron.memory.health import (
+    AgentMemoryHealth,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+    MemoryHealthService,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+)
+from metatron.memory.service import (
+    MemoryService,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+)
+from metatron.memory.snapshot import (
+    MemorySnapshotService,  # noqa: TC001 — FastAPI Annotated DI needs runtime import
+    SnapshotTrigger,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -222,7 +242,7 @@ def _version_to_response(version: AgentConfigVersion) -> AgentConfigVersionRespo
 
 
 @router.post(
-    "",
+    "/",
     response_model=AgentResponse,
     status_code=201,
 )
@@ -247,19 +267,35 @@ async def create_agent(
     return _agent_to_response(record)
 
 
-@router.get("", response_model=AgentListResponse)
+@router.get("/", response_model=AgentListResponse)
 async def list_agents(
     user: Annotated[User, Depends(require_viewer)],  # noqa: ARG001
     service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
     status: AgentStatus | None = None,
     name_prefix: str | None = Query(None, min_length=1, max_length=128),
+    include_archived: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
 ) -> AgentListResponse:
-    """List agents in the current workspace."""
+    """List agents in the current workspace.
+
+    By default, ARCHIVED (soft-deleted) agents are hidden.  Pass
+    ``include_archived=true`` to surface them alongside live agents, OR pass
+    ``status=archived`` to return only archived agents.
+
+    The two flags are mutually exclusive — passing both ``status=...`` and
+    ``include_archived=true`` is rejected with 400.  This keeps the contract
+    unambiguous (per MTRNIX-324 R7).
+    """
+    if status is not None and include_archived:
+        raise HTTPException(
+            status_code=400,
+            detail="status and include_archived are mutually exclusive",
+        )
     records = await service.list_agents(
         status=status,
         name_prefix=name_prefix,
+        include_archived=include_archived,
         limit=limit + 1,
         offset=offset,
     )
@@ -399,6 +435,176 @@ async def restore_agent(
     return _agent_to_response(record)
 
 
+class ResetAgentMemoryResponse(BaseModel):
+    """Response body for ``POST /agents/{id}/reset``."""
+
+    snapshot_id: str
+    deleted_count: int
+
+
+@router.post(
+    "/{agent_id}/reset",
+    response_model=ResetAgentMemoryResponse,
+    status_code=200,
+)
+async def reset_agent_memory(
+    agent_id: str,
+    user: Annotated[User, Depends(require_editor)],  # noqa: ARG001
+    reg_service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
+    mem_service: Annotated[MemoryService, Depends(get_memory_service)],
+    snap_service: Annotated[MemorySnapshotService, Depends(get_memory_snapshot_service)],
+) -> ResetAgentMemoryResponse:
+    """Wipe an agent's memory after taking an automatic ``pre_reset`` snapshot.
+
+    Pre-snapshot is created first — if it fails, the reset never happens, so
+    operators always have an undo point.
+
+    If the wipe itself fails *after* the snapshot was committed, the response
+    is a 500 whose ``detail`` includes the snapshot id so the operator can
+    recover via ``POST /api/v1/snapshots/{snapshot_id}/restore`` rather than
+    being left with an orphaned snapshot row.
+    """
+    try:
+        await reg_service.get_agent(agent_id)  # 404 if unknown
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    try:
+        snapshot = await snap_service.create(
+            agent_id,
+            label="auto pre-reset snapshot",
+            trigger=SnapshotTrigger.PRE_RESET,
+        )
+    except SnapshotOverflowError as exc:
+        # >10k-records guard or on-disk size cap. 413 — request can't be
+        # fulfilled until pagination / size-aware export ships.
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except SnapshotCorruptError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    try:
+        deleted = await mem_service.reset(reg_service.workspace_id, agent_id=agent_id)
+    except Exception as exc:
+        # The pre_reset snapshot succeeded but the wipe failed — the system
+        # is in a partially-consistent state. Surface the snapshot id so the
+        # operator can either retry the reset or restore from the snapshot.
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": (
+                    "reset failed after pre_reset snapshot was taken; "
+                    "use the snapshot id to restore or retry"
+                ),
+                "snapshot_id": snapshot.id,
+                "error": str(exc),
+            },
+        ) from exc
+
+    return ResetAgentMemoryResponse(
+        snapshot_id=snapshot.id,
+        deleted_count=deleted,
+    )
+
+
+class CreateSnapshotRequest(BaseModel):
+    """Request body for creating a manual memory snapshot."""
+
+    model_config = ConfigDict(strict=False)
+
+    label: str = Field("", max_length=256)
+
+
+class MemorySnapshotResponse(BaseModel):
+    """Response shape for a single :class:`MemorySnapshot`."""
+
+    id: str
+    workspace_id: str
+    agent_id: str
+    label: str
+    trigger: str
+    record_count: int
+    content_hash: str
+    size_bytes: int
+    storage_path: str
+    created_at: datetime
+
+
+class MemorySnapshotListResponse(BaseModel):
+    """Response shape for listing snapshots for an agent."""
+
+    snapshots: list[MemorySnapshotResponse]
+    count: int
+
+
+def _snapshot_to_response(snapshot: MemorySnapshot) -> MemorySnapshotResponse:
+    return MemorySnapshotResponse(
+        id=snapshot.id,
+        workspace_id=snapshot.workspace_id,
+        agent_id=snapshot.agent_id,
+        label=snapshot.label,
+        trigger=snapshot.trigger,
+        record_count=snapshot.record_count,
+        content_hash=snapshot.content_hash,
+        size_bytes=snapshot.size_bytes,
+        storage_path=snapshot.storage_path,
+        created_at=snapshot.created_at,
+    )
+
+
+@router.post(
+    "/{agent_id}/snapshots",
+    response_model=MemorySnapshotResponse,
+    status_code=201,
+)
+async def create_agent_snapshot(
+    agent_id: str,
+    body: CreateSnapshotRequest,
+    user: Annotated[User, Depends(require_editor)],  # noqa: ARG001
+    reg_service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
+    snap_service: Annotated[MemorySnapshotService, Depends(get_memory_snapshot_service)],
+) -> MemorySnapshotResponse:
+    """Take a manual snapshot of the agent's current memory."""
+    try:
+        await reg_service.get_agent(agent_id)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    try:
+        snapshot = await snap_service.create(
+            agent_id,
+            label=body.label,
+            trigger=SnapshotTrigger.MANUAL,
+        )
+    except SnapshotOverflowError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from None
+    except SnapshotCorruptError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return _snapshot_to_response(snapshot)
+
+
+@router.get(
+    "/{agent_id}/snapshots",
+    response_model=MemorySnapshotListResponse,
+)
+async def list_agent_snapshots(
+    agent_id: str,
+    user: Annotated[User, Depends(require_viewer)],  # noqa: ARG001
+    reg_service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
+    snap_service: Annotated[MemorySnapshotService, Depends(get_memory_snapshot_service)],
+) -> MemorySnapshotListResponse:
+    """List snapshots for an agent, newest first."""
+    try:
+        await reg_service.get_agent(agent_id)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    snapshots = await snap_service.list_snapshots(agent_id)
+    return MemorySnapshotListResponse(
+        snapshots=[_snapshot_to_response(s) for s in snapshots],
+        count=len(snapshots),
+    )
+
+
 @router.get(
     "/{agent_id}/versions",
     response_model=AgentConfigVersionListResponse,
@@ -428,6 +634,84 @@ async def list_agent_versions(
         offset=offset,
         has_more=has_more,
     )
+
+
+# ---------------------------------------------------------------------------
+# Memory health (MTRNIX-277)
+# ---------------------------------------------------------------------------
+
+
+class GrowthBucketResponse(BaseModel):
+    """One day in the 30-day memory growth timeseries."""
+
+    day: date
+    created_count: int
+
+
+class MemoryHealthResponse(BaseModel):
+    """Read-only health snapshot for an agent's memory."""
+
+    agent_id: str
+    total_records: int
+    total_archived: int
+    growth_rate_per_day: float
+    growth_timeseries: list[GrowthBucketResponse]
+    unused_records: int
+    unused_threshold_days: int
+    duplicate_ratio: float
+    duplicate_clusters_count: int
+    duplicate_hamming_threshold: int
+    source_distribution: dict[str, int]
+    computed_at: datetime
+    # When the ACTIVE-record count exceeds the hard cap, dup detection is
+    # skipped to keep the endpoint cheap. The dashboard renders the badge
+    # as "Skipped — over Nk records" instead of misleading 0% duplicates.
+    duplicate_detection_skipped: bool = False
+    duplicate_active_population: int = 0
+
+
+def _health_to_response(h: AgentMemoryHealth) -> MemoryHealthResponse:
+    return MemoryHealthResponse(
+        agent_id=h.agent_id,
+        total_records=h.total_records,
+        total_archived=h.total_archived,
+        growth_rate_per_day=h.growth_rate_per_day,
+        growth_timeseries=[
+            GrowthBucketResponse(day=b.day, created_count=b.created_count)
+            for b in h.growth_timeseries
+        ],
+        unused_records=h.unused_records,
+        unused_threshold_days=h.unused_threshold_days,
+        duplicate_ratio=h.duplicate_ratio,
+        duplicate_clusters_count=h.duplicate_clusters_count,
+        duplicate_hamming_threshold=h.duplicate_hamming_threshold,
+        source_distribution=dict(h.source_distribution),
+        computed_at=h.computed_at,
+        duplicate_detection_skipped=h.duplicate_detection_skipped,
+        duplicate_active_population=h.duplicate_active_population,
+    )
+
+
+@router.get(
+    "/{agent_id}/memory/health",
+    response_model=MemoryHealthResponse,
+)
+async def get_agent_memory_health(
+    agent_id: str,
+    user: Annotated[User, Depends(require_viewer)],  # noqa: ARG001
+    reg_service: Annotated[AgentRegistryService, Depends(get_agent_registry_service)],
+    health_service: Annotated[MemoryHealthService, Depends(get_memory_health_service)],
+) -> MemoryHealthResponse:
+    """Read-only memory health snapshot for an agent."""
+    try:
+        agent = await reg_service.get_agent(agent_id)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    if agent.workspace_id != reg_service.workspace_id:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id!r}")
+
+    health = await health_service.compute(agent_id)
+    return _health_to_response(health)
 
 
 # ---------------------------------------------------------------------------

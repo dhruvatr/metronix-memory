@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -19,13 +19,16 @@ from sqlalchemy import text
 
 from metatron.core.models import (
     LifecycleStatus,
+    MemoryKind,
     MemoryRecord,
     MemoryScope,
     MemorySnapshot,
     MemoryStatus,
 )
+from metatron.storage.postgres import _from_pg_bigint, _to_pg_bigint
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
     from contextlib import AbstractAsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -37,21 +40,25 @@ logger = structlog.get_logger()
 # ------------------------------------------------------------------
 
 _RECORD_COLUMNS = (
-    "id, workspace_id, agent_id, scope, source_type, content, "
+    "id, workspace_id, agent_id, scope, kind, source_type, content, "
     "tags, importance_score, ttl_expires_at, content_hash, "
     "session_id, metadata, created_at, updated_at, "
     "status, freshness_score, superseded_by, valid_from, valid_until, "
-    "evidence_count, verification_state"
+    "evidence_count, verification_state, "
+    "last_accessed_at, content_simhash"
 )
 
 # Columns that the standard save() path writes explicitly. New lifecycle
 # columns (status, freshness_score, ...) rely on PG server defaults
 # (ACTIVE / 0.5 / NULL / 0 / NULL) so pre-MTRNIX-304 callers stay unchanged.
 # The freshness pipeline updates lifecycle fields via update_lifecycle().
+# Health columns (last_accessed_at, content_simhash) are also included here
+# so that save() persists simhash computed in MemoryService (MTRNIX-277).
 _RECORD_INSERT_COLUMNS = (
-    "id, workspace_id, agent_id, scope, source_type, content, "
+    "id, workspace_id, agent_id, scope, kind, source_type, content, "
     "tags, importance_score, ttl_expires_at, content_hash, "
-    "session_id, metadata, created_at, updated_at"
+    "session_id, metadata, created_at, updated_at, "
+    "last_accessed_at, content_simhash"
 )
 
 _SNAPSHOT_COLUMNS = (
@@ -95,11 +102,19 @@ def _row_to_record(m: Any) -> MemoryRecord:
     except ValueError:
         status = MemoryStatus.ACTIVE
 
+    # kind (MTRNIX-275): read via _opt for pre-migration rows
+    kind_raw = _opt("kind", MemoryKind.FACT.value)
+    try:
+        kind = MemoryKind(kind_raw)
+    except ValueError:
+        kind = MemoryKind.FACT
+
     return MemoryRecord(
         id=m["id"],
         workspace_id=m["workspace_id"],
         agent_id=m["agent_id"],
         scope=MemoryScope(m["scope"]),
+        kind=kind,
         source_type=m["source_type"],
         content=m["content"],
         tags=m["tags"] if isinstance(m["tags"], list) else json.loads(m["tags"]),
@@ -117,6 +132,8 @@ def _row_to_record(m: Any) -> MemoryRecord:
         evidence_count=int(_opt("evidence_count", 0)),
         verification_state=_opt("verification_state"),
         updated_at=_as_aware(_opt("updated_at")),
+        last_accessed_at=_as_aware(_opt("last_accessed_at")),
+        content_simhash=_from_pg_bigint(_opt("content_simhash", 0)),
     )
 
 
@@ -174,12 +191,15 @@ class MemoryPostgresStore:
             await conn.execute(
                 text(f"""
                     INSERT INTO memory_records ({_RECORD_INSERT_COLUMNS})
-                    VALUES (:id, :workspace_id, :agent_id, :scope, :source_type,
+                    VALUES (:id, :workspace_id, :agent_id, :scope, :kind,
+                            :source_type,
                             :content, CAST(:tags AS jsonb), :importance_score, :ttl_expires_at,
                             :content_hash, :session_id, CAST(:metadata AS jsonb),
-                            :created_at, :updated_at)
+                            :created_at, :updated_at,
+                            :last_accessed_at, :content_simhash)
                     ON CONFLICT (id) DO UPDATE SET
                         scope = EXCLUDED.scope,
+                        kind = EXCLUDED.kind,
                         source_type = EXCLUDED.source_type,
                         content = EXCLUDED.content,
                         tags = EXCLUDED.tags,
@@ -188,13 +208,16 @@ class MemoryPostgresStore:
                         content_hash = EXCLUDED.content_hash,
                         session_id = EXCLUDED.session_id,
                         metadata = EXCLUDED.metadata,
-                        updated_at = EXCLUDED.updated_at
+                        updated_at = EXCLUDED.updated_at,
+                        last_accessed_at = EXCLUDED.last_accessed_at,
+                        content_simhash = EXCLUDED.content_simhash
                 """),
                 {
                     "id": record.id,
                     "workspace_id": record.workspace_id,
                     "agent_id": record.agent_id,
                     "scope": record.scope.value,
+                    "kind": record.kind.value,
                     "source_type": record.source_type,
                     "content": record.content,
                     "tags": json.dumps(record.tags),
@@ -205,6 +228,8 @@ class MemoryPostgresStore:
                     "metadata": json.dumps(record.metadata),
                     "created_at": record.created_at,
                     "updated_at": now,
+                    "last_accessed_at": record.last_accessed_at,
+                    "content_simhash": _to_pg_bigint(record.content_simhash),
                 },
             )
         logger.debug("memory_pg.saved", record_id=record.id)
@@ -244,7 +269,9 @@ class MemoryPostgresStore:
         *,
         agent_id: str | None = None,
         scope: MemoryScope | None = None,
+        kind_filter: list[MemoryKind] | None = None,
         status: list[LifecycleStatus] | None = None,
+        lifetime: str = "all",
         limit: int = 100,
         offset: int = 0,
     ) -> list[MemoryRecord]:
@@ -252,6 +279,13 @@ class MemoryPostgresStore:
 
         ``status``: if provided, records are filtered to those whose ``status``
         column is in the given list (push-down filter). MTRNIX-314.
+        ``kind_filter``: if provided, records are filtered to those whose
+        ``kind`` column is in the given list. MTRNIX-275.
+        ``lifetime``: one of ``"persistent"`` (ttl_expires_at IS NULL),
+        ``"session"`` (ttl_expires_at IS NOT NULL AND > now()), or ``"all"``
+        (no filter). Default ``"all"`` at L1 keeps all existing callers
+        unaffected; the route layer enforces the ``"persistent"`` default
+        (D-P2-08).
         """
         where_parts = ["workspace_id = :ws"]
         params: dict[str, Any] = {"ws": workspace_id, "limit": limit, "offset": offset}
@@ -262,9 +296,17 @@ class MemoryPostgresStore:
         if scope is not None:
             where_parts.append("scope = :scope")
             params["scope"] = scope.value
+        if kind_filter is not None:
+            where_parts.append("kind = ANY(:kind_list)")
+            params["kind_list"] = [k.value for k in kind_filter]
         if status is not None:
             where_parts.append("status = ANY(:status_list)")
             params["status_list"] = [s.value for s in status]
+        if lifetime == "persistent":
+            where_parts.append("ttl_expires_at IS NULL")
+        elif lifetime == "session":
+            where_parts.append("ttl_expires_at IS NOT NULL AND ttl_expires_at > now()")
+        # lifetime == "all" → no filter
 
         where_clause = " AND ".join(where_parts)
         async with self._engine.begin() as conn:
@@ -287,12 +329,16 @@ class MemoryPostgresStore:
         *,
         agent_id: str | None = None,
         scope: MemoryScope | None = None,
+        kind_filter: list[MemoryKind] | None = None,
         status: list[LifecycleStatus] | None = None,
+        lifetime: str = "all",
     ) -> int:
         """Count memory records matching filters.
 
         ``status``: matches ``list_records`` — when provided, only rows whose
         ``status`` column is in the list are counted. MTRNIX-314.
+        ``kind_filter``: matches ``list_records``. MTRNIX-275.
+        ``lifetime``: mirrors ``list_records`` lifetime filter. Default ``"all"``.
         """
         conditions = ["workspace_id = :workspace_id"]
         params: dict[str, Any] = {"workspace_id": workspace_id}
@@ -302,9 +348,17 @@ class MemoryPostgresStore:
         if scope is not None:
             conditions.append("scope = :scope")
             params["scope"] = scope.value
+        if kind_filter is not None:
+            conditions.append("kind = ANY(:kind_list)")
+            params["kind_list"] = [k.value for k in kind_filter]
         if status is not None:
             conditions.append("status = ANY(:status_list)")
             params["status_list"] = [s.value for s in status]
+        if lifetime == "persistent":
+            conditions.append("ttl_expires_at IS NULL")
+        elif lifetime == "session":
+            conditions.append("ttl_expires_at IS NOT NULL AND ttl_expires_at > now()")
+        # lifetime == "all" → no filter
         where = " AND ".join(conditions)
         async with self._engine.begin() as conn:
             result = await conn.execute(
@@ -312,6 +366,49 @@ class MemoryPostgresStore:
                 params,
             )
             return result.scalar() or 0
+
+    async def delete_session_records_past_grace(
+        self,
+        workspace_id: str,
+        *,
+        grace_cutoff: datetime,
+        limit: int = 1000,
+    ) -> int:
+        """Delete session records whose ttl_expires_at < grace_cutoff. Returns count.
+
+        Workspace-scoped DELETE … RETURNING id used so the count is authoritative.
+        LIMIT is enforced via a subquery (PG does not allow LIMIT directly on DELETE)
+        to keep batches bounded and avoid a single massive lock.
+
+        ``grace_cutoff`` is typically ``now() - timedelta(hours=grace_hours)`` computed
+        by the caller from Settings.  Persistent rows (ttl_expires_at IS NULL) are
+        never touched.
+        """
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text("""
+                    DELETE FROM memory_records
+                    WHERE id IN (
+                        SELECT id FROM memory_records
+                        WHERE workspace_id = :ws
+                          AND ttl_expires_at IS NOT NULL
+                          AND ttl_expires_at < :cutoff
+                        ORDER BY ttl_expires_at ASC
+                        LIMIT :limit
+                    )
+                    RETURNING id
+                """),
+                {"ws": workspace_id, "cutoff": grace_cutoff, "limit": limit},
+            )
+            rows = result.fetchall()
+        count = len(rows)
+        if count:
+            logger.info(
+                "memory_pg.session_gc.deleted",
+                workspace_id=workspace_id,
+                count=count,
+            )
+        return count
 
     async def list_workspaces(self) -> list[str]:
         """Return distinct ``workspace_id`` values present in ``memory_records``.
@@ -396,6 +493,7 @@ class MemoryPostgresStore:
         content: str | None = None,
         tags: list[str] | None = None,
         importance_score: float | None = None,
+        kind: MemoryKind | None = None,
     ) -> MemoryRecord | None:
         """Partial update of a memory record. Returns updated record or None.
 
@@ -415,6 +513,9 @@ class MemoryPostgresStore:
         if importance_score is not None:
             set_parts.append("importance_score = :importance_score")
             params["importance_score"] = importance_score
+        if kind is not None:
+            set_parts.append("kind = :kind")
+            params["kind"] = kind.value
 
         if not set_parts:
             return await self.get(workspace_id, record_id)
@@ -589,6 +690,99 @@ class MemoryPostgresStore:
         logger.info("memory_pg.reset", workspace_id=workspace_id, count=count)
         return count, ids
 
+    async def replace_for_agent(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        records: list[MemoryRecord],
+    ) -> tuple[list[str], int]:
+        """Atomically wipe and re-insert all memory rows for an agent (MTRNIX-272).
+
+        Used by snapshot restore. Runs DELETE + N×INSERT in a single
+        transaction so a failure mid-way leaves PG in its prior state.
+
+        ``records`` may carry lifecycle columns (``status``, ``freshness_score``,
+        …); all are written back verbatim so a restore preserves the snapshot's
+        lifecycle state, not just the basic fields.
+
+        Returns ``(deleted_ids, inserted_count)``.
+        """
+        for r in records:
+            if r.workspace_id != workspace_id or r.agent_id != agent_id:
+                msg = (
+                    "replace_for_agent: record workspace/agent mismatch "
+                    f"(record={r.id} ws={r.workspace_id!r} agent={r.agent_id!r}, "
+                    f"target ws={workspace_id!r} agent={agent_id!r})"
+                )
+                raise ValueError(msg)
+
+        async with self._engine.begin() as conn:
+            del_result = await conn.execute(
+                text(
+                    "DELETE FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "RETURNING id"
+                ),
+                {"ws": workspace_id, "agent_id": agent_id},
+            )
+            deleted_ids = [str(r[0]) for r in del_result.fetchall()]
+
+            if records:
+                await conn.execute(
+                    text(
+                        f"""
+                        INSERT INTO memory_records ({_RECORD_COLUMNS})
+                        VALUES (:id, :workspace_id, :agent_id, :scope, :kind,
+                                :source_type, :content, CAST(:tags AS jsonb),
+                                :importance_score, :ttl_expires_at, :content_hash,
+                                :session_id, CAST(:metadata AS jsonb),
+                                :created_at, :updated_at,
+                                :status, :freshness_score, :superseded_by,
+                                :valid_from, :valid_until,
+                                :evidence_count, :verification_state,
+                                :last_accessed_at, :content_simhash)
+                        """
+                    ),
+                    [
+                        {
+                            "id": r.id,
+                            "workspace_id": r.workspace_id,
+                            "agent_id": r.agent_id,
+                            "scope": r.scope.value,
+                            "kind": r.kind.value,
+                            "source_type": r.source_type,
+                            "content": r.content,
+                            "tags": json.dumps(r.tags),
+                            "importance_score": r.importance_score,
+                            "ttl_expires_at": r.ttl_expires_at,
+                            "content_hash": r.content_hash,
+                            "session_id": r.session_id,
+                            "metadata": json.dumps(r.metadata),
+                            "created_at": r.created_at,
+                            "updated_at": r.updated_at or r.created_at,
+                            "status": r.status.value,
+                            "freshness_score": r.freshness_score,
+                            "superseded_by": r.superseded_by,
+                            "valid_from": r.valid_from,
+                            "valid_until": r.valid_until,
+                            "evidence_count": r.evidence_count,
+                            "verification_state": r.verification_state,
+                            "last_accessed_at": r.last_accessed_at,
+                            "content_simhash": _to_pg_bigint(r.content_simhash),
+                        }
+                        for r in records
+                    ],
+                )
+
+        logger.info(
+            "memory_pg.replaced_for_agent",
+            workspace_id=workspace_id,
+            agent_id=agent_id,
+            deleted=len(deleted_ids),
+            inserted=len(records),
+        )
+        return deleted_ids, len(records)
+
     # ------------------------------------------------------------------
     # Dedup + TTL
     # ------------------------------------------------------------------
@@ -702,3 +896,301 @@ class MemoryPostgresStore:
             )
             rows = result.fetchall()
         return [_row_to_snapshot(r._mapping) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Health tracking (MTRNIX-277)
+    # ------------------------------------------------------------------
+
+    async def bulk_touch_last_accessed(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        record_ids: list[str],
+    ) -> int:
+        """Set last_accessed_at = NOW() for records matching workspace+agent.
+
+        Workspace+agent scoped — defence in depth so a stray id from a
+        different agent or workspace cannot be touched. Returns rowcount.
+
+        **Throttle predicate:** the UPDATE no-ops on rows already touched in
+        the last minute. Without this, a hot agent doing N searches/min over
+        K records each writes ``N*K`` UPDATEs/min — pure WAL/autovacuum churn
+        with no observability gain (1-min resolution is plenty for a 30-day
+        staleness window). Returned ``rowcount`` is therefore *touched-now*
+        rows, not *matched* rows.
+        """
+        if not record_ids:
+            return 0
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "UPDATE memory_records SET last_accessed_at = NOW() "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND id = ANY(:ids) "
+                    "AND ("
+                    "  last_accessed_at IS NULL "
+                    "  OR last_accessed_at < NOW() - INTERVAL '1 minute'"
+                    ")"
+                ),
+                {"ws": workspace_id, "agent_id": agent_id, "ids": list(record_ids)},
+            )
+            return result.rowcount or 0
+
+    async def count_by_status(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        statuses: list[LifecycleStatus],
+    ) -> int:
+        """Count records with the given statuses for a workspace+agent."""
+        if not statuses:
+            return 0
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = ANY(:statuses)"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "statuses": [s.value for s in statuses],
+                },
+            )
+            return int(result.scalar() or 0)
+
+    async def count_unused(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        *,
+        days: int,
+        statuses: list[LifecycleStatus],
+    ) -> int:
+        """Records not retrieved by search in ``days`` days.
+
+        Predicate: (last_accessed_at < cutoff) OR
+                   (last_accessed_at IS NULL AND created_at < cutoff)
+        """
+        if not statuses:
+            return 0
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = ANY(:statuses) "
+                    "AND ("
+                    "  last_accessed_at < (NOW() - make_interval(days => :days)) "
+                    "  OR ("
+                    "    last_accessed_at IS NULL "
+                    "    AND created_at < (NOW() - make_interval(days => :days))"
+                    "  )"
+                    ")"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "statuses": [s.value for s in statuses],
+                    "days": days,
+                },
+            )
+            return int(result.scalar() or 0)
+
+    async def source_distribution_active(
+        self,
+        workspace_id: str,
+        agent_id: str,
+    ) -> dict[str, int]:
+        """Return {source_type: count} for ACTIVE records."""
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT source_type, COUNT(*) AS cnt FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = :active "
+                    "GROUP BY source_type"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "active": LifecycleStatus.ACTIVE.value,
+                },
+            )
+            return {r[0]: int(r[1]) for r in result if r[0]}
+
+    async def count_created_since_active(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        *,
+        days: int,
+    ) -> int:
+        """Count ACTIVE records created in the last ``days`` days."""
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = :active "
+                    "AND created_at >= (NOW() - make_interval(days => :days))"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "active": LifecycleStatus.ACTIVE.value,
+                    "days": days,
+                },
+            )
+            return int(result.scalar() or 0)
+
+    async def growth_timeseries_active(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        *,
+        days: int,
+    ) -> list[tuple[date, int]]:
+        """Return ``[(day, count)]`` for ACTIVE records created in the last N days.
+
+        Days with zero creates are NOT in the result — the service zero-fills.
+        """
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT date_trunc('day', created_at)::date AS day, COUNT(*) AS cnt "
+                    "FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = :active "
+                    "AND created_at >= (NOW() - make_interval(days => :days)) "
+                    "GROUP BY day ORDER BY day"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "active": LifecycleStatus.ACTIVE.value,
+                    "days": days,
+                },
+            )
+            return [(r[0], int(r[1])) for r in result]
+
+    async def list_simhashes_active(
+        self,
+        workspace_id: str,
+        agent_id: str,
+    ) -> list[tuple[str, int]]:
+        """Return ``[(id, simhash)]`` for ACTIVE records with non-NULL simhash.
+
+        NULL-simhash rows are filtered out here; callers count them separately
+        via ``count_active_with_null_simhash``.
+        """
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT id, content_simhash FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = :active "
+                    "AND content_simhash IS NOT NULL"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "active": LifecycleStatus.ACTIVE.value,
+                },
+            )
+            return [(r[0], _from_pg_bigint(r[1])) for r in result]
+
+    async def count_active_with_null_simhash(
+        self,
+        workspace_id: str,
+        agent_id: str,
+    ) -> int:
+        """Count ACTIVE records whose ``content_simhash`` is NULL."""
+        async with self._engine.begin() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM memory_records "
+                    "WHERE workspace_id = :ws AND agent_id = :agent_id "
+                    "AND status = :active "
+                    "AND content_simhash IS NULL"
+                ),
+                {
+                    "ws": workspace_id,
+                    "agent_id": agent_id,
+                    "active": LifecycleStatus.ACTIVE.value,
+                },
+            )
+            return int(result.scalar() or 0)
+
+    async def iter_records_missing_simhash(
+        self,
+        workspace_id: str | None,
+        *,
+        batch_size: int = 500,
+        dry_run: bool = False,
+    ) -> AsyncIterator[list[tuple[str, str]]]:
+        """Stream batches of ``(id, content)`` for rows where ``content_simhash`` IS NULL.
+
+        ``workspace_id=None`` iterates across all workspaces.
+
+        ``dry_run`` controls offset semantics:
+          * ``False`` (default — real backfill): query stays at ``OFFSET 0``.
+            The caller updates the yielded rows, so they drop out of the
+            ``content_simhash IS NULL`` predicate before the next iteration.
+            Termination: the query returns an empty batch.
+          * ``True`` (dry-run scan, no writes): rows do NOT drop out, so the
+            offset is bumped by ``len(batch)`` to avoid yielding the same
+            rows forever.
+        """
+        offset = 0
+        while True:
+            async with self._engine.begin() as conn:
+                sql = (
+                    "SELECT id, content FROM memory_records "
+                    "WHERE content_simhash IS NULL "
+                    + ("AND workspace_id = :ws " if workspace_id is not None else "")
+                    + "ORDER BY id LIMIT :limit OFFSET :offset"
+                )
+                params: dict[str, Any] = {"limit": batch_size, "offset": offset}
+                if workspace_id is not None:
+                    params["ws"] = workspace_id
+                result = await conn.execute(text(sql), params)
+                batch = [(r[0], r[1]) for r in result]
+            if not batch:
+                return
+            yield batch
+            if dry_run:
+                offset += len(batch)
+
+    async def bulk_set_simhash(
+        self,
+        rows: list[tuple[str, int]],
+    ) -> int:
+        """Set ``content_simhash`` for the given ``(id, simhash)`` pairs.
+
+        Returns rowcount. Used only by the backfill script. Caller must have
+        already scoped by workspace via the ``iter_records_missing_simhash`` helper.
+        """
+        if not rows:
+            return 0
+        async with self._engine.begin() as conn:
+            # Use unnest to apply a per-row update in one statement. Explicit
+            # CAST is required because asyncpg infers array element type from
+            # the first values it sees — for `_to_pg_bigint` output a list
+            # mixing small positives and large negatives can be inferred as
+            # int4[] and overflow on the negative-large case.
+            result = await conn.execute(
+                text(
+                    "UPDATE memory_records mr "
+                    "SET content_simhash = u.simhash "
+                    "FROM (SELECT unnest(CAST(:ids AS text[])) AS id, "
+                    "unnest(CAST(:simhashes AS bigint[])) AS simhash) u "
+                    "WHERE mr.id = u.id AND mr.content_simhash IS NULL"
+                ),
+                {
+                    "ids": [r[0] for r in rows],
+                    "simhashes": [_to_pg_bigint(r[1]) for r in rows],
+                },
+            )
+            return result.rowcount or 0

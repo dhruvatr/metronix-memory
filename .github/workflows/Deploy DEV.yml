@@ -115,6 +115,23 @@ jobs:
               ls -la /usr/local/bin/.env*
             '"
             
+    - name: Checkout repo for compose file
+      uses: actions/checkout@v4
+
+    - name: Copy updated docker-compose.yml to dev server
+      run: |
+        scp -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            install/docker-compose.yml \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_DEV }}:/tmp/docker-compose.yml
+        ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_DEV }} \
+            "sudo cp /tmp/docker-compose.yml /usr/local/bin/docker-compose.yml && \
+             sudo chmod 644 /usr/local/bin/docker-compose.yml && \
+             echo '✅ docker-compose.yml updated' && \
+             rm -f /tmp/docker-compose.yml"
+
     - name: Deploy application
       run: |
         ssh -o StrictHostKeyChecking=no \

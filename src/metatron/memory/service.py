@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 import structlog
+from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
+from metatron.core.config import get_settings
 from metatron.core.events import (
     FRESHNESS_REVIEW_RESOLVED,
     MEMORY_DELETED,
@@ -32,15 +35,18 @@ from metatron.core.exceptions import MemoryNotFoundError
 from metatron.core.models import (
     LifecycleStatus,
     MachineEvent,
+    MemoryKind,
     MemoryRecord,
     MemoryScope,
     MemorySearchResult,
     ReviewEntry,
 )
+from metatron.ingestion.dedup import simhash as _simhash
 from metatron.memory.freshness.producer import enqueue_if_enabled
 from metatron.memory.resolution import ReviewResolution, parse_action
 from metatron.storage.memory_graph import (
     delete_memory_node,
+    get_memory_neighborhood,
     save_memory_to_graph,
 )
 
@@ -163,20 +169,43 @@ class MemoryService:
         *,
         ttl_seconds: int | None = None,
     ) -> MemoryRecord:
-        """Store a session memory record. Write-through: Redis + Neo4j.
+        """Store a session memory record.
 
-        Redis is the primary store. Neo4j write is best-effort —
-        a failure is logged but does not block the cache operation.
+        Write-through: Redis (primary) + PG (best-effort) + Neo4j.
+
+        Redis is the primary store — its failure propagates.  PG is a best-effort
+        dual-write so session rows appear in ``GET /knowledge/records?lifetime=session``;
+        a PG failure is logged at WARNING and never blocks the Redis path (D-P2-03).
+        Neo4j write is also best-effort.
+
+        NOTE: this method may mutate the input ``record`` in-place to fill
+        ``session_id`` and ``ttl_expires_at`` when not already set.  Callers
+        must not rely on the input record being unchanged after this call.
         """
         self._check_workspace(workspace_id)
+
+        # Resolve TTL once so both Redis and PG share the same expiry value.
+        resolved_ttl = (
+            ttl_seconds if ttl_seconds is not None else get_settings().memory_session_ttl
+        )
+
+        # Populate session_id and ttl_expires_at on the record *before* the
+        # Redis write so the stored object is complete.  Only set when not
+        # already populated by the caller (idempotent / test-friendly).
+        if record.session_id is None:
+            record.session_id = session_id
+        if record.ttl_expires_at is None:
+            record.ttl_expires_at = datetime.now(UTC) + timedelta(seconds=resolved_ttl)
+
         result = await self._redis.cache(
             workspace_id,
             session_id,
             record,
-            ttl_seconds=ttl_seconds,
+            ttl_seconds=resolved_ttl,
         )
 
         await self._write_graph_best_effort(record)
+        await self._dual_write_session_to_pg_best_effort(record)
         await enqueue_if_enabled(workspace_id, result.id, "knowledge_changed")
         await self._emit_bus(
             MEMORY_STORED,
@@ -190,6 +219,24 @@ class MemoryService:
             },
         )
         return result
+
+    async def _dual_write_session_to_pg_best_effort(self, record: MemoryRecord) -> None:
+        """Best-effort PG write for session records.
+
+        Swallows any exception — PG failure must not block the Redis path.
+        Logs ``memory.session.pg_write_failed`` so operators can grep.
+        """
+        try:
+            await self._pg.save(record)
+        except Exception:
+            logger.warning(
+                "memory.session.pg_write_failed",
+                record_id=record.id,
+                workspace_id=record.workspace_id,
+                agent_id=record.agent_id,
+                session_id=record.session_id,
+                exc_info=True,
+            )
 
     async def get_session(
         self,
@@ -270,6 +317,10 @@ class MemoryService:
             )
             return existing
 
+        # Compute SimHash for near-duplicate health tracking (MTRNIX-277).
+        # Done after the dedup-hit check so rejected duplicates do not waste time.
+        record.content_simhash = _simhash(record.content)
+
         await self._pg.save(record)
         await self._qdrant.upsert(record)
         await self._write_graph_best_effort(record)
@@ -284,6 +335,7 @@ class MemoryService:
                 "source_type": record.source_type,
                 "content_hash": record.content_hash,
                 "session_id": record.session_id,
+                "kind": record.kind.value,
             },
         )
         return record
@@ -330,6 +382,7 @@ class MemoryService:
                     "agent_id": existing.agent_id,
                     "record_id": record_id,
                     "session_id": existing.session_id,
+                    "kind": existing.kind.value,
                 },
             )
         return True
@@ -340,17 +393,54 @@ class MemoryService:
         *,
         agent_id: str | None = None,
         scope: MemoryScope | None = None,
+        kind_filter: list[MemoryKind] | None = None,
+        status: list[LifecycleStatus] | None = None,
+        lifetime: str = "all",
         limit: int = 100,
         offset: int = 0,
     ) -> list[MemoryRecord]:
-        """List records from PG with optional filters."""
+        """List records from PG with optional filters.
+
+        ``status`` is forwarded to the PG store which applies a ``status =
+        ANY(:status_list)`` WHERE clause when provided (MTRNIX-324).
+        ``kind_filter`` is forwarded for kind-based filtering (MTRNIX-275).
+        ``lifetime`` forwards to the PG store for session/persistent filtering
+        (phase-2 memory-scopes). Default ``"all"`` keeps all existing callers
+        unaffected; the route layer enforces ``"persistent"`` as the user-facing
+        default (D-P2-08).
+        ``None`` means no filter — all values are returned.
+        """
         self._check_workspace(workspace_id)
         return await self._pg.list_records(
             workspace_id,
             agent_id=agent_id,
             scope=scope,
+            kind_filter=kind_filter,
+            status=status,
+            lifetime=lifetime,
             limit=limit,
             offset=offset,
+        )
+
+    async def list_preferences(
+        self,
+        workspace_id: str,
+        agent_id: str,
+    ) -> list[MemoryRecord]:
+        """Return all active preference+pinned records for an agent.
+
+        Always-on context for the assembler: these records are injected
+        into the agent prompt without retrieval. Excludes ARCHIVED and
+        SUPERSEDED records — stale preferences must not appear in the
+        assembled prompt (MTRNIX-275).
+        """
+        self._check_workspace(workspace_id)
+        return await self._pg.list_records(
+            workspace_id,
+            agent_id=agent_id,
+            kind_filter=[MemoryKind.PREFERENCE, MemoryKind.PINNED],
+            status=[LifecycleStatus.ACTIVE, LifecycleStatus.CANDIDATE],
+            limit=1000,
         )
 
     async def reset(
@@ -481,6 +571,7 @@ class MemoryService:
         session_id: str | None = None,
         top_k: int = 5,
         status_filter: list[LifecycleStatus] | None = None,
+        kind_filter: list[MemoryKind] | None = None,
     ) -> list[MemorySearchResult]:
         self._check_workspace(workspace_id)
         if self._search is None:
@@ -494,7 +585,89 @@ class MemoryService:
             session_id=session_id,
             top_k=top_k,
             status_filter=status_filter,
+            kind_filter=kind_filter,
         )
+
+    # ------------------------------------------------------------------
+    # Memory graph neighbourhood (MTRNIX-324)
+    # ------------------------------------------------------------------
+
+    async def get_graph_neighborhood(
+        self,
+        workspace_id: str,
+        seed_record_id: str,
+        *,
+        depth: int = 1,
+    ) -> tuple[list[MemoryRecord], list[dict[str, Any]]]:
+        """Return the (depth)-hop neighbourhood around a memory record.
+
+        Delegates to the Neo4j ``get_memory_neighborhood`` helper (via
+        ``asyncio.to_thread``). Falls back gracefully when Neo4j is down:
+        returns the seed record from PG (when it exists) and an empty edge
+        list.
+
+        Always validates:
+          * ``workspace_id`` matches the service's bound workspace.
+          * ``0 < depth <= 3`` (prevents fan-out explosions in large graphs).
+
+        Returns a ``(records, edges)`` tuple where:
+          * ``records`` — :class:`MemoryRecord` instances hydrated from PG.
+            Records returned by Neo4j but absent in PG are dropped (cross-
+            workspace defence-in-depth; PG is the source of truth).
+          * ``edges`` — raw edge dicts from the storage helper
+            (``{source, target, type, metadata?}``).
+
+        ``depth`` controls direct memory-to-memory traversal (``LINKED_TO``
+        chains). Bridge edges via Agent / Entity / Session / Document are
+        always returned at exactly 2 hops from the seed regardless of
+        ``depth`` — Phase 1 semantics; deeper bridge expansion is a follow-up.
+
+        Raises:
+          ``ValueError`` — workspace mismatch or invalid depth.
+        """
+        self._check_workspace(workspace_id)
+        if not (0 < depth <= 3):
+            msg = f"depth must be between 1 and 3 inclusive, got {depth}"
+            raise ValueError(msg)
+
+        record_ids: list[str] = [seed_record_id]
+        edges: list[dict[str, Any]] = []
+
+        try:
+            result = await asyncio.to_thread(
+                get_memory_neighborhood,
+                workspace_id,
+                seed_record_id,
+                depth,
+            )
+            record_ids = result["record_ids"]
+            edges = result["edges"]
+        except (ServiceUnavailable, SessionExpired, ConnectionError, OSError):
+            logger.warning(
+                "memory_service.neighborhood.neo4j_unavailable",
+                workspace_id=workspace_id,
+                seed_record_id=seed_record_id,
+                depth=depth,
+                exc_info=True,
+            )
+            # Fall back: only the seed, no edges
+
+        # De-dup while preserving seed priority (seed first).
+        seen: set[str] = set()
+        unique_ids: list[str] = []
+        for rid in [seed_record_id, *record_ids]:
+            if rid not in seen:
+                seen.add(rid)
+                unique_ids.append(rid)
+
+        # Hydrate from PG — drops ids not in this workspace (cross-ws defence).
+        records: list[MemoryRecord] = []
+        for rid in unique_ids:
+            rec = await self._pg.get(workspace_id, rid)
+            if rec is not None:
+                records.append(rec)
+
+        return records, edges
 
     # ------------------------------------------------------------------
     # Freshness review queue (MTRNIX-314)

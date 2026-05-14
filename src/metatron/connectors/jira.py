@@ -12,6 +12,7 @@ from datetime import datetime
 
 import structlog
 
+from metatron.connectors._filter import is_strictly_after
 from metatron.connectors.jira_processing import (
     jira_issue_to_markdown,
     process_jira_issue,
@@ -62,6 +63,10 @@ class JiraConnector(ConnectorInterface):
         project_key = self._config.get("project_key", "")
         documents: list[Document] = []
 
+        # JQL's date filter only supports minute precision ("yyyy-MM-dd HH:mm"),
+        # so a cursor at 22:09:40 formatted as "22:09" still matches docs from
+        # 22:09:00-22:09:59. We use the minute filter as a coarse server-side
+        # narrowing and then do a precise post-filter below (MTRNIX-332).
         jql = f'project="{project_key}"' if project_key else "ORDER BY updated DESC"
         if since:
             since_str = since.strftime("%Y-%m-%d %H:%M")
@@ -90,6 +95,16 @@ class JiraConnector(ConnectorInterface):
                 break
 
             for raw_issue in issues:
+                # Precise post-filter (MTRNIX-332). JQL only narrows to the
+                # minute; here we drop anything whose actual ``updated`` is
+                # <= the cursor at sub-minute resolution. We do this BEFORE
+                # the (expensive) ``_issue_to_document`` parse — ADF extract
+                # + changelog walk + comments parsing is the bulk of the
+                # work, no point doing it just to throw the doc away.
+                if since is not None and not is_strictly_after(
+                    (raw_issue.get("fields") or {}).get("updated"), since
+                ):
+                    continue
                 try:
                     doc = self._issue_to_document(raw_issue, workspace_id)
                     documents.append(doc)
@@ -106,6 +121,10 @@ class JiraConnector(ConnectorInterface):
 
         logger.info("jira.fetch.done", issues=len(documents))
         return documents
+
+    # NOTE: sub-minute cursor filtering for the JQL minute-precision trap
+    # lives in ``metatron.connectors._filter.is_strictly_after`` and is
+    # applied directly in ``fetch()`` above — no per-connector parser.
 
     def _issue_to_document(self, raw_issue: dict, workspace_id: str) -> Document:
         structured = process_jira_issue(raw_issue)

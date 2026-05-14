@@ -7,6 +7,7 @@ post-filter, normalizes qdrant scores, and blends into a single ranking.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -15,6 +16,7 @@ import structlog
 from metatron.core.config import get_settings
 from metatron.core.models import (
     LifecycleStatus,
+    MemoryKind,
     MemoryRecord,
     MemoryScope,
     MemorySearchResult,
@@ -88,6 +90,12 @@ class MemorySearchService:
         # Legacy construction paths (no pg_store) keep working — graph-leg
         # status filtering is skipped, matching pre-ticket behaviour.
         self._pg_store = pg_store
+        # Strong references to in-flight fire-and-forget tasks (MTRNIX-277).
+        # asyncio only keeps weak refs to tasks created via create_task — without
+        # this set the GC could reap a pending touch task mid-await and Python
+        # would log "Task was destroyed but it is pending!" silently. The
+        # done-callback removes finished tasks so the set never grows unbounded.
+        self._touch_tasks: set[asyncio.Task[None]] = set()
 
     async def hybrid_search(
         self,
@@ -100,11 +108,13 @@ class MemorySearchService:
         session_id: str | None = None,
         top_k: int = 5,
         status_filter: list[LifecycleStatus] | None = None,
+        kind_filter: list[MemoryKind] | None = None,
     ) -> list[MemorySearchResult]:
         weights = self._weights
         pool = max(1, top_k * weights.top_k_multiplier)
         scope_value = scope.value if scope is not None else None
         status_exclude = _compute_exclude_set(status_filter)
+        kind_values = [k.value for k in kind_filter] if kind_filter is not None else None
 
         qdrant_default: list[dict[str, Any]] = []
         qdrant_coro: Awaitable[list[dict[str, Any]]] = _safe_gather_leg(
@@ -114,6 +124,7 @@ class MemorySearchService:
                 scope=scope_value,
                 top_k=pool,
                 status_exclude=status_exclude,
+                kind_filter=kind_values,
             ),
             default=qdrant_default,
             leg="qdrant",
@@ -239,6 +250,18 @@ class MemorySearchService:
         for i, r in enumerate(ranked):
             r.rank = i + 1
 
+        # Fire-and-forget: update last_accessed_at for returned records (MTRNIX-277).
+        if ranked and agent_id is not None and self._pg_store is not None:
+            record_ids = [r.record.id for r in ranked]
+            with contextlib.suppress(RuntimeError):
+                # RuntimeError is raised when there is no running event loop
+                # (e.g. in some test environments). Suppress to keep behaviour safe.
+                task = asyncio.create_task(
+                    self._safe_bulk_touch(workspace_id, agent_id, record_ids)
+                )
+                self._touch_tasks.add(task)
+                task.add_done_callback(self._touch_tasks.discard)
+
         logger.debug(
             "memory_search.completed",
             workspace_id=workspace_id,
@@ -250,6 +273,28 @@ class MemorySearchService:
             returned=len(ranked),
         )
         return ranked
+
+    async def _safe_bulk_touch(
+        self,
+        workspace_id: str,
+        agent_id: str,
+        record_ids: list[str],
+    ) -> None:
+        """Fire-and-forget update of last_accessed_at; never raises."""
+        try:
+            await self._pg_store.bulk_touch_last_accessed(  # type: ignore[union-attr]
+                workspace_id,
+                agent_id,
+                record_ids,
+            )
+        except Exception:
+            logger.warning(
+                "memory_search.touch_failed",
+                workspace_id=workspace_id,
+                agent_id=agent_id,
+                count=len(record_ids),
+                exc_info=True,
+            )
 
 
 async def _noop_list() -> list[Any]:
