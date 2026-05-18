@@ -114,6 +114,7 @@ class TestLLMRetry:
         result = chat_completion_with_retry(
             messages=[{"role": "user", "content": "hi"}],
             max_retries=3,
+            call_site="test",
         )
         assert result == "success"
         assert mock_cc.call_count == 2
@@ -131,6 +132,7 @@ class TestLLMRetry:
             chat_completion_with_retry(
                 messages=[{"role": "user", "content": "hi"}],
                 max_retries=3,
+                call_site="test",
             )
         assert mock_cc.call_count == 3
         assert mock_sleep.call_count == 2  # sleeps between attempts, not after last
@@ -142,6 +144,7 @@ class TestLLMRetry:
             chat_completion_with_retry(
                 messages=[{"role": "user", "content": "hi"}],
                 max_retries=3,
+                call_site="test",
             )
         assert mock_cc.call_count == 1
 
@@ -151,6 +154,7 @@ class TestLLMRetry:
         result = chat_completion_with_retry(
             messages=[{"role": "user", "content": "hi"}],
             max_retries=3,
+            call_site="test",
         )
         assert result == "instant"
         assert mock_cc.call_count == 1

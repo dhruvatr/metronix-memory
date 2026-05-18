@@ -10,6 +10,7 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from uuid import uuid4
 
 import structlog
 
@@ -22,6 +23,7 @@ from metatron.core.models import Chunk, Document, SyncResult
 from metatron.ingestion.chunking import root_child_chunk, simple_chunk
 from metatron.ingestion.dedup import DeduplicationIndex, simhash
 from metatron.ingestion.processors.dates import extract_date_from_text
+from metatron.llm.telemetry import set_telemetry_context
 
 logger = structlog.get_logger()
 
@@ -672,10 +674,15 @@ def _extract_graphs_parallel(
 
     def _write_graph(doc: Document, ws_id: str) -> str:
         """Write one document to graph, return source_id on success."""
-        if doc.source_type == "jira":
-            _write_jira_to_graph(doc, ws_id)
-        else:
-            _write_doc_to_graph(doc, ws_id)
+        with set_telemetry_context(
+            workspace_id=ws_id,
+            source="ingestion",
+            correlation_id=uuid4(),
+        ):
+            if doc.source_type == "jira":
+                _write_jira_to_graph(doc, ws_id)
+            else:
+                _write_doc_to_graph(doc, ws_id)
         return doc.source_id
 
     failed: list[tuple[Document, str]] = []
@@ -747,51 +754,62 @@ def _write_graph_strict(
 
     Used by process_unsynced_graphs() where we need to know if the write
     actually succeeded before marking graph_synced=true.
+
+    Wrapped in ``set_telemetry_context(source="ingestion", ...)`` so the
+    NER-extraction LLM call inside ``write_doc_graph`` / ``write_jira_graph``
+    is tagged correctly in ``llm_generation_log``. The other ingestion
+    entry-point (inline ``_write_graph`` inside ``_extract_graphs_parallel``)
+    has its own wrap.
     """
-    if is_jira:
-        from metatron.storage.graph_jira import write_jira_graph
+    with set_telemetry_context(
+        workspace_id=workspace_id,
+        source="ingestion",
+        correlation_id=uuid4(),
+    ):
+        if is_jira:
+            from metatron.storage.graph_jira import write_jira_graph
 
-        jira_data = {
-            "key": doc.source_id,
-            "summary": doc.title,
-            "status": doc.metadata.get("status", ""),
-            "assignee": doc.metadata.get("assignee"),
-            "reporter": doc.metadata.get("reporter"),
-            "issuetype": doc.metadata.get("issuetype"),
-            "priority": doc.metadata.get("priority"),
-            "description": doc.content[:2000],
-            "created": doc.metadata.get("created_at_str")
-            or (doc.created_at.isoformat() if doc.created_at else None),
-            "updated": doc.metadata.get("updated_at_str")
-            or (doc.updated_at.isoformat() if doc.updated_at else None),
-            "resolved_at": doc.metadata.get("resolved_at_str"),
-        }
-        write_jira_graph(
-            jira_data,
-            doc.content,
-            workspace_id=workspace_id,
-            doc_label=doc.source_id,
-            metadata=doc.metadata,
-        )
-    else:
-        from metatron.storage.neo4j_graph import write_doc_graph
+            jira_data = {
+                "key": doc.source_id,
+                "summary": doc.title,
+                "status": doc.metadata.get("status", ""),
+                "assignee": doc.metadata.get("assignee"),
+                "reporter": doc.metadata.get("reporter"),
+                "issuetype": doc.metadata.get("issuetype"),
+                "priority": doc.metadata.get("priority"),
+                "description": doc.content[:2000],
+                "created": doc.metadata.get("created_at_str")
+                or (doc.created_at.isoformat() if doc.created_at else None),
+                "updated": doc.metadata.get("updated_at_str")
+                or (doc.updated_at.isoformat() if doc.updated_at else None),
+                "resolved_at": doc.metadata.get("resolved_at_str"),
+            }
+            write_jira_graph(
+                jira_data,
+                doc.content,
+                workspace_id=workspace_id,
+                doc_label=doc.source_id,
+                metadata=doc.metadata,
+            )
+        else:
+            from metatron.storage.neo4j_graph import write_doc_graph
 
-        doc_date = (
-            doc.updated_at.isoformat()
-            if doc.updated_at
-            else doc.created_at.isoformat()
-            if doc.created_at
-            else None
-        )
-        write_doc_graph(
-            text=doc.content[:8000],
-            file_name=doc.title or doc.source_id or "untitled",
-            user_id=doc.author or "system",
-            workspace_id=workspace_id,
-            doc_label=doc.source_id,
-            doc_date=doc_date,
-            metadata=doc.metadata,
-        )
+            doc_date = (
+                doc.updated_at.isoformat()
+                if doc.updated_at
+                else doc.created_at.isoformat()
+                if doc.created_at
+                else None
+            )
+            write_doc_graph(
+                text=doc.content[:8000],
+                file_name=doc.title or doc.source_id or "untitled",
+                user_id=doc.author or "system",
+                workspace_id=workspace_id,
+                doc_label=doc.source_id,
+                doc_date=doc_date,
+                metadata=doc.metadata,
+            )
 
 
 def _delete_graph_node(doc_label: str, workspace_id: str) -> None:

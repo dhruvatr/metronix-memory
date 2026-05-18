@@ -17,6 +17,7 @@ import os
 import time
 from functools import wraps
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import structlog
 from mcp.server import FastMCP
@@ -24,6 +25,7 @@ from mcp.server.streamable_http import TransportSecuritySettings
 
 from metatron.activity.context import bind_agent_id, current_agent_id
 from metatron.core.events import ERROR_OCCURRED, TOOL_CALLED
+from metatron.llm.telemetry import set_telemetry_context
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -173,7 +175,16 @@ def _wrap_tool_with_activity(
 
         error: BaseException | None = None
         try:
-            return await handler(*args, **kwargs)
+            # Telemetry context wraps the handler — `with` ensures correct
+            # __exit__ semantics even if anyone later adds exception-aware
+            # cleanup inside set_telemetry_context.
+            with set_telemetry_context(
+                workspace_id=workspace_id or None,
+                agent_id=agent_id,
+                source="mcp",
+                correlation_id=uuid4(),
+            ):
+                return await handler(*args, **kwargs)
         except BaseException as exc:  # noqa: BLE001 — emit then re-raise
             error = exc
             raise
@@ -229,9 +240,7 @@ def _tool_with_activity(*decorator_args: Any, **decorator_kwargs: Any) -> Any:
         # ``_ACTIVITY_BUS_GETTER`` directly would freeze the no-op default into
         # every wrapper closure. Re-reading via globals each invocation lets
         # ``set_activity_bus_getter`` from create_app() take effect.
-        wrapped = _wrap_tool_with_activity(
-            name, func, bus_getter=lambda: _ACTIVITY_BUS_GETTER()
-        )
+        wrapped = _wrap_tool_with_activity(name, func, bus_getter=lambda: _ACTIVITY_BUS_GETTER())
         wrapped.__name__ = func.__name__
         wrapped.__qualname__ = getattr(func, "__qualname__", func.__name__)
         return registrar(wrapped)

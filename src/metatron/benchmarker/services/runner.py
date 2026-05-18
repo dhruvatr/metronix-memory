@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import time
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import structlog
 
 from metatron.benchmarker.schemas.benchmark import BenchmarkQuestion
 from metatron.benchmarker.schemas.test_context import TestContext
 from metatron.benchmarker.schemas.test_result import MetricsResult
+from metatron.llm.telemetry import set_telemetry_context
 from metatron.retrieval.search import hybrid_search_and_answer
 
 if TYPE_CHECKING:
@@ -89,11 +91,16 @@ class TestRunner:
         trace: Any = None
         start = time.time()
         try:
-            trace = await hybrid_search_and_answer(
-                query=question.text,
+            with set_telemetry_context(
                 workspace_id=workspace_id,
-                return_trace=True,
-            )
+                source="benchmark",
+                correlation_id=uuid4(),
+            ):
+                trace = await hybrid_search_and_answer(
+                    query=question.text,
+                    workspace_id=workspace_id,
+                    return_trace=True,
+                )
             latency_ms = (time.time() - start) * 1000
 
             answer = trace["answer"] if isinstance(trace, dict) else str(trace)

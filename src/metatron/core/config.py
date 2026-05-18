@@ -345,6 +345,23 @@ class Settings(BaseSettings):
         alias="METATRON_ACTIVITY_LOG_ENABLED",
     )
 
+    # --- LLM generation telemetry (MTRNIX-336) ---
+    llm_telemetry_enabled: bool = Field(
+        default=True,
+        alias="METATRON_LLM_TELEMETRY_ENABLED",
+        description="Master kill-switch. false → all telemetry is a no-op.",
+    )
+    llm_telemetry_retention_days: int = Field(
+        default=0,
+        alias="METATRON_LLM_TELEMETRY_RETENTION_DAYS",
+        description="Placeholder. 0 = infinite. No cleanup worker in this ticket.",
+    )
+    llm_telemetry_opt_out_cache_ttl_seconds: int = Field(
+        default=60,
+        alias="METATRON_LLM_TELEMETRY_OPT_OUT_CACHE_TTL_SECONDS",
+        description="TTL for workspace opt-out flag cache.",
+    )
+
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS_ORIGINS comma-separated string into a list."""

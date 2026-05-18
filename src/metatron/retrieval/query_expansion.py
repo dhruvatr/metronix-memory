@@ -95,6 +95,7 @@ def expand_query(query: str, timeout: int | None = None) -> str:
             temperature=0.1,
             max_tokens=300,
             timeout=timeout,
+            call_site="query_expansion",
         )
         expanded = expanded.strip().strip('"').strip("'")
 
@@ -158,6 +159,7 @@ def generate_hypothetical_document(query: str, timeout: int = 8) -> str | None:
             temperature=0.3,
             max_tokens=200,
             timeout=timeout,
+            call_site="hyde",
         )
         text = text.strip()
         return text if text else None

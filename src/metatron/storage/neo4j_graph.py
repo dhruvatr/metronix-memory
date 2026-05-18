@@ -144,7 +144,8 @@ def graph_retry(max_attempts: int = 3):
 
 def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
     """Extract entities and relationships from text via LLM."""
-    if len(text) > max_text_length:
+    text_truncated = len(text) > max_text_length
+    if text_truncated:
         text = text[:max_text_length] + "..."
         logger.warning("graph.extract.truncated", max_len=max_text_length)
 
@@ -166,6 +167,18 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
         "- Keep names under 50 characters\n\n"
         f'Text:\n\n"""{text}"""'
     )
+
+    # Push NER-specific metadata onto the telemetry context so emit_log can
+    # include it in the ner_extraction row's metadata field. add_extra_metadata
+    # merges instead of overwriting, so adjacent callers in the same scope keep
+    # their keys (e.g. ingestion-level doc_label).
+    try:
+        from metatron.llm.telemetry import add_extra_metadata
+
+        add_extra_metadata(text_truncated=text_truncated)
+    except Exception:
+        pass  # telemetry is best-effort; never block the NER path
+
     content = ""
     for attempt in range(3):
         try:
@@ -183,6 +196,7 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
                 temperature=0.1,
                 json_mode=True,
                 timeout=120,
+                call_site="ner_extraction",
             )
             break
         except Exception as e:

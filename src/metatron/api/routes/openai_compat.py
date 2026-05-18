@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
+from metatron.llm.telemetry import set_telemetry_context
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
@@ -347,23 +349,29 @@ async def _stream_response(
     yield _chunk({"role": "assistant"})
 
     # Run search pipeline
-    try:
-        from metatron.retrieval.search import hybrid_search_and_answer
+    with set_telemetry_context(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source="oai_compat",
+        correlation_id=uuid4(),
+    ):
+        try:
+            from metatron.retrieval.search import hybrid_search_and_answer
 
-        answer = await hybrid_search_and_answer(
-            query=composite_query,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            intent_query=user_message,
-            plugin_manager=plugin_manager,
-            source="oai_compat",
-        )
-    except Exception as exc:
-        logger.error("openai_compat.stream.error", error=str(exc), exc_info=True)
-        yield _chunk({"content": "An error occurred while processing your request."})
-        yield _chunk({}, "stop")
-        yield "data: [DONE]\n\n"
-        return
+            answer = await hybrid_search_and_answer(
+                query=composite_query,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                intent_query=user_message,
+                plugin_manager=plugin_manager,
+                source="oai_compat",
+            )
+        except Exception as exc:
+            logger.error("openai_compat.stream.error", error=str(exc), exc_info=True)
+            yield _chunk({"content": "An error occurred while processing your request."})
+            yield _chunk({}, "stop")
+            yield "data: [DONE]\n\n"
+            return
 
     # Parse sources and convert to markdown
     body, sources = extract_sources_section(answer)
@@ -436,20 +444,26 @@ async def chat_completions(req: ChatCompletionRequest, request: Request):
         )
 
     # Non-streaming path
-    try:
-        from metatron.retrieval.search import hybrid_search_and_answer
+    with set_telemetry_context(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source="oai_compat",
+        correlation_id=uuid4(),
+    ):
+        try:
+            from metatron.retrieval.search import hybrid_search_and_answer
 
-        answer = await hybrid_search_and_answer(
-            query=composite_query,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            intent_query=user_message,
-            plugin_manager=plugin_manager,
-            source="oai_compat",
-        )
-    except Exception as exc:
-        logger.error("openai_compat.search_error", error=str(exc), exc_info=True)
-        return _openai_error(500, "Internal error", "server_error")
+            answer = await hybrid_search_and_answer(
+                query=composite_query,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                intent_query=user_message,
+                plugin_manager=plugin_manager,
+                source="oai_compat",
+            )
+        except Exception as exc:
+            logger.error("openai_compat.search_error", error=str(exc), exc_info=True)
+            return _openai_error(500, "Internal error", "server_error")
 
     # Convert sources to markdown
     from metatron.api.routes.chat import extract_sources_section

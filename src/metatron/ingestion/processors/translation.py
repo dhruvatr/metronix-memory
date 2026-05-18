@@ -48,6 +48,7 @@ def translate_to_english(text: str) -> str:  # TODO: async migration
             temperature=0.1,
             max_tokens=4000,
             timeout=60,
+            call_site="translation_to_english",
         )
         return result.strip()
     except Exception:
@@ -77,6 +78,7 @@ def translate_to_russian(text: str) -> str:  # TODO: async migration
             temperature=0.1,
             max_tokens=200,
             timeout=10,
+            call_site="translation_to_russian",
         )
         return result.strip()
     except Exception:

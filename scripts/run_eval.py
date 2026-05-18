@@ -59,11 +59,14 @@ if "benchmark_qed" not in sys.modules:
     ]:
         sys.modules[_name] = _mock
 
+from uuid import uuid4
+
 from metatron.benchmarker.services.eval_loader import (
     DEFAULT_TESTSET_PATH,
     load_eval_testset_from_path,
 )
 from metatron.benchmarker.services.metrics.retrieval import RetrievalMetrics
+from metatron.llm.telemetry import set_telemetry_context
 from metatron.retrieval.search import hybrid_search_and_answer
 from metatron.storage.qdrant import clear_store_cache
 
@@ -116,14 +119,19 @@ async def run_eval(
     if positive_queries:
         print("POSITIVE (should find relevant docs):")
     for q in positive_queries:
-        trace = await hybrid_search_and_answer(
-            query=q.text,
-            user_id=workspace,
-            k=k,
-            workspace_id=None,
-            intent_query=None,
-            return_trace=True,
-        )
+        with set_telemetry_context(
+            workspace_id=workspace,
+            source="eval",
+            correlation_id=uuid4(),
+        ):
+            trace = await hybrid_search_and_answer(
+                query=q.text,
+                user_id=workspace,
+                k=k,
+                workspace_id=None,
+                intent_query=None,
+                return_trace=True,
+            )
         retrieved = trace.get("retrieved_doc_labels", []) if isinstance(trace, dict) else []
         retrieved = list(dict.fromkeys(retrieved))  # deduplicate preserving order
         result = rm.compute(retrieved, q.expected_doc_labels, k=k)
@@ -153,14 +161,19 @@ async def run_eval(
     if negative_queries:
         print("\nNEGATIVE (should NOT find relevant docs):")
     for q in negative_queries:
-        trace = await hybrid_search_and_answer(
-            query=q.text,
-            user_id=workspace,
-            k=k,
-            workspace_id=None,
-            intent_query=None,
-            return_trace=True,
-        )
+        with set_telemetry_context(
+            workspace_id=workspace,
+            source="eval",
+            correlation_id=uuid4(),
+        ):
+            trace = await hybrid_search_and_answer(
+                query=q.text,
+                user_id=workspace,
+                k=k,
+                workspace_id=None,
+                intent_query=None,
+                return_trace=True,
+            )
         retrieved = trace.get("retrieved_doc_labels", []) if isinstance(trace, dict) else []
         retrieved = list(dict.fromkeys(retrieved))  # deduplicate preserving order
         n_retrieved = len(retrieved)
