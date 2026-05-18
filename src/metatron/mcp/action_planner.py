@@ -212,6 +212,7 @@ class ActionPlanner:
                 ],
                 temperature=0.1,
                 timeout=30,
+                call_site="mcp_action_planner",
             )
         except Exception as e:
             logger.error("action.planner.llm_error", error=str(e))

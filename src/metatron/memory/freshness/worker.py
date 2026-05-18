@@ -44,6 +44,7 @@ import os
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import structlog
 
@@ -51,6 +52,7 @@ from metatron.core.config import get_settings
 from metatron.core.models import FreshnessJob, LifecycleStatus, MachineEvent
 from metatron.freshness import metrics
 from metatron.freshness.worker_id import build_worker_id
+from metatron.llm.telemetry import set_telemetry_context
 
 if TYPE_CHECKING:
     from metatron.freshness.coordination import CoordinationStore
@@ -339,70 +341,75 @@ class FreshnessWorker:
             return
 
         decision_action = "skipped_missing"
-        try:
-            await pipeline.linker.run(ws, target_id)
-            await pipeline.reconciler.run(ws, target_id)
-            await pipeline.monitor.run(ws, target_id)
-            await pipeline.curator.run(ws, target_id)
+        with set_telemetry_context(
+            workspace_id=ws,
+            source="freshness",
+            correlation_id=uuid4(),
+        ):
+            try:
+                await pipeline.linker.run(ws, target_id)
+                await pipeline.reconciler.run(ws, target_id)
+                await pipeline.monitor.run(ws, target_id)
+                await pipeline.curator.run(ws, target_id)
 
-            record = await pipeline.target.get(ws, target_id)
-            eligible_statuses = {
-                LifecycleStatus.ACTIVE,
-                LifecycleStatus.REVIEW_NEEDED,
-            }
-            if pipeline.target.supports_candidate_promotion:
-                eligible_statuses.add(LifecycleStatus.CANDIDATE)
-            if record is not None and record.status in eligible_statuses:
-                from metatron.freshness.apply_decision import apply_decision
+                record = await pipeline.target.get(ws, target_id)
+                eligible_statuses = {
+                    LifecycleStatus.ACTIVE,
+                    LifecycleStatus.REVIEW_NEEDED,
+                }
+                if pipeline.target.supports_candidate_promotion:
+                    eligible_statuses.add(LifecycleStatus.CANDIDATE)
+                if record is not None and record.status in eligible_statuses:
+                    from metatron.freshness.apply_decision import apply_decision
 
-                decision = await self._decision_engine.decide(
-                    content=record.content,
-                    workspace_id=ws,
-                    record_id=target_id,
-                )
-                metrics.decision_confidence.observe(decision.confidence)
-                settings = get_settings()
-                result = await apply_decision(
-                    workspace_id=ws,
-                    record=record,
-                    decision=decision,
-                    threshold=settings.freshness_decision_confidence_threshold,
-                    target=pipeline.target,
-                    freshness_store=self._freshness_pg,
-                )
-                decision_action = str(result.get("action") or decision.action)
+                    decision = await self._decision_engine.decide(
+                        content=record.content,
+                        workspace_id=ws,
+                        record_id=target_id,
+                    )
+                    metrics.decision_confidence.observe(decision.confidence)
+                    settings = get_settings()
+                    result = await apply_decision(
+                        workspace_id=ws,
+                        record=record,
+                        decision=decision,
+                        threshold=settings.freshness_decision_confidence_threshold,
+                        target=pipeline.target,
+                        freshness_store=self._freshness_pg,
+                    )
+                    decision_action = str(result.get("action") or decision.action)
 
-            metrics.jobs_total.labels(status="ok", workspace_id=ws).inc()
-        except Exception:
-            metrics.jobs_total.labels(status="error", workspace_id=ws).inc()
-            metrics.worker_errors.labels(stage="process").inc()
-            logger.error(
-                "freshness.worker.job_failed",
-                workspace_id=ws,
-                target_kind=target_kind,
-                target_id=target_id,
-                exc_info=True,
-            )
-            raise
-        finally:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            await self._freshness_pg.save_machine_event(
-                MachineEvent(
+                metrics.jobs_total.labels(status="ok", workspace_id=ws).inc()
+            except Exception:
+                metrics.jobs_total.labels(status="error", workspace_id=ws).inc()
+                metrics.worker_errors.labels(stage="process").inc()
+                logger.error(
+                    "freshness.worker.job_failed",
                     workspace_id=ws,
-                    event_type="freshness_job_processed",
                     target_kind=target_kind,
                     target_id=target_id,
-                    payload={
-                        "event_type": job.event_type,
-                        "decision_action": decision_action,
-                        "duration_ms": duration_ms,
-                    },
+                    exc_info=True,
                 )
-            )
-            # LREM the job from the processing list (MTRNIX-316). Must
-            # happen whether we succeeded or raised so the orphan-reclaim
-            # pass does not re-process a job we already completed.
-            await self._coord.complete_job(self._worker_id, job)
+                raise
+            finally:
+                duration_ms = int((time.monotonic() - started) * 1000)
+                await self._freshness_pg.save_machine_event(
+                    MachineEvent(
+                        workspace_id=ws,
+                        event_type="freshness_job_processed",
+                        target_kind=target_kind,
+                        target_id=target_id,
+                        payload={
+                            "event_type": job.event_type,
+                            "decision_action": decision_action,
+                            "duration_ms": duration_ms,
+                        },
+                    )
+                )
+                # LREM the job from the processing list (MTRNIX-316). Must
+                # happen whether we succeeded or raised so the orphan-reclaim
+                # pass does not re-process a job we already completed.
+                await self._coord.complete_job(self._worker_id, job)
 
 
 def _inc_reclaim_error(env_label: str, stage: str) -> None:

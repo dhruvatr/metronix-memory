@@ -543,6 +543,7 @@ class AgentRouter:
                 temperature=0.7,
                 max_tokens=150,
                 timeout=15,
+                call_site="agent_smalltalk",
             )
             return answer.strip()
         except Exception as e:

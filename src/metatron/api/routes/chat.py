@@ -17,6 +17,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from metatron.api.dependencies import build_telemetry_context_cm
+
 logger = structlog.get_logger()
 
 router = APIRouter(tags=["chat"])
@@ -81,24 +83,25 @@ async def chat(req: ChatRequest, request: Request) -> ChatResponse:
 
     plugin_manager = getattr(request.app.state, "plugin_manager", None)
 
-    try:
-        from metatron.retrieval.search import hybrid_search_and_answer
+    with build_telemetry_context_cm(request, source="rest"):
+        try:
+            from metatron.retrieval.search import hybrid_search_and_answer
 
-        answer = await hybrid_search_and_answer(
-            query=composite_query,
-            user_id=req.user_id,
-            workspace_id=req.workspace_id,
-            k=req.top_k,
-            intent_query=req.question,
-            plugin_manager=plugin_manager,
-            source="rest",
-        )
-    except Exception as exc:
-        logger.error("chat.error", error=str(exc), exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Search failed. Please try again.",
-        ) from exc
+            answer = await hybrid_search_and_answer(
+                query=composite_query,
+                user_id=req.user_id,
+                workspace_id=req.workspace_id,
+                k=req.top_k,
+                intent_query=req.question,
+                plugin_manager=plugin_manager,
+                source="rest",
+            )
+        except Exception as exc:
+            logger.error("chat.error", error=str(exc), exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail="Search failed. Please try again.",
+            ) from exc
 
     with _history_lock:
         hist = _conversation_history.setdefault(req.user_id, [])
@@ -182,28 +185,29 @@ async def chat_stream(req: ChatRequest, request: Request) -> EventSourceResponse
 
         plugin_manager = getattr(request.app.state, "plugin_manager", None)
 
-        try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+        with build_telemetry_context_cm(request, source="rest"):
+            try:
+                from metatron.retrieval.search import hybrid_search_and_answer
 
-            answer: str = await hybrid_search_and_answer(
-                query=composite_query,
-                user_id=req.user_id,
-                workspace_id=workspace_id,
-                k=req.top_k,
-                intent_query=req.question,
-                plugin_manager=plugin_manager,
-                source="rest",
-            )
-        except Exception as exc:
-            logger.error("chat.stream.error", error=str(exc), exc_info=True)
-            yield {
-                "event": "error",
-                "data": json.dumps(
-                    {"error": "Search failed. Please try again."},
-                ),
-            }
-            yield {"event": "done", "data": "{}"}
-            return
+                answer: str = await hybrid_search_and_answer(
+                    query=composite_query,
+                    user_id=req.user_id,
+                    workspace_id=workspace_id,
+                    k=req.top_k,
+                    intent_query=req.question,
+                    plugin_manager=plugin_manager,
+                    source="rest",
+                )
+            except Exception as exc:
+                logger.error("chat.stream.error", error=str(exc), exc_info=True)
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {"error": "Search failed. Please try again."},
+                    ),
+                }
+                yield {"event": "done", "data": "{}"}
+                return
 
         # Record history (same as non-streaming endpoint)
         with _history_lock:

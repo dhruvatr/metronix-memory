@@ -14,12 +14,14 @@ No UQLM / langchain dependencies — uses direct RAG calls instead.
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 
 import httpx
 import numpy as np
 import structlog
 
 from metatron.benchmarker.schemas.test_result import ConfidenceResult
+from metatron.llm.telemetry import set_telemetry_context
 from metatron.retrieval.search import hybrid_search_and_answer_sync
 
 logger = structlog.get_logger()
@@ -147,10 +149,15 @@ class ConfidenceMetric:
     ) -> str:
         """Generate one answer via hybrid_search_and_answer_sync (sync)."""
         try:
-            answer = hybrid_search_and_answer_sync(
-                query=question,
+            with set_telemetry_context(
                 workspace_id=workspace_id,
-            )
+                source="benchmark",
+                correlation_id=uuid4(),
+            ):
+                answer = hybrid_search_and_answer_sync(
+                    query=question,
+                    workspace_id=workspace_id,
+                )
             return str(answer)
         except Exception as exc:
             logger.error("Error generating response: %s", exc)

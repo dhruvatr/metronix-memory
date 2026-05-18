@@ -7,14 +7,19 @@ and services. They pull instances from app.state (set during lifespan).
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from fastapi import Request  # noqa: TC002 — FastAPI Depends parameters need runtime type
 
 from metatron.core.config import Settings  # noqa: TC001 — runtime annotations in function bodies
+from metatron.llm.telemetry import set_telemetry_context
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from metatron.agents.service import AgentRegistryService
     from metatron.knowledge.service import RawDocumentReadService
+    from metatron.llm.telemetry import TelemetryContext
     from metatron.memory.health import MemoryHealthService
     from metatron.memory.service import MemoryService
     from metatron.memory.snapshot import MemorySnapshotService
@@ -74,6 +79,32 @@ def get_workspace_id(request: Request) -> str:
 
 # Backwards-compatible alias — older callers use the private name.
 _resolve_workspace_id = get_workspace_id
+
+
+def build_telemetry_context_cm(
+    request: Request,
+    *,
+    source: str,
+) -> AbstractContextManager[TelemetryContext]:
+    """Build a TelemetryContext context-manager from the current request.
+
+    Resolves workspace_id via :func:`get_workspace_id` (handles the ``*``
+    admin case), pulls user_id from auth state, generates a fresh
+    correlation_id. Returns the context-manager *unentered* — callers use
+    ``with build_telemetry_context_cm(request, source="rest"): ...``.
+
+    Centralising this here keeps chat / openai-compat / future routes from
+    re-implementing the same five-line dance.
+    """
+    workspace_id = get_workspace_id(request)
+    user = getattr(request.state, "user", {}) or {}
+    user_id: str | None = user.get("id") or user.get("user_id")
+    return set_telemetry_context(
+        workspace_id=workspace_id,
+        user_id=user_id,
+        source=source,
+        correlation_id=uuid4(),
+    )
 
 
 def get_memory_service(request: Request) -> MemoryService:

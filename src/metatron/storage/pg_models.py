@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     Date,
@@ -24,7 +25,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -46,6 +47,7 @@ class WorkspaceRow(Base):  # type: ignore[misc]
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
     created_by = Column(String(64), nullable=True)
+    llm_telemetry_opt_out = Column(Boolean, nullable=False, server_default=text("false"))
 
     members = relationship(
         "WorkspaceMemberRow", back_populates="workspace", cascade="all, delete-orphan"
@@ -327,4 +329,60 @@ class DocumentFetchStatsRow(Base):  # type: ignore[misc]
         UniqueConstraint("workspace_id", "doc_label", "fetch_date", name="uq_doc_fetch_stats"),
         Index("ix_doc_fetch_stats_workspace", "workspace_id"),
         Index("ix_doc_fetch_stats_date", "workspace_id", "fetch_date"),
+    )
+
+
+class LLMGenerationLogRow(Base):  # type: ignore[misc]
+    """ORM model for llm_generation_log (MTRNIX-336).
+
+    Used for inserts only — the export script queries via raw SQL.
+    Note: workspace_id is NOT a FK to workspaces so rows are still written
+    when workspace_id is NULL or when the workspace was deleted.
+    """
+
+    __tablename__ = "llm_generation_log"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("NOW()"))
+
+    # -- what kind of call --
+    call_site = Column(Text, nullable=False)
+    source = Column(Text, nullable=True)
+
+    # -- request context (from ContextVar; may be NULL) --
+    workspace_id = Column(Text, nullable=True)
+    user_id = Column(Text, nullable=True)
+    agent_id = Column(Text, nullable=True)
+    correlation_id = Column(UUID(as_uuid=False), nullable=True)
+
+    # -- model + provider --
+    provider = Column(Text, nullable=False)
+    model = Column(Text, nullable=False)
+
+    # -- the exchange --
+    request_messages = Column(JSONB, nullable=False)
+    response_content = Column(Text, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    completion_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+
+    # -- outcome --
+    success = Column(Boolean, nullable=False)
+    error_class = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    # -- call-site-specific extras --
+    # NOTE: 'metadata' is reserved by SQLAlchemy Declarative API, so the
+    # Python attribute is named 'extra_metadata' while the DB column stays 'metadata'.
+    extra_metadata = Column("metadata", JSONB, nullable=True)
+
+    __table_args__ = (
+        Index("ix_llm_log_ws_created", "workspace_id", text("created_at DESC")),
+        Index("ix_llm_log_call_site_created", "call_site", text("created_at DESC")),
+        Index(
+            "ix_llm_log_correlation",
+            "correlation_id",
+            postgresql_where=text("correlation_id IS NOT NULL"),
+        ),
     )

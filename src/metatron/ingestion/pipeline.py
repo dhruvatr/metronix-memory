@@ -10,6 +10,7 @@ import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from uuid import uuid4
 
 import structlog
 
@@ -22,6 +23,7 @@ from metatron.core.models import Chunk, Document, SyncResult
 from metatron.ingestion.chunking import root_child_chunk, simple_chunk
 from metatron.ingestion.dedup import DeduplicationIndex, simhash
 from metatron.ingestion.processors.dates import extract_date_from_text
+from metatron.llm.telemetry import set_telemetry_context
 
 logger = structlog.get_logger()
 
@@ -672,10 +674,15 @@ def _extract_graphs_parallel(
 
     def _write_graph(doc: Document, ws_id: str) -> str:
         """Write one document to graph, return source_id on success."""
-        if doc.source_type == "jira":
-            _write_jira_to_graph(doc, ws_id)
-        else:
-            _write_doc_to_graph(doc, ws_id)
+        with set_telemetry_context(
+            workspace_id=ws_id,
+            source="ingestion",
+            correlation_id=uuid4(),
+        ):
+            if doc.source_type == "jira":
+                _write_jira_to_graph(doc, ws_id)
+            else:
+                _write_doc_to_graph(doc, ws_id)
         return doc.source_id
 
     failed: list[tuple[Document, str]] = []
@@ -748,6 +755,26 @@ def _write_graph_strict(
     Used by process_unsynced_graphs() where we need to know if the write
     actually succeeded before marking graph_synced=true.
     """
+    # Telemetry: tag this NER-extraction LLM call as source="ingestion" so
+    # rows in llm_generation_log carry the correct provenance. This is the
+    # second of two ingestion entry-points (the other is the inline
+    # _write_graph inside _extract_graphs_parallel); both need the wrap.
+    with set_telemetry_context(
+        workspace_id=workspace_id,
+        source="ingestion",
+        correlation_id=uuid4(),
+    ):
+        _write_graph_strict_inner(doc, workspace_id, is_jira=is_jira)
+
+
+def _write_graph_strict_inner(
+    doc: Document,
+    workspace_id: str,
+    *,
+    is_jira: bool = False,
+) -> None:
+    """Body of _write_graph_strict — kept separate so the telemetry wrap
+    can be applied uniformly without indenting the entire body."""
     if is_jira:
         from metatron.storage.graph_jira import write_jira_graph
 

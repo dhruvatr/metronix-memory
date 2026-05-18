@@ -130,6 +130,7 @@ def should_use_team_workflow_schema(question: str) -> bool:  # TODO: async migra
         max_tokens=200,
         json_mode=True,
         timeout=20,
+        call_site="routing",
     )
     decision = TeamWorkflowRoutingDecision.model_validate_json(_extract_json_object(content))
     return decision.route == "schema_guided_team_workflow"

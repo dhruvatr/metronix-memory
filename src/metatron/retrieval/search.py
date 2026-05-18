@@ -21,6 +21,7 @@ from metatron.ingestion.processors.dates import (
     extract_date_range,
 )
 from metatron.llm import chat_completion, chat_completion_with_retry  # TODO: async migration
+from metatron.llm.telemetry import add_extra_metadata, update_retrieved_context
 from metatron.observability.metrics import timed
 from metatron.retrieval.alias_registry import get_alias_registry
 from metatron.retrieval.aliases import resolve_person_name
@@ -97,6 +98,7 @@ def resolve_query(query: str) -> str:
             temperature=0,
             max_tokens=200,
             timeout=10,
+            call_site="resolve_query",
         )
         resolved = resolved.strip()
 
@@ -324,6 +326,7 @@ def translate_query_to_english(query: str) -> str:  # TODO: async migration
             temperature=0.1,
             max_tokens=200,
             timeout=10,
+            call_site="translate_query",
         )
         return t.strip()
     except Exception:
@@ -1174,6 +1177,28 @@ async def hybrid_search_and_answer(  # noqa: C901
     # use_schema mode: use only current question (rq) to avoid history noise in structured output
     # regular mode: use full composite query to leverage conversation context for follow-ups
     ctx = _build_ctx(rq if use_schema else query, lang, frags, g_ents, g_rels, g_docs)
+
+    # Stash the assembled context on the telemetry ContextVar so emit_log can
+    # include it in the rag_answer row's metadata.retrieved_context field.
+    update_retrieved_context(ctx)
+
+    # Stash call-site metadata for the rag_answer row.
+    doc_ids = [r.get("doc_label", "") for r in base[:20] if isinstance(r, dict)]
+    if use_schema:
+        add_extra_metadata(
+            subtype="team_workflow_schema",
+            lang=lang,
+            query=rq[:200],
+            doc_ids=doc_ids,
+        )
+    else:
+        add_extra_metadata(
+            subtype="freeform",
+            lang=lang,
+            query=(rq if isinstance(rq, str) else query)[:200],
+            doc_ids=doc_ids,
+        )
+
     try:
         if use_schema:
             sys_prompt = TEAM_WORKFLOW_SCHEMA_SYSTEM_PROMPT.format(response_language=lang)
@@ -1186,6 +1211,7 @@ async def hybrid_search_and_answer(  # noqa: C901
                 temperature=0.2,
                 json_mode=True,
                 timeout=60,
+                call_site="rag_answer",
             )
             answer = (json.loads(_extract_json_object(c)).get("answer") or "").strip()
         else:
@@ -1199,6 +1225,7 @@ async def hybrid_search_and_answer(  # noqa: C901
                     ],
                     temperature=0.2,
                     timeout=60,
+                    call_site="rag_answer",
                 )
             ).strip()
     except Exception:
