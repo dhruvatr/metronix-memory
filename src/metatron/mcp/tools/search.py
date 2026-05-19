@@ -33,7 +33,9 @@ async def metatron_search(
     try:
         from metatron.retrieval.search import hybrid_search_and_answer
 
-        limit = min(max(1, limit), 100)
+        # `limit` is exposed in the MCP signature for forward-compatibility but
+        # the underlying pipeline returns a single synthesised answer, so it is
+        # not yet propagated downstream.
 
         # hybrid_search_and_answer returns str (answer with sources appended)
         answer = await hybrid_search_and_answer(
