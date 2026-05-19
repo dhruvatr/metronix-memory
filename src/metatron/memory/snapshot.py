@@ -303,7 +303,9 @@ class MemorySnapshotService:
                 suffix=".tmp",
                 delete=False,
             )
-        except PermissionError as exc:
+        except OSError as exc:
+            # Catches PermissionError (perms), ENOSPC (full disk),
+            # EROFS (read-only fs), EDQUOT (over-quota) — all map to 503.
             raise SnapshotStorageError(
                 f"cannot create temp file in snapshot directory {target.parent}: {exc}"
             ) from exc

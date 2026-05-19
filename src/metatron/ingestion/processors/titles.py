@@ -23,7 +23,7 @@ def extract_title_from_body(body: bytes | str) -> str | None:
     Returns:
         Title string or ``None``.
     """
-    with contextlib.suppress(Exception):
+    with contextlib.suppress(UnicodeDecodeError, json.JSONDecodeError, AttributeError):
         raw = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
         data = json.loads(raw)
         if isinstance(data, dict):
