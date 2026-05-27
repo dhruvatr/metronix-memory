@@ -52,6 +52,16 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if not settings.auth_enabled:
+            # AUTH off == dev mode == trusted admin. Without this, resolve_workspace_id
+            # would 403 every ?workspace_id call (empty workspace_ids -> no access),
+            # breaking local development. Mirrors the legacy login fallback that issues
+            # `["*"]` for the shared-password admin.
+            request.state.user = {
+                "user_id": "anon",
+                "role": "admin",
+                "workspace_ids": ["*"],
+                "email": "",
+            }
             return await call_next(request)
 
         if path in PUBLIC_PATHS:
@@ -78,10 +88,18 @@ class OptionalAuthMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        role = payload.get("role", "viewer")
+        workspace_ids = payload.get("workspace_ids", []) or []
+        # Tolerate older admin tokens issued before login-time normalisation —
+        # an empty workspace_ids on an admin role means "no per-workspace confinement",
+        # which is equivalent to ``["*"]``. Non-admin empty stays empty (-> 403 in resolver).
+        if role == "admin" and not workspace_ids:
+            workspace_ids = ["*"]
+
         request.state.user = {
             "user_id": payload["sub"],
-            "role": payload.get("role", "viewer"),
-            "workspace_ids": payload.get("workspace_ids", []),
+            "role": role,
+            "workspace_ids": workspace_ids,
             "email": payload.get("email", ""),
         }
 

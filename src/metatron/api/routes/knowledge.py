@@ -5,8 +5,9 @@ KB documents (``raw_documents``) under a single endpoint.  The two sources are
 fan-out concurrently under ``origin=all``.
 
 Design decisions (see plan §8 Risks & decisions):
-- ``workspace_id`` is always auth-derived via ``get_workspace_id(request)`` — it
-  is never accepted from the query string or request body (D-P1-01).
+- ``workspace_id`` is auth-derived by default. An optional ``?workspace_id`` query param
+  overrides it, but only when the caller's JWT grants access ("*" or membership); otherwise
+  403. Resolved via ``resolve_workspace_id(request)`` (supersedes D-P1-01 for REST).
 - ``origin=all`` pagination is approximate: each leg fetches up to ``limit`` rows
   ordered by its own ``updated_at DESC``, then the combined page is re-sorted and
   truncated.  ``total = agent_total + kb_total`` is therefore an estimate when the
@@ -39,7 +40,8 @@ from pydantic import BaseModel, Field
 from metatron.api.dependencies import (
     get_memory_service,
     get_raw_document_service,
-    get_workspace_id,
+    resolve_workspace_id,
+    workspace_scope,
 )
 from metatron.auth.dependencies import require_viewer
 from metatron.core.models import (
@@ -56,7 +58,9 @@ from metatron.memory.service import (
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+router = APIRouter(
+    prefix="/knowledge", tags=["knowledge"], dependencies=[Depends(workspace_scope)]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -218,8 +222,9 @@ async def list_knowledge_records(
 ) -> KnowledgeRecordListResponse:
     """Unified, paginated view of agent memory + KB documents.
 
-    ``workspace_id`` is always auth-derived — never accepted from the query
-    string or request body (D-P1-01).
+    ``workspace_id`` is auth-derived by default; an optional ``?workspace_id`` query param
+    overrides it when the caller's JWT grants access ("*" or membership), else 403
+    (supersedes D-P1-01 for REST).
 
     Origin routing:
     - ``origin=agent`` — only ``memory_records``. KB service not called.
@@ -241,7 +246,7 @@ async def list_knowledge_records(
     - ``lifetime=persistent`` (default) returns only non-expiring rows.
     - ``lifetime=all`` returns both.
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     # --- Agent-only path ---
     if origin == KnowledgeOrigin.AGENT:

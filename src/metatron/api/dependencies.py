@@ -6,10 +6,15 @@ and services. They pull instances from app.state (set during lifespan).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from fastapi import Request  # noqa: TC002 — FastAPI Depends parameters need runtime type
+from fastapi import (  # noqa: TC002 — FastAPI Depends parameters need runtime type
+    HTTPException,
+    Query,
+    Request,
+)
 
 from metatron.core.config import Settings  # noqa: TC001 — runtime annotations in function bodies
 from metatron.llm.telemetry import set_telemetry_context
@@ -77,8 +82,106 @@ def get_workspace_id(request: Request) -> str:
     return settings.default_workspace_id
 
 
-# Backwards-compatible alias — older callers use the private name.
-_resolve_workspace_id = get_workspace_id
+# Workspace ids appear as Qdrant collection-name path components and as
+# filesystem directories under the snapshot root, so the resolver rejects
+# anything outside this charset before returning a value.
+_WORKSPACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def resolve_workspace_id(request: Request) -> str:
+    """Resolve workspace_id from an optional ``?workspace_id`` query param,
+    access-checked against the caller's JWT.
+
+    Semantics:
+    - Param absent or whitespace-only -> :func:`get_workspace_id` (auth-derived).
+    - Param literally ``"*"`` -> ``HTTPException(400)``. ``"*"`` is a wildcard
+      inside the JWT, never a valid request target; reject explicitly instead of
+      silently downgrading to the auth default.
+    - Param outside ``^[A-Za-z0-9_-]{1,64}$`` -> ``HTTPException(400)``. Keeps
+      ``..`` / ``/`` / very long ids out of downstream filesystem and Qdrant
+      paths (a traversal would otherwise be possible via the snapshot service).
+    - Param present, caller token holds ``"*"`` or the param is in the caller's
+      ``workspace_ids`` -> the requested workspace is returned.
+    - Param present, caller's ``workspace_ids`` does not grant access (incl. the
+      empty-list case) -> ``HTTPException(403)``. ``OptionalAuthMiddleware``
+      normalises admin tokens with empty ``workspace_ids`` into ``["*"]`` so
+      this branch only fires for genuinely-confined callers.
+
+    The resolved value is memoised on ``request.state._workspace_id_cached``
+    so repeat resolutions within a single request (router dep + service DI +
+    in-handler) cannot disagree if a downstream middleware mutates the query
+    string (TOCTOU).
+
+    Reads only ``request.query_params`` and ``request.state.user`` — no
+    WorkspaceManager lookup. A nonexistent (but well-formed and granted)
+    workspace yields an empty result set downstream rather than a 404.
+    """
+    cached: str | None = getattr(request.state, "_workspace_id_cached", None)
+    if cached is not None:
+        return cached
+
+    raw = request.query_params.get("workspace_id")
+    requested = (raw or "").strip()
+
+    if not requested:
+        result = get_workspace_id(request)
+        request.state._workspace_id_cached = result
+        return result
+
+    if requested == "*":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "workspace_id='*' is not a valid target — omit the parameter to "
+                "use the auth-derived default"
+            ),
+        )
+
+    if not _WORKSPACE_ID_RE.match(requested):
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_id must match ^[A-Za-z0-9_-]{1,64}$",
+        )
+
+    user = getattr(request.state, "user", {}) or {}
+    allowed_raw = user.get("workspace_ids", [])
+    # Defensive: a plugin auth backend could theoretically return a bare string;
+    # without this guard ``requested in allowed`` becomes a substring match
+    # (e.g. "ws" in "ws-acme" -> True). Coerce non-lists to an empty list.
+    allowed: list[str] = allowed_raw if isinstance(allowed_raw, list) else []
+
+    if "*" in allowed or requested in allowed:
+        request.state._workspace_id_cached = requested
+        return requested
+
+    raise HTTPException(status_code=403, detail=f"No access to workspace '{requested}'")
+
+
+def workspace_scope(
+    request: Request,
+    workspace_id: str | None = Query(  # noqa: ARG001 — declared for OpenAPI; value read via request
+        None,
+        description="Target workspace (auth-checked; overrides the JWT-derived default)",
+    ),
+) -> str:
+    """Router-level dependency for REST family B (agents / memory / knowledge /
+    snapshots).
+
+    Two jobs in one place so individual handlers stay clean:
+
+    1. **Declares** ``?workspace_id`` as an optional query parameter — because it
+       is attached to the router, FastAPI surfaces the param in the OpenAPI schema
+       for *every* route under that router, so typed frontend clients can pass it.
+    2. **Enforces** the JWT access check via :func:`resolve_workspace_id` — raises
+       403 for a workspace the caller may not target. This runs even when a
+       handler's service dependency is overridden in tests, so enforcement is
+       uniform.
+
+    The ``workspace_id`` parameter is intentionally unused in the body — the value
+    is read from ``request.query_params`` by :func:`resolve_workspace_id`. Returns
+    the resolved workspace id; service DI helpers re-resolve the same value.
+    """
+    return resolve_workspace_id(request)
 
 
 def build_telemetry_context_cm(
@@ -95,6 +198,14 @@ def build_telemetry_context_cm(
 
     Centralising this here keeps chat / openai-compat / future routes from
     re-implementing the same five-line dance.
+
+    WARNING — by design this function uses :func:`get_workspace_id`, **not**
+    :func:`resolve_workspace_id`. Audit logs must reflect the JWT-derived
+    workspace, not whatever a ``?workspace_id`` query param requested, otherwise
+    telemetry and authorisation can diverge. If a future caller needs the
+    actually-served workspace in the telemetry context, call
+    ``resolve_workspace_id`` explicitly at the handler instead of changing this
+    helper.
     """
     workspace_id = get_workspace_id(request)
     user = getattr(request.state, "user", {}) or {}
@@ -128,7 +239,7 @@ def get_memory_service(request: Request) -> MemoryService:
     from metatron.storage.redis import RedisStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, MemoryService] = getattr(
         request.app.state,
@@ -215,7 +326,7 @@ def get_agent_registry_service(request: Request) -> AgentRegistryService:
     from metatron.agents.service import AgentRegistryService
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, AgentRegistryService] = getattr(
         request.app.state,
@@ -260,7 +371,7 @@ def get_memory_health_service(request: Request) -> MemoryHealthService:
     from metatron.storage.memory_postgres import MemoryPostgresStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, MemoryHealthService] = getattr(
         request.app.state,
@@ -312,7 +423,7 @@ def get_memory_snapshot_service(request: Request) -> MemorySnapshotService:
     from metatron.storage.memory_qdrant import MemoryQdrantStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, MemorySnapshotService] = getattr(
         request.app.state,
@@ -372,7 +483,7 @@ def get_raw_document_service(request: Request) -> RawDocumentReadService:
     from metatron.storage.postgres import PostgresStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, RawDocumentReadService] = getattr(
         request.app.state,

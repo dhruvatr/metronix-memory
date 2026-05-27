@@ -171,7 +171,7 @@ Memory REST API endpoints (workspace-scoped, RBAC-gated):
 
 **DI helper:** `get_memory_service(request)` — per-workspace cache on `app.state.memory_services`; shared PG engine on `app.state.memory_pg_engine`. Now also wires `freshness_store` (required for the review endpoints) and passes `pg_store` to `MemorySearchService` for graph-leg post-filter parity with the MCP path (MTRNIX-324).
 
-**Workspace resolution:** uses `get_workspace_id(request)` exported from `api.dependencies` (workspace always derived from auth, never from body/query).
+**Workspace resolution:** uses `resolve_workspace_id(request)` from `api.dependencies` — auth-derived by default, with an optional access-checked `?workspace_id` query override on REST family-B endpoints (agents/memory/knowledge); a caller may only target a workspace its JWT grants (`*` or membership), else 403. `get_workspace_id` remains the auth-only base (still used by telemetry / `build_telemetry_context_cm`).
 
 **Schemas:** pydantic v2 request/response models live inline in `routes/memory.py` per codebase convention.
 

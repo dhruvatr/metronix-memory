@@ -49,7 +49,13 @@ async def login(req: LoginRequest, request: Request) -> LoginResponse:
         if not verify_password(req.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        workspace_ids = user.get("workspace_ids", [])
+        workspace_ids = user.get("workspace_ids", []) or []
+        # Admin role with no per-workspace confinement means "all workspaces".
+        # Issuing `[]` would later 403 under the strict workspace resolver, so
+        # normalise here at token-issue time (mirrored in OptionalAuthMiddleware
+        # for older tokens already in circulation).
+        if user["role"] == "admin" and not workspace_ids:
+            workspace_ids = ["*"]
         token = create_token(
             user_id=user["id"],
             role=user["role"],
