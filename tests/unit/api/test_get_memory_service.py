@@ -41,6 +41,7 @@ def _make_request(workspace_id: str = "ws-test") -> MagicMock:
     request = MagicMock()
     request.app.state = _State()
     request.state.user = {"workspace_ids": [workspace_id]}
+    request.query_params = {}
     return request
 
 
@@ -149,3 +150,24 @@ class TestGetMemoryServiceWiring:
 
             # FreshnessStore constructor called exactly once
             assert _freshness.call_count == 1
+
+    def test_star_token_query_param_scopes_qdrant_store(self) -> None:
+        """A '*' token with ?workspace_id constructs the Qdrant store for that ws."""
+        request = _make_request(workspace_id="default-ws")
+        request.state.user = {"workspace_ids": ["*"]}
+        request.query_params = {"workspace_id": "ws-x"}
+
+        with (
+            patch(_PATCH_BASES["pg_store"]),
+            patch(_PATCH_BASES["qdrant"]) as _qdrant,
+            patch(_PATCH_BASES["redis_session"]),
+            patch(_PATCH_BASES["redis_store"]),
+            patch(_PATCH_BASES["search"]),
+            patch(_PATCH_BASES["svc"]),
+            patch(_PATCH_BASES["engine"]) as _eng,
+            patch(_PATCH_BASES["freshness"]),
+        ):
+            _eng.return_value = MagicMock()
+            get_memory_service(request)
+
+            assert _qdrant.call_args.kwargs["workspace_id"] == "ws-x"

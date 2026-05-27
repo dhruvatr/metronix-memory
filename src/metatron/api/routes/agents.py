@@ -1,8 +1,9 @@
 """Agent Registry REST API — /api/v1/agents.
 
 Exposes CRUD, lifecycle transitions and config-version history for agents
-in a workspace. Workspace is always derived from the authenticated user —
-never accepted from body or query string.
+in a workspace. Workspace is auth-derived by default; an optional
+``?workspace_id`` query param overrides it when the caller's JWT grants access
+("*" or membership), else 403 (``resolve_workspace_id``).
 
 RBAC — aligns with the ``memory/`` module convention:
 
@@ -40,6 +41,8 @@ from metatron.api.dependencies import (
     get_memory_health_service,
     get_memory_service,
     get_memory_snapshot_service,
+    resolve_workspace_id,
+    workspace_scope,
 )
 from metatron.auth.dependencies import require_editor, require_viewer
 from metatron.core.exceptions import (
@@ -65,7 +68,7 @@ from metatron.memory.snapshot import (
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/agents", tags=["agents"])
+router = APIRouter(prefix="/agents", tags=["agents"], dependencies=[Depends(workspace_scope)])
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +293,9 @@ async def list_agents(
     The two flags are mutually exclusive — passing both ``status=...`` and
     ``include_archived=true`` is rejected with 400.  This keeps the contract
     unambiguous (per MTRNIX-324 R7).
+
+    Workspace scoping (incl. the ``?workspace_id`` access check) is handled by
+    the router-level ``workspace_scope`` dependency.
     """
     if status is not None and include_archived:
         raise HTTPException(
@@ -757,12 +763,10 @@ class ActivitySummaryResponse(BaseModel):
 
 def get_activity_service(request: Request) -> ActivityService:
     """Per-workspace ActivityService, reusing the store wired in create_app()."""
-    from metatron.api.dependencies import _resolve_workspace_id
-
     store = getattr(request.app.state, "activity_store", None)
     if store is None:
         raise HTTPException(status_code=503, detail="activity log disabled")
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     return ActivityService(store=store, workspace_id=workspace_id)
 
 

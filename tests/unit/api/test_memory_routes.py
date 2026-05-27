@@ -1017,3 +1017,62 @@ class TestReviewResolve:
             json={"action": "keep"},
         )
         assert response.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# ?workspace_id query scoping + access check (Control Center, family B)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceQueryScoping:
+    def _client(
+        self, *, workspace_ids: list[str], service: AsyncMock, settings: Settings
+    ) -> TestClient:
+        app = FastAPI()
+        app.state.settings = settings
+        app.include_router(memory_router, prefix="/api/v1")
+        app.dependency_overrides[get_memory_service] = lambda: service
+        app.dependency_overrides[get_current_user] = lambda: _make_user()
+
+        @app.middleware("http")
+        async def _inject(request, call_next):  # type: ignore[no-untyped-def]
+            request.state.user = {"workspace_ids": workspace_ids}
+            return await call_next(request)
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_search_scopes_to_requested_workspace_for_star_token(
+        self, service: AsyncMock, settings: Settings
+    ) -> None:
+        service.search.return_value = []
+        client = self._client(workspace_ids=["*"], service=service, settings=settings)
+
+        resp = client.post(
+            "/api/v1/memory/search?workspace_id=ws-x",
+            json={"query": "hello"},
+        )
+
+        assert resp.status_code == 200
+        passed_ws = service.search.await_args.args[0]
+        assert passed_ws == "ws-x"
+
+    def test_list_forbidden_for_non_member(
+        self, service: AsyncMock, settings: Settings
+    ) -> None:
+        client = self._client(workspace_ids=["ws-a"], service=service, settings=settings)
+
+        resp = client.get("/api/v1/memory/records?workspace_id=ws-x")
+
+        assert resp.status_code == 403
+        service.list_records.assert_not_awaited()
+
+    def test_list_without_param_uses_auth_derived(
+        self, service: AsyncMock, settings: Settings
+    ) -> None:
+        service.list_records.return_value = []
+        client = self._client(workspace_ids=["ws-a"], service=service, settings=settings)
+
+        resp = client.get("/api/v1/memory/records")
+
+        assert resp.status_code == 200
+        assert service.list_records.await_args.args[0] == "ws-a"

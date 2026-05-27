@@ -5,9 +5,9 @@ live under ``/api/v1/agents/{id}/snapshots`` so the agent context is always
 explicit. The cross-snapshot operations live here because the snapshot id is
 the natural primary key.
 
-Workspace is always derived from the authenticated user — never accepted from
-the request body or query string. A snapshot id from another workspace
-resolves to 404.
+Workspace is auth-derived by default; an optional ``?workspace_id`` query param
+overrides it when the caller's JWT grants access ("*" or membership), else 403.
+A snapshot id outside the resolved workspace resolves to 404.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from metatron.api.dependencies import get_memory_snapshot_service
+from metatron.api.dependencies import get_memory_snapshot_service, workspace_scope
 from metatron.api.routes.agents import MemorySnapshotResponse, _snapshot_to_response
 from metatron.api.routes.memory import MemoryRecordResponse, _record_to_response
 from metatron.auth.dependencies import require_editor, require_viewer
@@ -38,7 +38,9 @@ _MAX_RECORD_IDS_PER_REQUEST = 200
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/snapshots", tags=["snapshots"])
+router = APIRouter(
+    prefix="/snapshots", tags=["snapshots"], dependencies=[Depends(workspace_scope)]
+)
 
 
 class RestoreSnapshotResponse(BaseModel):

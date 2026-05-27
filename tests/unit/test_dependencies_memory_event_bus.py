@@ -20,6 +20,7 @@ def test_event_bus_passed_into_memory_service() -> None:
     req.app = app
     req.state = MagicMock()
     req.state.user = {"workspace_ids": ["ws_test"]}
+    req.query_params = {}
 
     svc = get_memory_service(req)
     assert svc._event_bus is app.state.plugin_manager.get_event_bus()

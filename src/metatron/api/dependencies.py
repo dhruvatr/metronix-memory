@@ -9,7 +9,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from fastapi import Request  # noqa: TC002 — FastAPI Depends parameters need runtime type
+from fastapi import (  # noqa: TC002 — FastAPI Depends parameters need runtime type
+    HTTPException,
+    Query,
+    Request,
+)
 
 from metatron.core.config import Settings  # noqa: TC001 — runtime annotations in function bodies
 from metatron.llm.telemetry import set_telemetry_context
@@ -81,6 +85,66 @@ def get_workspace_id(request: Request) -> str:
 _resolve_workspace_id = get_workspace_id
 
 
+def resolve_workspace_id(request: Request) -> str:
+    """Resolve workspace_id from an optional ``?workspace_id`` query param,
+    access-checked against the caller's JWT.
+
+    - param absent (or literal ``"*"``) -> ``get_workspace_id(request)``
+      (auth-derived, unchanged behaviour).
+    - param present, caller is unscoped (empty ``workspace_ids`` — same
+      "not confined to specific workspaces" meaning ``get_workspace_id`` already
+      gives ``[]``) or holds ``"*"`` or the param is in the caller's
+      ``workspace_ids`` -> the requested workspace is returned.
+    - param present, caller is confined to specific workspaces that do not
+      include it -> ``HTTPException(403)``.
+
+    Reads only ``request.query_params`` and ``request.state.user`` — no
+    WorkspaceManager lookup. A nonexistent workspace yields an empty result set
+    downstream rather than a 404.
+
+    Note: an empty ``workspace_ids`` is treated as unrestricted, matching both
+    ``get_workspace_id`` (which falls back to the default workspace rather than
+    denying) and the ``AUTH_ENABLED=false`` case (where ``request.state.user``
+    is ``{}``). When a real multi-tenant RBAC model lands, revisit whether an
+    empty list should mean "all" or "none".
+    """
+    requested = request.query_params.get("workspace_id")
+    if not requested or requested == "*":
+        return get_workspace_id(request)
+    user = getattr(request.state, "user", {}) or {}
+    allowed = user.get("workspace_ids", []) or []
+    if not allowed or "*" in allowed or requested in allowed:
+        return str(requested)
+    raise HTTPException(status_code=403, detail=f"No access to workspace '{requested}'")
+
+
+def workspace_scope(
+    request: Request,
+    workspace_id: str | None = Query(  # noqa: ARG001 — declared for OpenAPI; value read via request
+        None,
+        description="Target workspace (auth-checked; overrides the JWT-derived default)",
+    ),
+) -> str:
+    """Router-level dependency for REST family B (agents / memory / knowledge /
+    snapshots).
+
+    Two jobs in one place so individual handlers stay clean:
+
+    1. **Declares** ``?workspace_id`` as an optional query parameter — because it
+       is attached to the router, FastAPI surfaces the param in the OpenAPI schema
+       for *every* route under that router, so typed frontend clients can pass it.
+    2. **Enforces** the JWT access check via :func:`resolve_workspace_id` — raises
+       403 for a workspace the caller may not target. This runs even when a
+       handler's service dependency is overridden in tests, so enforcement is
+       uniform.
+
+    The ``workspace_id`` parameter is intentionally unused in the body — the value
+    is read from ``request.query_params`` by :func:`resolve_workspace_id`. Returns
+    the resolved workspace id; service DI helpers re-resolve the same value.
+    """
+    return resolve_workspace_id(request)
+
+
 def build_telemetry_context_cm(
     request: Request,
     *,
@@ -128,7 +192,7 @@ def get_memory_service(request: Request) -> MemoryService:
     from metatron.storage.redis import RedisStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, MemoryService] = getattr(
         request.app.state,
@@ -215,7 +279,7 @@ def get_agent_registry_service(request: Request) -> AgentRegistryService:
     from metatron.agents.service import AgentRegistryService
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, AgentRegistryService] = getattr(
         request.app.state,
@@ -260,7 +324,7 @@ def get_memory_health_service(request: Request) -> MemoryHealthService:
     from metatron.storage.memory_postgres import MemoryPostgresStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, MemoryHealthService] = getattr(
         request.app.state,
@@ -312,7 +376,7 @@ def get_memory_snapshot_service(request: Request) -> MemorySnapshotService:
     from metatron.storage.memory_qdrant import MemoryQdrantStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, MemorySnapshotService] = getattr(
         request.app.state,
@@ -372,7 +436,7 @@ def get_raw_document_service(request: Request) -> RawDocumentReadService:
     from metatron.storage.postgres import PostgresStore
 
     settings: Settings = request.app.state.settings
-    workspace_id = _resolve_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     services: dict[str, RawDocumentReadService] = getattr(
         request.app.state,

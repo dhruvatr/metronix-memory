@@ -409,7 +409,7 @@ Upstream: metatron on port 8000, healthcheck at /health
 ## Conventions
 - Async everywhere: `async def` for handlers, DB calls, LLM calls
 - Config via pydantic-settings, env vars with METATRON_ prefix
-- Workspace isolation: all queries filtered by workspace_id (JWT claim)
+- Workspace isolation: all queries filtered by workspace_id (JWT claim by default). REST family-B endpoints (agents/memory/knowledge) also accept an optional, JWT-access-checked `?workspace_id` query param overriding the auth-derived default (`resolve_workspace_id` in `api/dependencies.py`); a caller may only target a workspace its token grants (`*` or membership), else 403. MCP stays strictly auth-derived.
 - Graceful degradation: `_safe_call()` — Neo4j down → search works without graph
 - Factory pattern: `create_app(settings)` for isolated testing
 - Logging: structlog

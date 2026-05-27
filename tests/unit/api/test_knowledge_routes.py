@@ -728,3 +728,62 @@ class TestLifetimeFilter:
 
         _, count_kwargs = mem_service.pg_store.count_records.await_args
         assert count_kwargs["lifetime"] == "persistent"
+
+
+# ---------------------------------------------------------------------------
+# ?workspace_id query scoping + access check (Control Center, family B)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceQueryScoping:
+    def _client(
+        self,
+        *,
+        workspace_ids: list[str],
+        settings: Settings,
+        mem_service: MagicMock,
+        raw_doc_service: AsyncMock,
+    ) -> TestClient:
+        app = FastAPI()
+        app.state.settings = settings
+        app.include_router(knowledge_router, prefix="/api/v1")
+        app.dependency_overrides[get_memory_service] = lambda: mem_service
+        app.dependency_overrides[get_raw_document_service] = lambda: raw_doc_service
+        app.dependency_overrides[get_current_user] = lambda: _make_user()
+
+        @app.middleware("http")
+        async def _inject(request, call_next):  # type: ignore[no-untyped-def]
+            request.state.user = {"workspace_ids": workspace_ids}
+            return await call_next(request)
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_agent_leg_scopes_to_requested_workspace_for_star_token(
+        self, settings: Settings, mem_service: MagicMock, raw_doc_service: AsyncMock
+    ) -> None:
+        client = self._client(
+            workspace_ids=["*"],
+            settings=settings,
+            mem_service=mem_service,
+            raw_doc_service=raw_doc_service,
+        )
+
+        resp = client.get("/api/v1/knowledge/records?origin=agent&workspace_id=ws-x")
+
+        assert resp.status_code == 200
+        assert mem_service.list_records.await_args.args[0] == "ws-x"
+
+    def test_forbidden_for_non_member(
+        self, settings: Settings, mem_service: MagicMock, raw_doc_service: AsyncMock
+    ) -> None:
+        client = self._client(
+            workspace_ids=["ws-a"],
+            settings=settings,
+            mem_service=mem_service,
+            raw_doc_service=raw_doc_service,
+        )
+
+        resp = client.get("/api/v1/knowledge/records?workspace_id=ws-x")
+
+        assert resp.status_code == 403
+        mem_service.list_records.assert_not_awaited()

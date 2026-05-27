@@ -16,6 +16,7 @@ def test_event_bus_passed_into_agent_registry_service() -> None:
     req.app = app
     req.state = MagicMock()
     req.state.user = {"workspace_ids": ["ws_test"]}
+    req.query_params = {}
 
     svc = get_agent_registry_service(req)
     # Service must have the bus wired — same instance as the plugin manager's bus
@@ -29,6 +30,7 @@ def test_event_bus_reused_across_calls_same_workspace() -> None:
     req.app = app
     req.state = MagicMock()
     req.state.user = {"workspace_ids": ["ws_test"]}
+    req.query_params = {}
 
     svc1 = get_agent_registry_service(req)
     svc2 = get_agent_registry_service(req)

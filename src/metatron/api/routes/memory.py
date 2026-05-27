@@ -15,7 +15,11 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from metatron.api.dependencies import get_memory_service, get_workspace_id
+from metatron.api.dependencies import (
+    get_memory_service,
+    resolve_workspace_id,
+    workspace_scope,
+)
 from metatron.auth.dependencies import require_editor, require_viewer
 from metatron.core.exceptions import MemoryNotFoundError
 from metatron.core.models import (
@@ -33,7 +37,7 @@ from metatron.memory.service import (
 
 logger = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/memory", tags=["memory"])
+router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(workspace_scope)])
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +189,7 @@ async def create_record(
     SESSION-scoped records are cached in Redis (with TTL); all other scopes
     are persisted in Qdrant (plus best-effort Neo4j).
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     record = MemoryRecord(
         workspace_id=workspace_id,
         agent_id=body.agent_id,
@@ -234,7 +238,7 @@ async def search_records(
     Note: the MCP ``"all"`` sentinel is not accepted here; pass each status
     value explicitly (e.g. ``["active", "archived"]``) to include all.
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     results: list[MemorySearchResult]
 
     # Apply route-layer default — mirrors the MCP layer pattern where the
@@ -307,7 +311,7 @@ async def list_records(
     is explicitly set. This is intentional: the inspector UI needs to see all
     records including ARCHIVED and SUPERSEDED.
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
 
     if session_id is not None:
         session_records = await service.list_session(workspace_id, session_id)
@@ -352,7 +356,7 @@ async def get_record(
     including when a record exists but belongs to a different workspace
     (cross-workspace isolation guaranteed by PG ``WHERE workspace_id = :ws``).
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     record = await service.get(workspace_id, record_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Memory record not found")
@@ -415,7 +419,7 @@ async def get_memory_graph(
 
     Workspace isolation: ``workspace_id`` comes from the JWT only.
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     records, raw_edges = await service.get_graph_neighborhood(
         workspace_id, seed_record_id, depth=depth
     )
@@ -511,7 +515,7 @@ async def list_review_entries(
     Returns 503 when the freshness store is not configured (e.g. the deployment
     does not run the freshness worker).
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     try:
         entries, total = await service.list_review_entries(
             workspace_id,
@@ -560,7 +564,7 @@ async def resolve_review_entry(
     Returns 404 when the review entry or target record does not exist.
     Returns 503 when the freshness store is not configured.
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     if body.action == "merge_into":
         action_str = f"merge_into:{body.target_record_id}"
     else:
@@ -599,7 +603,7 @@ async def delete_record(
     Session records are managed separately via ``invalidate_session`` —
     this endpoint only touches the persistent stores (PG, Qdrant, Neo4j).
     """
-    workspace_id = get_workspace_id(request)
+    workspace_id = resolve_workspace_id(request)
     deleted = await service.delete(workspace_id, record_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory record not found")
