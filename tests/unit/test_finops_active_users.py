@@ -80,14 +80,21 @@ class TestFetchActiveUsers:
 
     @patch("metatron.storage.pg_connection.get_session")
     def test_query_filters_are_correct(self, mock_get_session):
-        """Verify the SQL where-clause has all required filters:
-        workspace_id, user_id IS NOT NULL, source IN (oai_compat, rest),
-        call_site = rag_answer, created_at >= since. Compiled SQL inspection
-        is fragile, so we snapshot the literal SQL string and assert the
-        substrings are present."""
+        """Verify the SQL where-clause has all required filters with the exact
+        values: workspace_id, user_id IS NOT NULL, source IN ('oai_compat',
+        'rest'), call_site = 'rag_answer', created_at >= since.
+
+        Uses literal_binds=True so the actual filter VALUES render inline —
+        otherwise a regression that drops 'rest' from the source tuple or
+        renames the call_site would still pass a loose 'source in' substring
+        check."""
         from sqlalchemy.dialects import postgresql
 
-        from metatron.api.routes.finops import _fetch_active_users
+        from metatron.api.routes.finops import (
+            _RAG_ANSWER_CALL_SITE,
+            _USER_FACING_SOURCES,
+            _fetch_active_users,
+        )
 
         captured_stmt = {}
 
@@ -108,17 +115,21 @@ class TestFetchActiveUsers:
         compiled = str(
             captured_stmt["stmt"].compile(
                 dialect=postgresql.dialect(),
-                compile_kwargs={"literal_binds": False},
+                compile_kwargs={"literal_binds": True},
             )
         ).lower()
 
         assert "llm_generation_log" in compiled
         assert "count(distinct" in compiled  # active_users
         assert "user_id is not null" in compiled
-        assert "source in" in compiled
         assert "call_site" in compiled
         assert "created_at" in compiled
         assert "workspace_id" in compiled
+        # Exact filter VALUES must be present (catches dropped/renamed filters).
+        assert _RAG_ANSWER_CALL_SITE == "rag_answer"
+        assert "'rag_answer'" in compiled
+        for src in _USER_FACING_SOURCES:
+            assert f"'{src}'" in compiled, f"source filter missing {src!r}"
 
 
 class TestActiveUsersEndpoint:
