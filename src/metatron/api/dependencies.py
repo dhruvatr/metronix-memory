@@ -6,6 +6,7 @@ and services. They pull instances from app.state (set during lifespan).
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -81,40 +82,78 @@ def get_workspace_id(request: Request) -> str:
     return settings.default_workspace_id
 
 
-# Backwards-compatible alias — older callers use the private name.
-_resolve_workspace_id = get_workspace_id
+# Workspace ids appear as Qdrant collection-name path components and as
+# filesystem directories under the snapshot root, so the resolver rejects
+# anything outside this charset before returning a value.
+_WORKSPACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def resolve_workspace_id(request: Request) -> str:
     """Resolve workspace_id from an optional ``?workspace_id`` query param,
     access-checked against the caller's JWT.
 
-    - param absent (or literal ``"*"``) -> ``get_workspace_id(request)``
-      (auth-derived, unchanged behaviour).
-    - param present, caller is unscoped (empty ``workspace_ids`` — same
-      "not confined to specific workspaces" meaning ``get_workspace_id`` already
-      gives ``[]``) or holds ``"*"`` or the param is in the caller's
+    Semantics:
+    - Param absent or whitespace-only -> :func:`get_workspace_id` (auth-derived).
+    - Param literally ``"*"`` -> ``HTTPException(400)``. ``"*"`` is a wildcard
+      inside the JWT, never a valid request target; reject explicitly instead of
+      silently downgrading to the auth default.
+    - Param outside ``^[A-Za-z0-9_-]{1,64}$`` -> ``HTTPException(400)``. Keeps
+      ``..`` / ``/`` / very long ids out of downstream filesystem and Qdrant
+      paths (a traversal would otherwise be possible via the snapshot service).
+    - Param present, caller token holds ``"*"`` or the param is in the caller's
       ``workspace_ids`` -> the requested workspace is returned.
-    - param present, caller is confined to specific workspaces that do not
-      include it -> ``HTTPException(403)``.
+    - Param present, caller's ``workspace_ids`` does not grant access (incl. the
+      empty-list case) -> ``HTTPException(403)``. ``OptionalAuthMiddleware``
+      normalises admin tokens with empty ``workspace_ids`` into ``["*"]`` so
+      this branch only fires for genuinely-confined callers.
+
+    The resolved value is memoised on ``request.state._workspace_id_cached``
+    so repeat resolutions within a single request (router dep + service DI +
+    in-handler) cannot disagree if a downstream middleware mutates the query
+    string (TOCTOU).
 
     Reads only ``request.query_params`` and ``request.state.user`` — no
-    WorkspaceManager lookup. A nonexistent workspace yields an empty result set
-    downstream rather than a 404.
-
-    Note: an empty ``workspace_ids`` is treated as unrestricted, matching both
-    ``get_workspace_id`` (which falls back to the default workspace rather than
-    denying) and the ``AUTH_ENABLED=false`` case (where ``request.state.user``
-    is ``{}``). When a real multi-tenant RBAC model lands, revisit whether an
-    empty list should mean "all" or "none".
+    WorkspaceManager lookup. A nonexistent (but well-formed and granted)
+    workspace yields an empty result set downstream rather than a 404.
     """
-    requested = request.query_params.get("workspace_id")
-    if not requested or requested == "*":
-        return get_workspace_id(request)
+    cached: str | None = getattr(request.state, "_workspace_id_cached", None)
+    if cached is not None:
+        return cached
+
+    raw = request.query_params.get("workspace_id")
+    requested = (raw or "").strip()
+
+    if not requested:
+        result = get_workspace_id(request)
+        request.state._workspace_id_cached = result
+        return result
+
+    if requested == "*":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "workspace_id='*' is not a valid target — omit the parameter to "
+                "use the auth-derived default"
+            ),
+        )
+
+    if not _WORKSPACE_ID_RE.match(requested):
+        raise HTTPException(
+            status_code=400,
+            detail="workspace_id must match ^[A-Za-z0-9_-]{1,64}$",
+        )
+
     user = getattr(request.state, "user", {}) or {}
-    allowed = user.get("workspace_ids", []) or []
-    if not allowed or "*" in allowed or requested in allowed:
-        return str(requested)
+    allowed_raw = user.get("workspace_ids", [])
+    # Defensive: a plugin auth backend could theoretically return a bare string;
+    # without this guard ``requested in allowed`` becomes a substring match
+    # (e.g. "ws" in "ws-acme" -> True). Coerce non-lists to an empty list.
+    allowed: list[str] = allowed_raw if isinstance(allowed_raw, list) else []
+
+    if "*" in allowed or requested in allowed:
+        request.state._workspace_id_cached = requested
+        return requested
+
     raise HTTPException(status_code=403, detail=f"No access to workspace '{requested}'")
 
 
@@ -159,6 +198,14 @@ def build_telemetry_context_cm(
 
     Centralising this here keeps chat / openai-compat / future routes from
     re-implementing the same five-line dance.
+
+    WARNING — by design this function uses :func:`get_workspace_id`, **not**
+    :func:`resolve_workspace_id`. Audit logs must reflect the JWT-derived
+    workspace, not whatever a ``?workspace_id`` query param requested, otherwise
+    telemetry and authorisation can diverge. If a future caller needs the
+    actually-served workspace in the telemetry context, call
+    ``resolve_workspace_id`` explicitly at the handler instead of changing this
+    helper.
     """
     workspace_id = get_workspace_id(request)
     user = getattr(request.state, "user", {}) or {}

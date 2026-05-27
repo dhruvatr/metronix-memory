@@ -42,6 +42,11 @@ def _make_request(workspace_id: str = "ws-test") -> MagicMock:
     request.app.state = _State()
     request.state.user = {"workspace_ids": [workspace_id]}
     request.query_params = {}
+    # MagicMock auto-creates truthy attributes on access. The resolver's
+    # request-scoped memoisation uses ``getattr(state, "_workspace_id_cached", None)``,
+    # so without an explicit None it would think there is a cached value and
+    # return that MagicMock instead of resolving.
+    request.state._workspace_id_cached = None
     return request
 
 

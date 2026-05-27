@@ -86,3 +86,22 @@ def test_workspace_id_declared_on_resource_keyed_paths(service: AsyncMock) -> No
             checked += 1
     # Sanity: we actually inspected resource-keyed operations, not just the list.
     assert checked >= 5
+
+
+def test_lifecycle_endpoints_enforce_workspace_access(service: AsyncMock) -> None:
+    """Variant B explicitly puts lifecycle (start/stop/pause) under the
+    ?workspace_id contract — make sure a non-member 403s at the router-level
+    workspace_scope dep *before* the handler runs.
+
+    PR-127 review #7: lifecycle has sharper power than reads; explicit coverage
+    here so a regression that drops the router dep can never silently pass.
+    """
+    client = _client(["ws-a"], service)
+    for endpoint in ("start", "stop", "pause"):
+        resp = client.post(f"/api/v1/agents/some-agent/{endpoint}?workspace_id=ws-victim")
+        assert resp.status_code == 403, (
+            f"POST /agents/.../{endpoint} should 403 for non-member, got {resp.status_code}"
+        )
+    service.start_agent.assert_not_awaited()
+    service.stop_agent.assert_not_awaited()
+    service.pause_agent.assert_not_awaited()

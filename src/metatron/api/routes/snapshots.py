@@ -5,9 +5,12 @@ live under ``/api/v1/agents/{id}/snapshots`` so the agent context is always
 explicit. The cross-snapshot operations live here because the snapshot id is
 the natural primary key.
 
-Workspace is auth-derived by default; an optional ``?workspace_id`` query param
-overrides it when the caller's JWT grants access ("*" or membership), else 403.
-A snapshot id outside the resolved workspace resolves to 404.
+Workspace is resolved by the router-level ``workspace_scope`` dependency:
+auth-derived by default, with an optional ``?workspace_id`` query override that
+is honoured only when the caller's JWT grants access (``*`` or membership),
+else 403. Cross-workspace isolation is therefore enforced at resolve time —
+a snapshot id outside the resolved workspace resolves to 404 because the
+``MemorySnapshotService`` is bound to that workspace at construction.
 """
 
 from __future__ import annotations
