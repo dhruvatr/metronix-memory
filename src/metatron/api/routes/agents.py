@@ -281,6 +281,7 @@ async def list_agents(
     status: AgentStatus | None = None,
     name_prefix: str | None = Query(None, min_length=1, max_length=128),
     include_archived: bool = Query(False),
+    include_system: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
 ) -> AgentListResponse:
@@ -306,6 +307,7 @@ async def list_agents(
         status=status,
         name_prefix=name_prefix,
         include_archived=include_archived,
+        include_system=include_system,
         limit=limit + 1,
         offset=offset,
     )
@@ -739,6 +741,7 @@ class ActivityEventResponse(BaseModel):
     workspace_id: str
     agent_id: str
     session_id: str | None
+    correlation_id: str | None = None
     event_type: str
     event_data: dict[str, Any]
     created_at: datetime
@@ -783,6 +786,7 @@ async def get_agent_activity(
     until: datetime | None = None,
     event_type: list[str] | None = Query(None),  # noqa: B008
     session_id: str | None = Query(None, min_length=1, max_length=64),
+    correlation_id: str | None = Query(None, min_length=1, max_length=64),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0, le=10000),
 ) -> ActivityListResponse:
@@ -803,6 +807,7 @@ async def get_agent_activity(
         until=until,
         event_types=event_type,
         session_id=session_id,
+        correlation_id=correlation_id,
         limit=limit,
         offset=offset,
     )
@@ -813,6 +818,7 @@ async def get_agent_activity(
                 workspace_id=r["workspace_id"],
                 agent_id=r["agent_id"],
                 session_id=r["session_id"],
+                correlation_id=r.get("correlation_id"),
                 event_type=r["event_type"],
                 event_data=dict(r["event_data"] or {}),
                 created_at=r["created_at"],

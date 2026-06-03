@@ -227,6 +227,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize MCP session manager (required for streamable-http transport)
     async with mcp_server.session_manager.run():
         logger.info("mcp.session_manager.started")
+
+        # --- Proxy LLM client (MTRNIX-372) ---
+        from metatron.proxy.upstream import UpstreamLLMClient
+
+        app.state.upstream_llm_client = UpstreamLLMClient(
+            timeout=settings.proxy_upstream_timeout_ms / 1000
+        )
+
         yield
 
     # Shutdown
@@ -237,6 +245,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     owui_sync = getattr(app.state, "owui_sync", None)
     if owui_sync and owui_sync._client:
         await owui_sync._client.close()
+    upstream_client = getattr(app.state, "upstream_llm_client", None)
+    if upstream_client is not None:
+        await upstream_client.aclose()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -363,6 +374,157 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from metatron.api.routes.openai_compat import router as openai_compat_router
 
         app.include_router(openai_compat_router)
+
+    # --- Proxy LLM service builder (MTRNIX-372) ---
+    if settings.proxy_enabled:
+        from metatron.agents.persistence import AgentPersistence
+        from metatron.agents.service import AgentRegistryService
+        from metatron.api.routes.openai_compat import build_rag_stream
+        from metatron.api.routes.proxy import router as proxy_router
+        from metatron.core.events import ENTITY_WRITE
+        from metatron.memory.assembler import AgentContextAssembler
+        from metatron.memory.search import MemorySearchService
+        from metatron.memory.service import MemoryService
+        from metatron.proxy.activity import ProxyActivityLogger
+        from metatron.proxy.credentials import UpstreamCredentialsResolver
+        from metatron.proxy.entity_trie import WorkspaceEntityTrie
+        from metatron.proxy.service import ProxyService
+        from metatron.proxy.tool_result import ToolResultEnricher
+        from metatron.storage.llm_upstream_credentials import LlmUpstreamCredentialsStore
+        from metatron.storage.memory_postgres import MemoryPostgresStore
+        from metatron.storage.memory_qdrant import MemoryQdrantStore
+        from metatron.storage.memory_redis import RedisSessionCache
+        from metatron.storage.redis import RedisStore
+
+        bus = plugin_manager.get_event_bus()
+
+        # Lazily-built per-workspace entity trie for tool-result enrichment.
+        async def _fetch_entities(workspace_id: str) -> list[str]:
+            import asyncio as _asyncio
+
+            def _query() -> list[str]:
+                from metatron.storage.neo4j_graph import get_graph_driver
+
+                driver = get_graph_driver()
+                cap = settings.proxy_entity_trie_max_entities_per_ws
+                with driver.session() as session:
+                    result = session.run(
+                        "MATCH (e:Entity {workspace_id: $ws}) "
+                        "RETURN e.name AS name LIMIT $cap",
+                        {"ws": workspace_id, "cap": cap},
+                    )
+                    return [row["name"] for row in result if row["name"]]
+
+            try:
+                return await _asyncio.to_thread(_query)
+            except Exception:  # noqa: BLE001 — empty trie on graph failure
+                return []
+
+        entity_trie = WorkspaceEntityTrie(settings=settings, fetch_entities=_fetch_entities)
+        app.state.entity_trie = entity_trie
+
+        async def _on_entity_write(event_name: str, payload: dict[str, object]) -> None:
+            ws = payload.get("workspace_id")
+            if ws:
+                entity_trie.invalidate(str(ws))
+
+        bus.subscribe(ENTITY_WRITE, _on_entity_write)
+
+        async def _fetch_entity_memories(
+            ws: str, entity: str, agent: str
+        ) -> list[dict[str, object]]:
+            import asyncio as _asyncio
+
+            from metatron.storage.memory_graph import get_memories_about_entity
+
+            nodes = await _asyncio.to_thread(get_memories_about_entity, ws, entity, 3, agent)
+            # The Neo4j MemoryRecord node intentionally stores NO content
+            # ("content lives in Qdrant"). Resolve it from PG (source of truth)
+            # so the enricher has text to append (MTRNIX-372 review — P4 content).
+            pg_store = getattr(app.state, "memory_pg_store", None)
+            if pg_store is None:
+                return nodes
+            enriched: list[dict[str, object]] = []
+            for node in nodes:
+                rid = node.get("id")
+                if not rid:
+                    continue
+                record = await pg_store.get(ws, str(rid))
+                if record is not None:
+                    enriched.append({**node, "content": record.content})
+            return enriched
+
+        def _proxy_service_builder(workspace_id: str) -> ProxyService:
+            engine = getattr(app.state, "memory_pg_engine", None)
+            if engine is None:
+                from sqlalchemy.ext.asyncio import create_async_engine
+
+                engine = create_async_engine(settings.postgres_dsn, pool_pre_ping=True)
+                app.state.memory_pg_engine = engine
+
+            pg_store = getattr(app.state, "memory_pg_store", None)
+            if pg_store is None:
+                pg_store = MemoryPostgresStore(engine)
+                app.state.memory_pg_store = pg_store
+
+            redis_cache = getattr(app.state, "redis_cache", None)
+            if redis_cache is None:
+                redis_cache = RedisSessionCache(
+                    RedisStore(settings.redis_url),
+                    default_ttl=settings.memory_session_ttl,
+                )
+                app.state.redis_cache = redis_cache
+
+            qdrant_store = MemoryQdrantStore(
+                workspace_id=workspace_id,
+                host=settings.qdrant_host,
+                port=settings.qdrant_http_port,
+            )
+            mem_search = MemorySearchService(
+                qdrant=qdrant_store, redis=redis_cache, pg_store=pg_store,
+            )
+            mem_service = MemoryService(
+                redis_cache=redis_cache, qdrant_store=qdrant_store,
+                pg_store=pg_store, workspace_id=workspace_id,
+                search=mem_search, event_bus=bus,
+            )
+            assembler = AgentContextAssembler(
+                memory_service=mem_service, memory_search=mem_search, settings=settings,
+            )
+            agent_service = AgentRegistryService(
+                AgentPersistence(engine), workspace_id=workspace_id, event_bus=bus,
+            )
+            creds_store = LlmUpstreamCredentialsStore(engine, fernet_key=settings.fernet_key)
+            credentials = UpstreamCredentialsResolver(
+                creds_store, default_key=settings.proxy_default_upstream_key,
+            )
+            activity_store = getattr(app.state, "activity_store", None)
+
+            def _enricher_for(ws: str) -> ToolResultEnricher:
+                return ToolResultEnricher(
+                    trie=entity_trie,
+                    fetch_memories=_fetch_entity_memories,
+                    settings=settings,
+                    activity_logger=ProxyActivityLogger(store=activity_store, workspace_id=ws),
+                )
+
+            return ProxyService(
+                assembler=assembler,
+                upstream_client=app.state.upstream_llm_client,
+                credentials=credentials,
+                agent_service=agent_service,
+                event_bus=bus,
+                settings=settings,
+                activity_logger_factory=lambda ws: ProxyActivityLogger(
+                    store=activity_store, workspace_id=ws,
+                ),
+                tool_result_enricher_factory=_enricher_for,
+                rag_stream_factory=build_rag_stream,
+            )
+
+        app.state.proxy_service_builder = _proxy_service_builder
+
+        app.include_router(proxy_router)
 
     # Lazy import benchmarker module router (optional dependency)
     try:
