@@ -794,6 +794,7 @@ class MemoryService:
         # same transaction. Only meaningful for paired reasons (those carry a
         # ``related_record_id``); low-confidence entries have none.
         mirror_id: str | None = None
+        mirror_target_id: str = ""  # partner record (B) — set iff mirror found
         if entry.related_record_id:
             mirror = await self._freshness_store.find_review_entry(
                 workspace_id,
@@ -804,6 +805,7 @@ class MemoryService:
             )
             if mirror is not None and mirror.id != review_id:
                 mirror_id = mirror.id
+                mirror_target_id = mirror.target_id
 
         # 3. Resolve the new status / verification_state / superseded_by.
         new_status: LifecycleStatus
@@ -876,8 +878,33 @@ class MemoryService:
             await self._freshness_store.delete_review_entry(workspace_id, review_id, conn=conn)
             if mirror_id is not None:
                 # Cascade-delete the mirror entry (MTRNIX-395) so the pair
-                # leaves the queue as a unit.
+                # leaves the queue as a unit. This is intentional for ALL
+                # actions, including ``merge_into`` a third record: the pair
+                # A<->B is considered settled once either side is resolved, so
+                # the B->A mirror is moot even when A merges into some C. If B
+                # is genuinely similar to the survivor, the Reconciler re-flags
+                # it on B's next pipeline pass.
                 await self._freshness_store.delete_review_entry(workspace_id, mirror_id, conn=conn)
+                # Give the partner record (B) its own audit row so a per-record
+                # review-history view explains why its queue entry vanished —
+                # otherwise the only trace is the ``mirror_review_entry_id`` on
+                # this (A) event. Same event_type so it surfaces in the shared
+                # audit stream; ``action="cascade_mirror"`` distinguishes it.
+                mirror_evt = MachineEvent(
+                    workspace_id=workspace_id,
+                    event_type="freshness_review_resolved",
+                    actor=actor,
+                    target_kind="memory_record",
+                    target_id=mirror_target_id,
+                    payload={
+                        "review_entry_id": mirror_id,
+                        "action": "cascade_mirror",
+                        "resolved_via_review_entry_id": review_id,
+                        "resolved_via_target_id": entry.target_id,
+                        "reason": entry.reason,
+                    },
+                )
+                await self._freshness_store.save_machine_event(mirror_evt, conn=conn)
             saved_evt = await self._freshness_store.save_machine_event(evt, conn=conn)
 
         # 7. Best-effort Qdrant payload sync.

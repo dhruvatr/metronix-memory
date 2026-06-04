@@ -442,9 +442,18 @@ class TestResolveReviewMirrorCascade:
         # Both the primary and the mirror were deleted.
         deleted_ids = {c.args[1] for c in fs.delete_review_entry.await_args_list}
         assert deleted_ids == {"r1", "r_mirror"}
-        # Mirror id recorded in the audit payload.
-        saved_evt = fs.save_machine_event.await_args.args[0]
-        assert saved_evt.payload["mirror_review_entry_id"] == "r_mirror"
+
+        # Two audit events: the primary (target=A) carrying the mirror link,
+        # and a dedicated cascade event on the partner record (target=B).
+        events = [c.args[0] for c in fs.save_machine_event.await_args_list]
+        primary = next(e for e in events if e.target_id == "mem001")
+        assert primary.payload["mirror_review_entry_id"] == "r_mirror"
+        partner = next(e for e in events if e.target_id == "mem002")
+        assert partner.event_type == "freshness_review_resolved"
+        assert partner.payload["action"] == "cascade_mirror"
+        assert partner.payload["review_entry_id"] == "r_mirror"
+        assert partner.payload["resolved_via_review_entry_id"] == "r1"
+        assert partner.payload["resolved_via_target_id"] == "mem001"
 
     async def test_no_mirror_lookup_for_unpaired_reason(self) -> None:
         """low_confidence_decision entries carry no related_record_id — the
