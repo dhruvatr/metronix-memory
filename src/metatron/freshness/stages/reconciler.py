@@ -158,6 +158,21 @@ class Reconciler:
             )
             if existing is not None:
                 return existing
+            # MTRNIX-395: a duplicate pair is undirected — when the partner
+            # record was processed first it created the mirror entry
+            # (target=related_id, related=target_id). Treat that as the same
+            # finding so the queue holds one row per pair, not two. (Single
+            # worker processes jobs sequentially; a TOCTOU window exists only
+            # under multi-worker deployments, accepted for now.)
+            mirror = await self._freshness_store.find_review_entry(
+                workspace_id,
+                target_id=related_id,
+                target_kind=target_kind,
+                reason=self.REASON,
+                related_record_id=target_id,
+            )
+            if mirror is not None:
+                return mirror
 
             entry = ReviewEntry(
                 workspace_id=workspace_id,

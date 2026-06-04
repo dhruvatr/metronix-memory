@@ -787,6 +787,24 @@ class MemoryService:
             raise MemoryNotFoundError(msg)
         old_status = record.status.value
 
+        # 2b. MTRNIX-395: a duplicate pair may have a mirror review entry
+        # (target=related, related=target) created when the partner record
+        # was processed in the opposite direction. Resolving this entry
+        # settles the pair, so the mirror is moot — cascade-delete it in the
+        # same transaction. Only meaningful for paired reasons (those carry a
+        # ``related_record_id``); low-confidence entries have none.
+        mirror_id: str | None = None
+        if entry.related_record_id:
+            mirror = await self._freshness_store.find_review_entry(
+                workspace_id,
+                target_id=entry.related_record_id,
+                target_kind="memory_record",
+                reason=entry.reason,
+                related_record_id=entry.target_id,
+            )
+            if mirror is not None and mirror.id != review_id:
+                mirror_id = mirror.id
+
         # 3. Resolve the new status / verification_state / superseded_by.
         new_status: LifecycleStatus
         if action_kind == "merge_into":
@@ -831,6 +849,7 @@ class MemoryService:
             target_id=entry.target_id,
             payload={
                 "review_entry_id": review_id,
+                "mirror_review_entry_id": mirror_id,
                 "action": action_kind,
                 "merge_into_target_id": merge_target,
                 "old_status": old_status,
@@ -842,15 +861,23 @@ class MemoryService:
         async with self._pg.begin() as conn:
             # ``superseded_by=None`` means "leave unchanged" per
             # ``update_lifecycle`` semantics; we only pass it for merge_into.
+            # ``bump_updated_at=True`` (MTRNIX-395): a human resolution is a
+            # freshness signal — refresh the clock so a kept record does not
+            # immediately re-STALE on the next scheduled scan.
             await self._pg.update_lifecycle(
                 workspace_id,
                 entry.target_id,
                 status=new_status,
                 verification_state=verification_state,
                 superseded_by=superseded_by,
+                bump_updated_at=True,
                 conn=conn,
             )
             await self._freshness_store.delete_review_entry(workspace_id, review_id, conn=conn)
+            if mirror_id is not None:
+                # Cascade-delete the mirror entry (MTRNIX-395) so the pair
+                # leaves the queue as a unit.
+                await self._freshness_store.delete_review_entry(workspace_id, mirror_id, conn=conn)
             saved_evt = await self._freshness_store.save_machine_event(evt, conn=conn)
 
         # 7. Best-effort Qdrant payload sync.

@@ -554,12 +554,26 @@ class MemoryPostgresStore:
         valid_until: datetime | None = None,
         append_tag: str | None = None,
         append_tags: list[str] | None = None,
+        bump_updated_at: bool = False,
         conn: AsyncConnection | None = None,
     ) -> MemoryRecord | None:
-        """Freshness-pipeline partial update for lifecycle columns.
+        """Partial update for lifecycle columns.
 
-        Only supplied fields are written. Always bumps ``updated_at``. The
-        ``append_tag`` helper lets Curator add a tag idempotently without
+        Only supplied fields are written. **By default does NOT touch
+        ``updated_at``** (MTRNIX-395): ``updated_at`` is the content-freshness
+        clock that ``FreshnessMonitor`` reads to decide STALE, and the
+        automated freshness pipeline (Linker/Monitor/Curator/DecisionEngine)
+        must not reset it — bumping it on the Linker's ``evidence_count``
+        write reset the clock on every pipeline pass, so STALE was unreachable.
+
+        ``bump_updated_at=True`` opts back into the bump for **human-initiated**
+        curation that genuinely refreshes the record — notably
+        ``MemoryService.resolve_review`` keeping/curating a record, where an
+        operator's decision IS a freshness signal and the record should not
+        immediately re-STALE on the next scan. Genuine content edits go through
+        ``save()``, which sets ``updated_at`` itself.
+
+        The ``append_tag`` helper lets Curator add a tag idempotently without
         having to round-trip the full record. ``append_tags`` is the batch
         variant used by the freshness DecisionEngine to merge N tags in a
         single UPDATE (no N+1); dedup happens in SQL so concurrent writers
@@ -625,11 +639,16 @@ class MemoryPostgresStore:
                     unique_tags.append(t)
             params["new_tags"] = json.dumps(unique_tags)
 
+        # MTRNIX-395: only bump ``updated_at`` when the caller asks (human
+        # curation). The automated freshness pipeline passes the default
+        # (False) so its writes do not reset the STALE clock — see docstring.
+        if bump_updated_at:
+            set_parts.append("updated_at = :updated_at")
+            params["updated_at"] = datetime.now(UTC)
+
         if not set_parts:
             return await self.get(workspace_id, record_id)
 
-        set_parts.append("updated_at = :updated_at")
-        params["updated_at"] = datetime.now(UTC)
         set_clause = ", ".join(set_parts)
 
         sql = text(
