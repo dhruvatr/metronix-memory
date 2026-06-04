@@ -176,6 +176,9 @@ class TestResolveReviewKeep:
         assert kw["status"] == LifecycleStatus.ACTIVE
         assert kw["verification_state"] == "keep_resolved"
         assert kw.get("superseded_by") is None
+        # MTRNIX-395: a human keep refreshes the freshness clock so the record
+        # does not re-STALE on the next scheduled scan.
+        assert kw["bump_updated_at"] is True
 
         fs.delete_review_entry.assert_awaited_once()
         assert fs.delete_review_entry.await_args.args == ("ws1", "r1")
@@ -411,6 +414,66 @@ class TestResolveReviewAtomicity:
         assert _RollbackTxn.exited_with_exception
         # Best-effort Qdrant sync must not run when the transaction fails.
         deps["qdrant"].update_payload.assert_not_awaited()
+
+
+class TestResolveReviewMirrorCascade:
+    """MTRNIX-395: resolving one side of a duplicate pair cascade-deletes the
+    mirror review entry so the pair leaves the queue as a unit."""
+
+    async def test_mirror_entry_is_cascade_deleted(self) -> None:
+        fs = MagicMock()
+        # Primary entry is paired (carries a related_record_id).
+        primary = _review(review_id="r1", target_id="mem001")
+        primary.related_record_id = "mem002"
+        fs.list_review_entries = AsyncMock(return_value=[primary])
+        # Mirror lookup (target=mem002, related=mem001) returns the mirror.
+        mirror = _review(review_id="r_mirror", target_id="mem002")
+        mirror.related_record_id = "mem001"
+        fs.find_review_entry = AsyncMock(return_value=mirror)
+        fs.delete_review_entry = AsyncMock(return_value=True)
+        fs.save_machine_event = AsyncMock(side_effect=lambda evt, **_kw: evt)
+        pg = MagicMock()
+        pg.get = AsyncMock(return_value=_record())
+        pg.update_lifecycle = AsyncMock(return_value=_record(status=LifecycleStatus.ARCHIVED))
+        service, _ = _make_service(freshness_store=fs, pg_store=pg)
+
+        await service.resolve_review("ws1", review_id="r1", action="archive")
+
+        # Both the primary and the mirror were deleted.
+        deleted_ids = {c.args[1] for c in fs.delete_review_entry.await_args_list}
+        assert deleted_ids == {"r1", "r_mirror"}
+
+        # Two audit events: the primary (target=A) carrying the mirror link,
+        # and a dedicated cascade event on the partner record (target=B).
+        events = [c.args[0] for c in fs.save_machine_event.await_args_list]
+        primary = next(e for e in events if e.target_id == "mem001")
+        assert primary.payload["mirror_review_entry_id"] == "r_mirror"
+        partner = next(e for e in events if e.target_id == "mem002")
+        assert partner.event_type == "freshness_review_resolved"
+        assert partner.payload["action"] == "cascade_mirror"
+        assert partner.payload["review_entry_id"] == "r_mirror"
+        assert partner.payload["resolved_via_review_entry_id"] == "r1"
+        assert partner.payload["resolved_via_target_id"] == "mem001"
+
+    async def test_no_mirror_lookup_for_unpaired_reason(self) -> None:
+        """low_confidence_decision entries carry no related_record_id — the
+        mirror lookup must be skipped entirely."""
+        fs = MagicMock()
+        fs.list_review_entries = AsyncMock(
+            return_value=[_review(reason="low_confidence_decision")]
+        )
+        fs.find_review_entry = AsyncMock()
+        fs.delete_review_entry = AsyncMock(return_value=True)
+        fs.save_machine_event = AsyncMock(side_effect=lambda evt, **_kw: evt)
+        pg = MagicMock()
+        pg.get = AsyncMock(return_value=_record())
+        pg.update_lifecycle = AsyncMock(return_value=_record(status=LifecycleStatus.ACTIVE))
+        service, _ = _make_service(freshness_store=fs, pg_store=pg)
+
+        await service.resolve_review("ws1", review_id="r1", action="keep")
+
+        fs.find_review_entry.assert_not_awaited()
+        fs.delete_review_entry.assert_awaited_once()
 
 
 class TestSearchStatusFilterPlumbing:

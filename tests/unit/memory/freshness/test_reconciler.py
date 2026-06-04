@@ -117,6 +117,40 @@ class TestReconciler:
         assert out is existing
         fs.save_review_entry.assert_not_awaited()
 
+    async def test_mirror_pair_is_not_duplicated(self) -> None:
+        """MTRNIX-395: if the reverse-direction entry exists, reuse it.
+
+        When the partner record (rec2) was processed first it created
+        (target=rec2, related=rec1). Processing rec1 must NOT create the
+        mirror (target=rec1, related=rec2) — the pair is one finding.
+        """
+        rec, pg, qdrant, coord, fs = _build_reconciler()
+        coord.acquire_lock.return_value = "tok"
+        pg.get.return_value = _record()
+        qdrant.search.return_value = [
+            {"record_id": "rec1", "score": 1.0},
+            {"record_id": "rec2", "score": 0.95},
+        ]
+        mirror = ReviewEntry(
+            id="mirror",
+            workspace_id="ws1",
+            target_id="rec2",
+            target_kind="memory_record",
+            reason="possible_duplicate",
+            related_record_id="rec1",
+            content="",
+            confidence=0.95,
+        )
+        # Forward lookup (target=rec1, related=rec2) → None; mirror lookup
+        # (target=rec2, related=rec1) → the existing mirror entry.
+        fs.find_review_entry.side_effect = [None, mirror]
+
+        with patch(_ALIAS_PATH, return_value=None):
+            out = await rec.run("ws1", "rec1")
+
+        assert out is mirror
+        fs.save_review_entry.assert_not_awaited()
+
     async def test_lock_contention_returns_none(self) -> None:
         rec, pg, qdrant, coord, _fs = _build_reconciler()
         coord.acquire_lock.return_value = None
