@@ -3,6 +3,11 @@ name: Deploy DEV
 on:
   workflow_dispatch:
     inputs:
+      wipe_volumes:
+        description: 'Stop containers and remove all volumes before deploy?'
+        required: true
+        type: boolean
+        default: false
       extra_var_1:
         description: 'Optional variable 1 (format: VAR_NAME=VALUE)'
         required: false
@@ -135,7 +140,15 @@ jobs:
              sudo chmod 644 /usr/local/bin/docker-compose.yml && \
              echo '✅ docker-compose.yml updated' && \
              rm -f /tmp/docker-compose.yml"
-
+             
+    - name: Stop containers and remove volumes
+      if: ${{ github.event.inputs.wipe_volumes == 'true' }}
+      run: |
+        ssh -o StrictHostKeyChecking=no \
+            -i /tmp/ssh_key \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST_DEV }} \
+            "cd /usr/local/bin && sudo docker compose down --volumes --remove-orphans || true"
+            
     - name: Deploy application
       run: |
         ssh -o StrictHostKeyChecking=no \
