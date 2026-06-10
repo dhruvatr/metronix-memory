@@ -21,7 +21,7 @@ def merge_env(template: str, overrides: dict[str, str]) -> str:
             out_lines.append(line)
     for key, value in remaining.items():
         out_lines.append(f"{key}={value}")
-    return "\n".join(out_lines) + "\n"
+    return "\n".join(out_lines).rstrip("\n") + "\n"
 
 
 def atomic_write(target: Path, content: str) -> None:
@@ -34,6 +34,8 @@ def atomic_write(target: Path, content: str) -> None:
             fh.write(content)
         os.replace(tmp, target)
     except BaseException:
-        if os.path.exists(tmp):
+        try:
             os.unlink(tmp)
+        except FileNotFoundError:
+            pass
         raise

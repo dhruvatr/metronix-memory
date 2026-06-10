@@ -31,6 +31,12 @@ def test_does_not_touch_unrelated_keys():
     assert "LLM_PROVIDER=ollama" in out
 
 
+def test_no_double_trailing_newline_when_template_ends_blank():
+    out = merge_env("A=1\n\n", {"A": "2"})
+    assert out.endswith("2\n")
+    assert not out.endswith("\n\n")
+
+
 def test_atomic_write_creates_file(tmp_path):
     target = tmp_path / ".env"
     atomic_write(target, "A=1\n")
