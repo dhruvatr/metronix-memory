@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+
 from .config import InstallerConfig, LlmProvider
+from .docker import DockerShell
 from .envfile import merge_env
 from .profiles import compose_profiles_value
 from .secrets import generate_fernet_key, generate_password
@@ -51,3 +54,16 @@ def render_artifacts(cfg: InstallerConfig, template: str) -> tuple[str, str]:
     overrides = build_overrides(cfg)
     env_text = merge_env(template, overrides)
     return env_text, overrides["COMPOSE_PROFILES"]
+
+
+def launch_stack(
+    shell: DockerShell,
+    compose_file: str,
+    compose_profiles: str,
+    registry_login,
+) -> bool:
+    env = dict(os.environ)
+    env["COMPOSE_PROFILES"] = compose_profiles
+    if not shell.compose_pull(compose_file, env, registry_login):
+        return False
+    return shell.compose_up(compose_file, env).returncode == 0

@@ -6,8 +6,9 @@ from pathlib import Path
 from . import __version__, ui
 from .answers import load_answers_yaml
 from .config import InstallerConfig, Mode, Profile, defaults_for
+from .docker import CommandResult, DockerShell
 from .envfile import atomic_write
-from .runner import render_artifacts
+from .runner import launch_stack, render_artifacts
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,5 +49,21 @@ def main(argv: list[str] | None = None) -> int:
 
     atomic_write(repo_root / ".env", env_text)
     ui.success("Wrote .env")
-    # Launch wiring (compose pull/up + healthcheck table) is added in Task 12.
+
+    shell = DockerShell()
+    compose_file = str(repo_root / "install" / "docker-compose.yml")
+
+    def _login() -> CommandResult:
+        import getpass
+
+        ui.info("Registry requires authentication.")
+        user = cfg.github_user or input("GitHub username: ")
+        token = cfg.github_token or getpass.getpass("GitHub token: ")
+        return shell.login("ghcr.io", user, token)
+
+    ui.info("Pulling images and starting the stack...")
+    if not launch_stack(shell, compose_file, compose_profiles, registry_login=_login):
+        ui.error("Stack failed to start. Check `docker compose logs`.")
+        return 1
+    ui.success("Stack started.")
     return 0
