@@ -14,12 +14,12 @@ class CommandResult:
     stderr: str
 
 
-def _default_runner(argv: list[str], env: dict | None = None) -> CommandResult:
+def _default_runner(argv: list[str], env: dict[str, str] | None = None) -> CommandResult:
     proc = subprocess.run(argv, capture_output=True, text=True, env=env)
     return CommandResult(proc.returncode, proc.stdout, proc.stderr)
 
 
-Runner = Callable[[list[str], dict | None], CommandResult]
+Runner = Callable[[list[str], dict[str, str] | None], CommandResult]
 
 
 class DockerShell:
@@ -30,13 +30,14 @@ class DockerShell:
         return self._run(["docker", "version", "--format", "{{.Server.Version}}"], None)
 
     def login(self, registry: str, user: str, token: str) -> CommandResult:
-        # token on stdin would be ideal; argv form kept simple + testable.
+        # SECURITY: token is on argv (visible in `ps`) — acceptable for a local
+        # single-user install. If reused server-side/CI, switch to --password-stdin.
         return self._run(["docker", "login", registry, "-u", user, "-p", token], None)
 
     def compose_pull(
         self,
         compose_file: str,
-        env: dict,
+        env: dict[str, str],
         registry_login: Callable[[], CommandResult] | None,
     ) -> bool:
         argv = ["docker", "compose", "-f", compose_file, "pull"]
@@ -50,10 +51,10 @@ class DockerShell:
             return self._run(argv, env).returncode == 0
         return False
 
-    def compose_up(self, compose_file: str, env: dict) -> CommandResult:
+    def compose_up(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         return self._run(["docker", "compose", "-f", compose_file, "up", "-d"], env)
 
-    def compose_ps(self, compose_file: str, env: dict) -> CommandResult:
+    def compose_ps(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         return self._run(
             ["docker", "compose", "-f", compose_file, "ps", "--format", "json"], env
         )
