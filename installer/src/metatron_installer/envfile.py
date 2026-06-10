@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import tempfile
@@ -34,8 +35,6 @@ def atomic_write(target: Path, content: str) -> None:
             fh.write(content)
         os.replace(tmp, target)
     except BaseException:
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
-        except FileNotFoundError:
-            pass
         raise

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 from .config import InstallerConfig, LlmProvider
-from .docker import DockerShell
 from .envfile import merge_env
 from .profiles import compose_profiles_value
 from .secrets import generate_fernet_key, generate_password
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .docker import CommandResult, DockerShell
 
 # Which LLM providers write an API key into .env, and under which key.
 _LLM_KEY_ENV = {
@@ -60,7 +65,7 @@ def launch_stack(
     shell: DockerShell,
     compose_file: str,
     compose_profiles: str,
-    registry_login,
+    registry_login: Callable[[], CommandResult] | None,
 ) -> bool:
     env = dict(os.environ)
     env["COMPOSE_PROFILES"] = compose_profiles

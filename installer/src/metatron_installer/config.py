@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class Mode(str, Enum):
+class Mode(StrEnum):
     SERVER = "server"
     LOCAL = "local"
 
 
-class Profile(str, Enum):
+class Profile(StrEnum):
     MINIMAL = "minimal"
     FULL = "full"
     CUSTOM = "custom"
 
 
-class LlmProvider(str, Enum):
+class LlmProvider(StrEnum):
     OLLAMA = "ollama"
     DEEPSEEK = "deepseek"
     OPENROUTER = "openrouter"

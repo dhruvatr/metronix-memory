@@ -1,5 +1,4 @@
 from metatron_installer.config import (
-    InstallerConfig,
     LlmProvider,
     Mode,
     Profile,

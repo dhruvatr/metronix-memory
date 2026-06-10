@@ -1,5 +1,4 @@
-from metatron_installer.envfile import merge_env, atomic_write
-
+from metatron_installer.envfile import atomic_write, merge_env
 
 TEMPLATE = """\
 # Database

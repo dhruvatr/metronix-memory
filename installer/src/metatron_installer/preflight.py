@@ -3,8 +3,11 @@ from __future__ import annotations
 import platform
 import re
 import socket
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Host ports published by install/docker-compose.yml -> service.
 PUBLISHED_PORTS: dict[int, str] = {

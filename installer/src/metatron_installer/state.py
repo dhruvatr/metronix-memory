@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 
-class InstallAction(str, Enum):
+class InstallAction(StrEnum):
     INSTALL = "install"
     RECONFIGURE = "reconfigure"
     RESTART = "restart"
