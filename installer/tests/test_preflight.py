@@ -31,3 +31,9 @@ def test_published_ports_cover_known_services():
     assert 8000 in PUBLISHED_PORTS  # api
     assert 5433 in PUBLISHED_PORTS  # postgres (full-stack offset)
     assert 7688 in PUBLISHED_PORTS  # neo4j bolt
+
+
+def test_detect_os_returns_known_value():
+    from metatron_installer.preflight import detect_os
+
+    assert detect_os() in {"linux", "darwin", "windows"}

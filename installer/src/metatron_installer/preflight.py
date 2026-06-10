@@ -52,7 +52,11 @@ def parse_docker_version(output: str) -> DockerInfo:
 
 def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("127.0.0.1", port)) == 0
+        s.settimeout(1.0)
+        try:
+            return s.connect_ex(("127.0.0.1", port)) == 0
+        except OSError:
+            return False
 
 
 def find_port_conflicts(
