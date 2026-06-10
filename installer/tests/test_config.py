@@ -25,3 +25,4 @@ def test_config_is_serializable_to_dict():
     d = cfg.to_dict()
     assert d["mode"] == "local"
     assert d["profile"] == "minimal"
+    assert d["llm_provider"] == "deepseek"

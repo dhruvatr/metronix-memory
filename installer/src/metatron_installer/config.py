@@ -48,7 +48,7 @@ class InstallerConfig:
     github_user: str = ""
     github_token: str = ""
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         d = asdict(self)
         d["mode"] = self.mode.value
         d["profile"] = self.profile.value
