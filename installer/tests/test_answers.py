@@ -30,3 +30,10 @@ def test_minimal_with_ollama_no_host_raises():
     text = "mode: server\nprofile: minimal\nllm_provider: ollama\nollama_host: ''\n"
     with pytest.raises(AnswersError):
         load_answers_yaml_text(text)
+
+
+def test_empty_yaml_returns_defaulted_config():
+    cfg = load_answers_yaml_text("")
+    assert cfg.mode is Mode.SERVER
+    assert cfg.profile is Profile.MINIMAL
+    assert cfg.llm_provider is LlmProvider.DEEPSEEK
