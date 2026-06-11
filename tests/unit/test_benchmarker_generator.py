@@ -219,3 +219,68 @@ class TestTokenUsage:
         )
         details = gen.get_token_usage_details()
         assert details["total_tokens"] == 0
+
+
+class TestSafeUsageAccounting:
+    """Regression: DeepSeek returns a ``completion_tokens_details`` object whose
+    OpenAI-specific subfields (``accepted_prediction_tokens`` /
+    ``rejected_prediction_tokens``) are ``None`` (predicted-outputs is not
+    implemented). Upstream ``Usage.add_usage`` appends those ``None`` values and
+    ``get_usage()`` later sums them, raising ``TypeError`` and discarding the
+    already-generated questions with a 500.
+    """
+
+    @staticmethod
+    def _make_chat():
+        from benchmark_qed.config.llm_config import LLMConfig, LLMProvider
+
+        from metatron.benchmarker.services.generator import _SafeOpenAIChat
+
+        config = LLMConfig(
+            provider=LLMProvider.OpenAIChat,
+            model="deepseek-v4-pro",
+            api_key="stub",
+            concurrent_requests=1,
+            init_args={"base_url": "https://api.deepseek.com"},
+        )
+        return _SafeOpenAIChat(config)
+
+    def test_get_usage_coerces_none_prediction_tokens(self):
+        chat = self._make_chat()
+        chat._usage.add_usage(
+            prompt_tokens=10,
+            completion_tokens=20,
+            accepted_prediction_tokens=None,
+            rejected_prediction_tokens=None,
+        )
+
+        usage = chat.get_usage()
+
+        assert usage["total_tokens"] == 30
+        assert usage["accepted_prediction_tokens"] == 0
+        assert usage["rejected_prediction_tokens"] == 0
+
+    def test_get_usage_unaffected_without_none(self):
+        chat = self._make_chat()
+        chat._usage.add_usage(prompt_tokens=5, completion_tokens=7)
+
+        usage = chat.get_usage()
+
+        assert usage["total_tokens"] == 12
+
+    def test_count_tokens_used_survives_usage_error(self):
+        """Token accounting must never crash question generation."""
+        gen = BenchmarkGenerator(deepseek_api_key="key", embedding_api_key="key")
+        gen.llm = MagicMock()
+        gen.llm.get_usage.side_effect = TypeError("boom")
+
+        assert gen.count_tokens_used() == 0
+
+    def test_get_token_usage_details_survives_usage_error(self):
+        gen = BenchmarkGenerator(deepseek_api_key="key", embedding_api_key="key")
+        gen.llm = MagicMock()
+        gen.llm.get_usage.side_effect = TypeError("boom")
+
+        details = gen.get_token_usage_details()
+
+        assert details["llm_total_tokens"] == 0
