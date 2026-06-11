@@ -18,13 +18,34 @@ Open-source enterprise knowledge management system. Ingest documents from Conflu
 
 ### One-Line Installation
 
+**Linux / macOS:**
 ```bash
-curl https://app.mtrnix.com/install.sh | bash
+curl -fsSL https://app.mtrnix.com/install.sh | bash
 ```
 
-This automatically checks your system (Python 3.12+, Docker, Git), clones the repository, and starts the stack.
+**Windows (PowerShell):**
+```powershell
+irm https://app.mtrnix.com/install.ps1 | iex
+```
 
-**Security tip:** Always verify the checksum before piping to bash:
+The bootstrap ensures `uv` + Python, then launches the cross-platform **setup wizard**:
+preflight checks (Docker, ports, disk), guided configuration (mode, LLM provider, profile,
+auto-generated secrets), and stack launch with live health status. Headless servers (over SSH)
+and local machines are both supported. Re-running the wizard detects an existing install and
+offers reconfigure / restart / upgrade / uninstall.
+
+**Profiles:**
+- `minimal` — backend only (Postgres, Qdrant, Neo4j, Redis, API, SPLADE, freshness worker); LLM + embeddings external.
+- `full` — `minimal` + bundled Ollama, embedding-proxy, and OpenWebUI (self-contained).
+- `custom` — `minimal` base plus per-service toggles.
+
+**Non-interactive / CI:**
+```bash
+bash install/bootstrap.sh --config answers.yaml --non-interactive
+bash install/bootstrap.sh --non-interactive --dry-run   # render .env without launching Docker
+```
+
+**Security tip:** Always verify the checksum before piping to a shell:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openclaw/metatron/main/.sha256sum -o install.sha256
 curl -fsSL https://app.mtrnix.com/install.sh -o install.sh
