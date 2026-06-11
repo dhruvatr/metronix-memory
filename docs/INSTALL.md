@@ -30,8 +30,8 @@ on a headless server over SSH as on a local machine.
 ### From a cloned repo
 
 ```bash
-git clone https://github.com/openclaw/metatron.git
-cd metatron
+git clone https://github.com/mtrnix/metatroncore.git
+cd metatroncore
 bash install/bootstrap.sh          # Linux/macOS
 # or, on Windows:
 # pwsh install/bootstrap.ps1
@@ -42,8 +42,9 @@ bash install/bootstrap.sh          # Linux/macOS
 The steps run in this order (LLM provider is asked before profile, because choosing self-hosted
 Ollama changes which services must run):
 
-1. **Preflight** — OS/arch, Docker presence + daemon, free disk, and port conflicts across all
+1. **Preflight** — OS detection, Docker presence + daemon reachable, and port conflicts across all
    published host ports (5433, 6335/6336, 7475/7688, 8000, 8001, 8080, 6379, 3000/3001, 3080, 11435).
+   A missing/unreachable Docker aborts; port conflicts are warnings.
 2. **Mode** — `server` (bind `0.0.0.0`) or `local` (bind `127.0.0.1`).
 3. **LLM provider** — `ollama` / `deepseek` / `openrouter` / `custom`. An API key is requested only
    for providers that need one.
@@ -54,8 +55,8 @@ Ollama changes which services must run):
 6. **Integrations** (optional, opt-in) — OpenAI-compat key, MCP key, bot tokens.
 7. **Registry** — images are pulled anonymously first; if the registry is private, you are prompted
    for a GitHub token and `docker login` is run before retrying the pull.
-8. **Render + launch** — `.env` is written atomically, then `docker compose pull` + `up -d`, with a
-   live health-status table.
+8. **Render + launch** — `.env` is written atomically, then `docker compose pull` + `up -d`,
+   followed by a health-status table (snapshot of `docker compose ps`).
 
 ## Profiles
 

@@ -70,3 +70,29 @@ def find_port_conflicts(
         for p, svc in PUBLISHED_PORTS.items()
         if checker(p)
     ]
+
+
+def summarize(
+    docker: DockerInfo, conflicts: list[PortConflict]
+) -> tuple[bool, list[str]]:
+    """Turn preflight probes into a go/no-go decision plus human-readable lines.
+
+    A missing/unreachable Docker is a hard stop (ok=False). Port conflicts are
+    warnings only — the operator may have intentionally remapped or be re-running.
+    """
+    messages: list[str] = []
+    ok = True
+    if docker.present:
+        messages.append(f"Docker {docker.major}.{docker.minor} detected")
+    else:
+        ok = False
+        messages.append(
+            "Docker not available — is it installed and running? "
+            "Start Docker Desktop, or `sudo systemctl start docker`."
+        )
+    for c in sorted(conflicts, key=lambda c: c.port):
+        messages.append(
+            f"Port {c.port} (for {c.service}) is already in use — "
+            "free it or change the host mapping in install/docker-compose.yml."
+        )
+    return ok, messages

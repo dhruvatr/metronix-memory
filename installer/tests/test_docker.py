@@ -1,4 +1,4 @@
-from metatron_installer.docker import CommandResult, DockerShell
+from metatron_installer.docker import CommandResult, DockerShell, parse_ps_services
 
 
 class FakeRunner:
@@ -54,3 +54,51 @@ def test_pull_succeeds_anonymously_without_login():
     ok = sh.compose_pull(compose_file="install/docker-compose.yml", env={}, registry_login=None)
     assert ok is True
     assert all(c[:2] != ["docker", "login"] for c in runner.calls)
+
+
+def test_parse_ps_services_ndjson():
+    out = (
+        '{"Service": "postgres", "Status": "running"}\n'
+        '{"Service": "neo4j", "Status": "starting"}\n'
+    )
+    assert parse_ps_services(out) == [("postgres", "running"), ("neo4j", "starting")]
+
+
+def test_parse_ps_services_json_array():
+    out = '[{"Name": "metatron-full-api", "State": "running"}]'
+    assert parse_ps_services(out) == [("metatron-full-api", "running")]
+
+
+def test_parse_ps_services_empty_and_malformed():
+    assert parse_ps_services("") == []
+    assert parse_ps_services("not json\n{bad}") == []
+
+
+def test_compose_restart_argv():
+    runner = FakeRunner([CommandResult(0, "", "")])
+    sh = DockerShell(runner=runner)
+    sh.compose_restart("install/docker-compose.yml", env={})
+    assert runner.calls[0] == ["docker", "compose", "-f", "install/docker-compose.yml", "restart"]
+
+
+def test_compose_down_with_and_without_volumes():
+    runner = FakeRunner([CommandResult(0, "", ""), CommandResult(0, "", "")])
+    sh = DockerShell(runner=runner)
+    sh.compose_down("install/docker-compose.yml", env={})
+    sh.compose_down("install/docker-compose.yml", env={}, remove_volumes=True)
+    assert runner.calls[0] == ["docker", "compose", "-f", "install/docker-compose.yml", "down"]
+    assert runner.calls[1][-1] == "--volumes"
+
+
+def test_running_container_names_parses_lines():
+    runner = FakeRunner([CommandResult(0, "metatron-full-api\nmetatron-full-postgres\n", "")])
+    sh = DockerShell(runner=runner)
+    names = sh.running_container_names()
+    assert names == ["metatron-full-api", "metatron-full-postgres"]
+    assert runner.calls[0] == ["docker", "ps", "--format", "{{.Names}}"]
+
+
+def test_running_container_names_empty_on_failure():
+    runner = FakeRunner([CommandResult(1, "", "cannot connect to docker daemon")])
+    sh = DockerShell(runner=runner)
+    assert sh.running_container_names() == []

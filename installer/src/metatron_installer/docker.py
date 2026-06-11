@@ -1,10 +1,44 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 
 _AUTH_MARKERS = ("401", "denied", "unauthorized", "forbidden", "403")
+
+
+def parse_ps_services(stdout: str) -> list[tuple[str, str]]:
+    """Parse `docker compose ps --format json` into [(service, status)].
+
+    Compose emits either a JSON array or newline-delimited JSON objects depending
+    on version; handle both. Malformed/empty lines are skipped.
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return []
+    objects: list[dict]
+    try:
+        loaded = json.loads(text)
+        objects = loaded if isinstance(loaded, list) else [loaded]
+    except json.JSONDecodeError:
+        objects = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                objects.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    rows: list[tuple[str, str]] = []
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        name = obj.get("Service") or obj.get("Name") or "?"
+        status = obj.get("Status") or obj.get("State") or "?"
+        rows.append((name, status))
+    return rows
 
 
 @dataclass
@@ -58,6 +92,23 @@ class DockerShell:
         return self._run(
             ["docker", "compose", "-f", compose_file, "ps", "--format", "json"], env
         )
+
+    def compose_restart(self, compose_file: str, env: dict[str, str]) -> CommandResult:
+        return self._run(["docker", "compose", "-f", compose_file, "restart"], env)
+
+    def compose_down(
+        self, compose_file: str, env: dict[str, str], remove_volumes: bool = False
+    ) -> CommandResult:
+        argv = ["docker", "compose", "-f", compose_file, "down"]
+        if remove_volumes:
+            argv.append("--volumes")
+        return self._run(argv, env)
+
+    def running_container_names(self) -> list[str]:
+        res = self._run(["docker", "ps", "--format", "{{.Names}}"], None)
+        if res.returncode != 0:
+            return []
+        return [line.strip() for line in res.stdout.splitlines() if line.strip()]
 
     def logs_tail(self, container: str, lines: int = 40) -> CommandResult:
         return self._run(["docker", "logs", "--tail", str(lines), container], None)

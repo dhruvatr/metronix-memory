@@ -29,10 +29,10 @@ irm https://app.mtrnix.com/install.ps1 | iex
 ```
 
 The bootstrap ensures `uv` + Python, then launches the cross-platform **setup wizard**:
-preflight checks (Docker, ports, disk), guided configuration (mode, LLM provider, profile,
-auto-generated secrets), and stack launch with live health status. Headless servers (over SSH)
-and local machines are both supported. Re-running the wizard detects an existing install and
-offers reconfigure / restart / upgrade / uninstall.
+preflight checks (Docker + port conflicts), guided configuration (mode, LLM provider, profile,
+auto-generated secrets), and stack launch with a post-up health-status table. Headless servers
+(over SSH) and local machines are both supported. Re-running the wizard detects an existing
+install and offers reconfigure / restart / upgrade / uninstall.
 
 **Profiles:**
 - `minimal` — backend only (Postgres, Qdrant, Neo4j, Redis, API, SPLADE, freshness worker); LLM + embeddings external.

@@ -23,6 +23,10 @@ def info(text: str) -> None:
     console.print(f"[cyan]→[/cyan] {text}")
 
 
+def warning(text: str) -> None:
+    console.print(f"[yellow]⚠[/yellow] {text}")
+
+
 def status_table(rows: list[tuple[str, str]]) -> None:
     table = Table("Service", "Status")
     for name, state in rows:
