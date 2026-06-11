@@ -45,6 +45,50 @@ MAX_EMBEDDING_RETRIES = 3  # Number of embedding creation attempts
 GLOBAL_QUESTIONS_RATIO = 0.1  # Ratio of global questions (10%)
 
 
+class _SafeOpenAIChat(OpenAIChat):
+    """``OpenAIChat`` tolerant of OpenAI-incompatible token accounting.
+
+    DeepSeek (and other OpenAI-compatible providers) return a
+    ``completion_tokens_details`` object whose OpenAI-specific subfields
+    (``accepted_prediction_tokens`` / ``rejected_prediction_tokens`` — the
+    predicted-outputs feature) are ``None``. Upstream
+    ``benchmark_qed.llm.provider.openai.BaseOpenAIChat.chat`` only guards against
+    the *details* object being absent, so those ``None`` values get appended to
+    the usage token lists. The error does not surface during generation —
+    BenchmarkQED's question generators never read usage (only its ``autoq`` /
+    ``autoe`` CLIs do, which Metatron does not use). It surfaces afterwards, when
+    Metatron reads the accumulated usage via :meth:`count_tokens_used`:
+    ``get_usage()`` calls ``Usage.model_dump()``, which evaluates the computed
+    ``sum([..., None])`` fields and raises ``TypeError``. Before this wrapper
+    that unguarded read bubbled up as a 500 and discarded the questions that had
+    already been generated.
+
+    We coerce ``None`` to ``0`` in the private token lists before serialising,
+    so token accounting degrades gracefully (prediction tokens read as 0, which
+    is accurate for providers that do not implement the feature).
+    """
+
+    _USAGE_TOKEN_FIELDS = (
+        "_prompt_tokens",
+        "_completion_tokens",
+        "_prompt_cached_tokens",
+        "_completion_reasoning_tokens",
+        "_accepted_prediction_tokens",
+        "_rejected_prediction_tokens",
+    )
+
+    def get_usage(self) -> dict[str, Any]:
+        for field in self._USAGE_TOKEN_FIELDS:
+            values = getattr(self._usage, field, None)
+            if values and any(v is None for v in values):
+                setattr(
+                    self._usage,
+                    field,
+                    [v if v is not None else 0 for v in values],
+                )
+        return super().get_usage()
+
+
 def _run_qed_in_thread(fn, *args, **kwargs):
     """Run an async BenchmarkQED function in a new event loop inside a thread.
 
@@ -183,7 +227,7 @@ class BenchmarkGenerator:
         """Lazily initialise LLM and embedding models."""
         if self.llm is None:
             llm_config = self._create_llm_config()
-            self.llm = OpenAIChat(llm_config)
+            self.llm = _SafeOpenAIChat(llm_config)
             logger.info("DeepSeek LLM initialised")
 
         if self.text_embedder is None:
@@ -688,11 +732,24 @@ class BenchmarkGenerator:
     # ------------------------------------------------------------------
 
     def count_tokens_used(self) -> int:
-        """Return total number of tokens used by the LLM."""
+        """Return total number of tokens used by the LLM.
+
+        Token accounting is informational metadata — a failure here must never
+        discard already-generated questions, so any error degrades to 0.
+        """
         if self.llm is None:
             return 0
-        usage = self.llm.get_usage()
-        return usage.get("total_tokens", 0)
+        return self._safe_usage(self.llm).get("total_tokens", 0)
+
+    def _safe_usage(self, model: OpenAIChat | OpenAIEmbedding | None) -> dict[str, Any]:
+        """Return ``model.get_usage()`` or an empty dict on any failure."""
+        if model is None:
+            return {}
+        try:
+            return model.get_usage()
+        except Exception as exc:  # noqa: BLE001 — accounting must not crash generation
+            logger.warning("Token usage accounting failed: %s", exc)
+            return {}
 
     def get_token_usage_details(self) -> dict:
         """Return detailed token usage statistics."""
@@ -703,11 +760,9 @@ class BenchmarkGenerator:
                 "completion_tokens": 0,
             }
 
-        llm_usage = self.llm.get_usage()
+        llm_usage = self._safe_usage(self.llm)
 
-        embedding_usage: dict = {}
-        if self.embedding_model:
-            embedding_usage = self.embedding_model.get_usage()
+        embedding_usage = self._safe_usage(self.embedding_model)
 
         return {
             "llm_total_tokens": llm_usage.get("total_tokens", 0),

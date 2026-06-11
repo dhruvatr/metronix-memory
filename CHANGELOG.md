@@ -71,6 +71,16 @@
   exist in both v1.3 and v1.4 stay within ±0.01.
 
 ### Fixed
+- fix(benchmarker): question generation no longer 500s on DeepSeek token accounting.
+  DeepSeek returns a `completion_tokens_details` object whose OpenAI-specific
+  subfields (`accepted_prediction_tokens` / `rejected_prediction_tokens`) are
+  `None`; BenchmarkQED's provider appends those `None`s to its usage token lists,
+  and Metatron's post-generation `count_tokens_used()` → `get_usage()` →
+  `model_dump()` then did `sum([..., None])` and raised `TypeError`, surfacing as
+  a 500 that discarded already-generated questions. Added `_SafeOpenAIChat`
+  (coerces `None` → 0 in usage token lists before serialising, so accounting
+  degrades gracefully) and made token accounting non-fatal (any failure logs and
+  returns 0 rather than crashing generation).
 - fix: KB freshness sync_downstream_stores resolves UUID → source_id
   (MTRNIX-313 follow-up, PR #95). `RawDocumentTarget.sync_downstream_stores`
   was passing the freshness job's `target_id` (raw_documents.id UUID)
