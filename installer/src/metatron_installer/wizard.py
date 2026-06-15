@@ -14,11 +14,20 @@ _KEY_PROMPT = {
 
 
 class Prompter(Protocol):
-    def select(self, message: str, choices: list[str], default: str | None = None) -> str: ...
-    def text(self, message: str, default: str = "") -> str: ...
-    def password(self, message: str) -> str: ...
-    def confirm(self, message: str, default: bool = False) -> bool: ...
-    def checkbox(self, message: str, choices: list[str]) -> list[str]: ...
+    def select(self, message: str, choices: list[str], default: str | None = None) -> str:
+        """Prompt the user to pick one of ``choices``; return the chosen value."""
+
+    def text(self, message: str, default: str = "") -> str:
+        """Prompt for free text; return the entered value or ``default``."""
+
+    def password(self, message: str) -> str:
+        """Prompt for a hidden secret; return the entered value."""
+
+    def confirm(self, message: str, default: bool = False) -> bool:
+        """Prompt a yes/no question; return the boolean answer."""
+
+    def checkbox(self, message: str, choices: list[str]) -> list[str]:
+        """Prompt a multi-select over ``choices``; return the chosen subset."""
 
 
 def run_wizard(prompter: Prompter) -> InstallerConfig:
