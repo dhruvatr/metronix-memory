@@ -1,13 +1,34 @@
 #Requires -Version 5.1
+<#
+.SYNOPSIS
+    Metatron Core installer entry point for Windows (PowerShell).
+
+.DESCRIPTION
+    Windows counterpart to bootstrap.sh. Installs uv if missing,
+    then launches the Python installer from the installer/ directory.
+
+.EXAMPLE
+    .\install\bootstrap.ps1
+    .\install\bootstrap.ps1 --dry-run
+    .\install\bootstrap.ps1 --non-interactive
+    .\install\bootstrap.ps1 --config answers.yaml
+#>
+
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$InstallerDir = Join-Path $RepoRoot "installer"
 
+# Install uv if not present.
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "Installing uv..."
-    powershell -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    irm https://astral.sh/uv/install.ps1 | iex
     $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
 }
 
-Set-Location "$RepoRoot\installer"
-uv run --project . python -m metatron_installer @args
+Push-Location $InstallerDir
+try {
+    uv run --project . python -m metatron_installer @args
+} finally {
+    Pop-Location
+}

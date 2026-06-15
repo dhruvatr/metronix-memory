@@ -26,7 +26,7 @@ PUBLISHED_PORTS: dict[int, str] = {
     11435: "ollama",
 }
 
-_VERSION_RE = re.compile(r"Docker version (?P<major>\d+)\.(?P<minor>\d+)")
+_VERSION_RE = re.compile(r"(?:Docker version )?(?P<major>\d+)\.(?P<minor>\d+)")
 
 
 @dataclass(frozen=True)

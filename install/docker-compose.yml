@@ -50,7 +50,7 @@ services:
     networks:
       - metatron_full
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell 'RETURN 1' || exit 1"]
+      test: ["CMD-SHELL", "if [ \"$$NEO4J_AUTH\" != \"none\" ] && [ -n \"$$NEO4J_AUTH\" ]; then PASS=$$(echo \"$$NEO4J_AUTH\" | cut -d/ -f2); echo \"$$PASS\" | cypher-shell -u neo4j -p \"$$PASS\" 'RETURN 1' || exit 1; else cypher-shell 'RETURN 1' || exit 1; fi"]
       interval: 10s
       timeout: 10s
       retries: 12

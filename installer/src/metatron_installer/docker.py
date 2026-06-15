@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -49,7 +50,8 @@ class CommandResult:
 
 
 def _default_runner(argv: list[str], env: dict[str, str] | None = None) -> CommandResult:
-    proc = subprocess.run(argv, capture_output=True, text=True, env=env)
+    merged = {**os.environ, **env} if env is not None else None
+    proc = subprocess.run(argv, capture_output=True, text=True, env=merged)
     return CommandResult(proc.returncode, proc.stdout, proc.stderr)
 
 

@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     repo_root = Path(__file__).resolve().parents[3]
-    env_path = repo_root / ".env"
+    env_path = repo_root / "install" / ".env"
     example_path = repo_root / ".env.example"
     example = example_path.read_text() if example_path.exists() else ""
 
@@ -160,7 +160,10 @@ def main(argv: list[str] | None = None) -> int:
 
     ui.info("Pulling images and starting the stack...")
     if not launch_stack(shell, compose_file, compose_profiles, registry_login=_login):
-        ui.error("Stack failed to start. Check `docker compose logs`.")
+        ui.error(
+            "Stack failed to start. Check logs:\n"
+            f"  docker compose -f {compose_file} logs"
+        )
         return 1
     ui.success("Stack started.")
     _render_status(shell, compose_file, launch_env)

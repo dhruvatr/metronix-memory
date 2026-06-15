@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -26,14 +27,23 @@ def merge_env(template: str, overrides: dict[str, str]) -> str:
 
 
 def atomic_write(target: Path, content: str) -> None:
-    """Write via temp file + os.replace so an interrupted write never leaves a partial .env."""
+    """Write via temp file + os.replace so an interrupted write never leaves a partial .env.
+
+    On Windows, ``os.replace`` may fail with ``PermissionError`` when the target is
+    held open (e.g. by an editor or anti-virus scanner).  The fallback copies the
+    content and removes the temp file, which is not atomic but is safe.
+    """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=".env.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(content)
-        os.replace(tmp, target)
+        try:
+            os.replace(tmp, target)
+        except PermissionError:
+            shutil.copy2(tmp, target)
+            os.unlink(tmp)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
