@@ -64,7 +64,10 @@ class DockerShell:
         self._last_stderr = ""
 
     def version(self) -> CommandResult:
-        return self._run(["docker", "version", "--format", "{{.Server.Version}}"], None)
+        try:
+            return self._run(["docker", "version", "--format", "{{.Server.Version}}"], None)
+        except FileNotFoundError:
+            return CommandResult(127, "", "docker: command not found")
 
     def login(self, registry: str, user: str, token: str) -> CommandResult:
         # SECURITY: token is on argv (visible in `ps`) — acceptable for a local

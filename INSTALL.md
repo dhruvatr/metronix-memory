@@ -4,9 +4,56 @@ One-command installer for Metatron Core: hybrid RAG + agent memory infrastructur
 
 ---
 
-## Linux / macOS
+## Prerequisites
 
-**Prerequisites:** Docker daemon running, `curl`, bash.
+The installer needs these tools. The bootstrap script will offer to install them
+if they're missing, or you can set them up manually.
+
+### Docker (required on all platforms)
+
+Metatron Core runs entirely in Docker containers. You need Docker Engine (Linux)
+or Docker Desktop (macOS / Windows) installed and running.
+
+| Platform | How to install | Verify |
+|----------|---------------|--------|
+| **Linux** | `curl -fsSL https://get.docker.com \| sh` — the bootstrap script offers this automatically | `docker info` |
+| **macOS** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or `brew install --cask docker` | Launch Docker.app, wait for whale icon |
+| **Windows** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Launch from Start Menu, wait for tray icon → "Engine running" |
+
+After installing Docker on Linux, add your user to the `docker` group to avoid `sudo`:
+```bash
+sudo usermod -aG docker $USER
+# Log out and back in (or run: newgrp docker)
+```
+
+### curl + bash (Linux / macOS)
+
+Built into macOS and all Linux distributions. No action needed.
+
+### Git (all platforms)
+
+Required to clone the repository.
+- **Linux:** `sudo apt install git` / `sudo dnf install git`
+- **macOS:** `brew install git` or bundled with Xcode Command Line Tools (`xcode-select --install`)
+- **Windows:** `winget install Git.Git` or https://git-scm.com/download/win
+
+### PowerShell 5.1+ (Windows only)
+
+Built into Windows 10 and later. Run `$PSVersionTable.PSVersion` to verify.
+
+### Disk space
+
+| Profile | Free space needed |
+|---------|------------------|
+| minimal | ~5 GB |
+| full | ~15 GB (includes Ollama models) |
+| custom | depends on selected services |
+
+Repository must be on drive **C:** on Windows (Docker Desktop shares C: by default).
+
+---
+
+## Linux / macOS
 
 ```bash
 # 1. Clone the branch with fixes
@@ -16,6 +63,13 @@ cd metatroncore
 # 2. Run the installer
 ./install/bootstrap.sh
 ```
+
+The bootstrap script will:
+- Install `uv` if missing
+- Check for Docker — if not found, **offer to install it**:
+  - **Linux:** runs `get.docker.com` (asks for sudo once, then continues as user)
+  - **macOS:** runs `brew install --cask docker` (then asks you to launch Docker.app manually)
+- Launch the Python installer wizard
 
 The wizard will ask:
 
@@ -72,8 +126,6 @@ docker compose -f install/docker-compose.yml down --volumes  # stop + delete all
 
 ## Windows
 
-**Prerequisites:** Docker Desktop running (tray icon → "Engine running"), PowerShell 5.1+ (built into Windows 10+), repository cloned to drive C: (Docker Desktop shares C: by default).
-
 ```powershell
 # 1. Allow script execution (one-time)
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
@@ -86,10 +138,11 @@ cd metatroncore
 .\install\bootstrap.ps1
 ```
 
-The installer will:
+The bootstrap script will:
 - Install `uv` if missing
-- Create a Python venv with dependencies
-- Run the same wizard as on Linux/macOS (same questions)
+- Check for Docker — if not found, **offer to open the Docker Desktop download page** in your browser
+- Check that Docker Engine is running
+- Launch the Python installer wizard (same questions as Linux/macOS)
 
 ### If Docker is still initializing after system boot
 
