@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -84,7 +85,10 @@ class DockerShell:
         argv = ["docker", "compose", "-f", compose_file, "pull"]
 
         def _try_pull() -> int:
-            proc = subprocess.run(argv, env=env, stdout=None, stderr=subprocess.PIPE, text=True)
+            sys.stdout.flush()
+            proc = subprocess.run(
+                argv, env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
+            )
             self._last_stderr = proc.stderr
             return proc.returncode
 
@@ -100,9 +104,10 @@ class DockerShell:
 
     def compose_up(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         """Start the stack (`up -d`) with live output, capturing stderr for diagnostics."""
+        sys.stdout.flush()
         proc = subprocess.run(
             ["docker", "compose", "-f", compose_file, "up", "-d"],
-            env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+            env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
         )
         return CommandResult(proc.returncode, "", proc.stderr)
 
@@ -125,9 +130,10 @@ class DockerShell:
             env_path.touch()
 
         try:
+            sys.stdout.flush()
             proc = subprocess.run(
                 ["docker", "compose", "-f", compose_file, "restart"],
-                env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+                env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
@@ -154,8 +160,9 @@ class DockerShell:
             argv = ["docker", "compose", "-f", compose_file, "down"]
             if remove_volumes:
                 argv.append("--volumes")
+            sys.stdout.flush()
             proc = subprocess.run(
-                argv, env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+                argv, env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
