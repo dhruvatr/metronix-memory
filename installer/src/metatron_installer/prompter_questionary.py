@@ -9,17 +9,12 @@ from .wizard import Prompter
 questionary.constants.INDICATOR_SELECTED = "•"
 questionary.constants.INDICATOR_UNSELECTED = "○"
 
-# Orange ANSI escape for key hints in the checkbox instruction.
-# Uses 256-colour code 208 (orange) — avoids FormattedText nesting issues
-# that cause TypeError on Python 3.13 / newer prompt_toolkit versions.
-_ORANGE = "\033[38;5;208m"
-_RESET = "\033[0m"
-_CHECKBOX_INSTRUCTION = (
-    f"({_ORANGE}<space>{_RESET} select, "
-    f"{_ORANGE}<enter>{_RESET} confirm, "
-    f"{_ORANGE}<a>{_RESET} toggle all, "
-    f"{_ORANGE}<i>{_RESET} invert)"
-)
+# Plain-text instruction for the custom-profile checkbox.
+# ANSI escapes are NOT supported here — questionary passes instruction
+# as prompt_toolkit FormattedText, which ignores terminal escape codes.
+# FormattedText lists (style, text) work on some Python versions but
+# cause nested-tuple TypeError on Python 3.13+.
+_CHECKBOX_INSTRUCTION = "(<space> select, <enter> confirm, <a> toggle all, <i> invert)"
 
 
 def _safe_ask(question) -> str | None:

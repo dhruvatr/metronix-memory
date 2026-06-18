@@ -86,8 +86,11 @@ class DockerShell:
 
         def _try_pull() -> int:
             sys.stdout.flush()
+            # stdout=None inherits the parent fd directly — preserves TTY
+            # detection so Docker shows layer-progress bars (not just
+            # "Pulling"/"Pulled" placeholders).
             proc = subprocess.run(
-                argv, env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
+                argv, env=env, stdout=None, stderr=subprocess.PIPE, text=True,
             )
             self._last_stderr = proc.stderr
             return proc.returncode
@@ -105,9 +108,11 @@ class DockerShell:
     def compose_up(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         """Start the stack (`up -d`) with live output, capturing stderr for diagnostics."""
         sys.stdout.flush()
+        # stdout=None inherits the parent fd directly — preserves TTY
+        # detection for Docker progress output.
         proc = subprocess.run(
             ["docker", "compose", "-f", compose_file, "up", "-d"],
-            env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
+            env=env, stdout=None, stderr=subprocess.PIPE, text=True,
         )
         return CommandResult(proc.returncode, "", proc.stderr)
 
@@ -131,9 +136,10 @@ class DockerShell:
 
         try:
             sys.stdout.flush()
+            # stdout=None preserves TTY detection for Docker progress output.
             proc = subprocess.run(
                 ["docker", "compose", "-f", compose_file, "restart"],
-                env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
+                env=env, stdout=None, stderr=subprocess.PIPE, text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
@@ -171,8 +177,9 @@ class DockerShell:
             if remove_volumes:
                 argv.append("--volumes")
             sys.stdout.flush()
+            # stdout=None preserves TTY detection for Docker progress output.
             proc = subprocess.run(
-                argv, env=env, stdout=sys.stdout, stderr=subprocess.PIPE, text=True,
+                argv, env=env, stdout=None, stderr=subprocess.PIPE, text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
