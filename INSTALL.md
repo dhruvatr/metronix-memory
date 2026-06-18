@@ -6,6 +6,40 @@ One command to install Metatron Core: hybrid RAG + agent memory infrastructure.
 
 ## Prerequisites
 
+### GitHub access (required — private repository)
+
+The `mtrnix/metatroncore` repository is private. You need a GitHub account that has been granted access, plus authentication configured for `git clone`.
+
+**Option A — HTTPS with personal access token (simpler):**
+
+1. Create a **classic PAT** at https://github.com/settings/tokens  
+   Required scopes: `repo` (clone), `read:packages` (pull Docker images from ghcr.io)  
+2. Use it as your password when cloning (token is NOT your GitHub password):
+
+```bash
+git clone -b fix/installer-linux-windows-fixes https://github.com/mtrnix/metatroncore.git
+# Username: your-github-username
+# Password: ghp_xxxxxxxxxxxxxxxxxxxx  ← paste the token
+```
+
+Or cache it so you're not asked every time:
+```bash
+git config --global credential.helper store
+```
+
+**Option B — SSH key (no password prompts after setup):**
+
+```bash
+# 1. Generate key if you don't have one
+ssh-keygen -t ed25519 -C "your@email.com"
+# 2. Add public key to GitHub: https://github.com/settings/keys
+cat ~/.ssh/id_ed25519.pub
+# 3. Clone via SSH
+git clone -b fix/installer-linux-windows-fixes git@github.com:mtrnix/metatroncore.git
+```
+
+**Verify access:** if `git clone` succeeds, your account has access.
+
 ### Docker (required)
 
 Metatron Core runs entirely in Docker containers. You need Docker Engine (Linux) or Docker Desktop (macOS / Windows) installed and running.
@@ -69,6 +103,8 @@ Metatron UI CC:   http://localhost:3001   (full profile only)
 Open WebUI:       http://localhost:3080   (full profile only)
 Metatron API:     http://localhost:8000
 ```
+
+> **Docker registry auth:** Docker images are hosted on `ghcr.io/mtrnix`. The installer first attempts an anonymous pull. If that fails (401), it will ask for your **GitHub username + PAT** (same token as for `git clone`, with `read:packages` scope) and run `docker login ghcr.io` automatically.
 
 ### Non-interactive mode (no questions)
 
