@@ -26,9 +26,24 @@ def _safe_ask(question) -> str | None:
         return None
 
 
+def _required_ask(question):
+    """Call ``question.ask()``; raise KeyboardInterrupt on cancellation.
+
+    Used for prompts where "cancel" means "abort the entire wizard"
+    (select, confirm, checkbox).  The KeyboardInterrupt bubbles up to
+    ``main()``'s handler which prints "Cancelled." and exits cleanly.
+    """
+    result = question.ask()
+    if result is None:
+        raise KeyboardInterrupt()
+    return result
+
+
 class QuestionaryPrompter(Prompter):
     def select(self, message: str, choices: list[str], default: str | None = None) -> str:
-        return questionary.select(message, choices=choices, default=default).ask()
+        return _required_ask(
+            questionary.select(message, choices=choices, default=default)
+        )
 
     def text(self, message: str, default: str = "") -> str:
         return _safe_ask(questionary.text(message, default=default)) or default
@@ -37,17 +52,16 @@ class QuestionaryPrompter(Prompter):
         return _safe_ask(questionary.password(message)) or ""
 
     def confirm(self, message: str, default: bool = False) -> bool:
-        return questionary.confirm(message, default=default).ask()
+        return _required_ask(questionary.confirm(message, default=default))
 
     def checkbox(self, message: str, choices: list[str]) -> list[str]:
-        # Plain-string instruction with ANSI orange escapes — avoids
-        # FormattedText nesting TypeError on Python 3.13 / newer
-        # prompt_toolkit versions.
-        result = questionary.checkbox(
-            message,
-            choices=choices,
-            instruction=_CHECKBOX_INSTRUCTION,
-        ).ask() or []
+        result = _required_ask(
+            questionary.checkbox(
+                message,
+                choices=choices,
+                instruction=_CHECKBOX_INSTRUCTION,
+            )
+        ) or []
 
         # If the user pressed Enter without explicitly toggling anything (all
         # unchecked), ask for confirmation so an accidental Enter doesn't
