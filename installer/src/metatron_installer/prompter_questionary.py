@@ -25,10 +25,16 @@ class QuestionaryPrompter(Prompter):
         return questionary.confirm(message, default=default).ask()
 
     def checkbox(self, message: str, choices: list[str]) -> list[str]:
+        # Highlight <space> in orange so the key stands out.
+        instruction = [
+            ("", "("),
+            ("fg:#ff8700 bold", "<space>"),
+            ("", " select, <enter> confirm, <a> toggle all, <i> invert)"),
+        ]
         result = questionary.checkbox(
             message,
             choices=choices,
-            instruction="(<space> select, <enter> confirm, <a> toggle all, <i> invert)",
+            instruction=instruction,  # type: ignore[arg-type]  # FormattedText accepted at runtime
         ).ask() or []
 
         # If the user pressed Enter without explicitly toggling anything (all
