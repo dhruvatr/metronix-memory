@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from . import __version__, ui
-from .answers import load_answers_yaml
+from .answers import AnswersError, load_answers_yaml
 from .config import InstallerConfig, Mode, Profile, defaults_for
 from .docker import CommandResult, DockerShell, parse_ps_services
 from .envfile import atomic_write
@@ -95,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         ui.info("Cancelled.")
         return 0
+    except AnswersError as exc:
+        ui.error(str(exc))
+        return 1
 
 
 def _main_impl(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:

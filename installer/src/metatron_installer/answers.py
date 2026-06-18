@@ -13,7 +13,14 @@ class AnswersError(ValueError):
 
 
 def load_answers_yaml(path: str | Path) -> InstallerConfig:
-    return load_answers_yaml_text(Path(path).read_text())
+    p = Path(path)
+    if not p.exists():
+        raise AnswersError(
+            f"Config file not found: {p}\n"
+            f"  Provide a valid path with --config, or use --non-interactive\n"
+            f"  for server/minimal defaults without a config file."
+        )
+    return load_answers_yaml_text(p.read_text())
 
 
 def load_answers_yaml_text(text: str) -> InstallerConfig:

@@ -193,5 +193,4 @@ fi
 # ──────────────────────────────────────────────
 #  3. Launch the Python installer
 # ──────────────────────────────────────────────
-cd "$REPO_ROOT/installer"
-exec uv run --project . python -m metatron_installer "$@"
+exec uv run --project "$REPO_ROOT/installer" python -m metatron_installer "$@"
