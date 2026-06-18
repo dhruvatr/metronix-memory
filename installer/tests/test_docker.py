@@ -76,7 +76,7 @@ def test_compose_up_passes_detach_and_profiles_env():
     with patch("subprocess.run", run_mock):
         sh.compose_up("install/docker-compose.yml", env={"COMPOSE_PROFILES": "full"})
     argv = calls[0]["argv"]
-    assert argv[:5] == ["docker", "--ansi", "always", "compose", "-f"]
+    assert argv[:3] == ["docker", "compose", "-f"]
     assert "up" in argv and "-d" in argv
 
 
@@ -84,19 +84,15 @@ def test_pull_falls_back_to_login_on_auth_failure():
     """First pull fails with 401 → login succeeds → retry pull succeeds."""
     call_count = [0]
 
-    def _run_sequence(argv, *, env=None, stdout=None, stderr=None, text=None, **kwargs):
+    def _mock_pty(argv, env):
         call_count[0] += 1
         if call_count[0] == 1:
-            return SimpleNamespace(
-                returncode=1,
-                stdout="",
-                stderr="denied: 401 Unauthorized",
-            )
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return 1, "denied: 401 Unauthorized"
+        return 0, ""
 
     runner = FakeRunner([CommandResult(0, "Login Succeeded", "")])
     sh = DockerShell(runner=runner)
-    with patch("subprocess.run", _run_sequence):
+    with patch("metatron_installer.docker._run_in_pty", _mock_pty):
         ok = sh.compose_pull(
             "install/docker-compose.yml",
             env={},
@@ -108,11 +104,10 @@ def test_pull_falls_back_to_login_on_auth_failure():
 
 def test_pull_succeeds_anonymously_without_login():
     sh = DockerShell()
-    with patch(
-        "subprocess.run",
-        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
-    ):
-        ok = sh.compose_pull("install/docker-compose.yml", env={}, registry_login=None)
+    with patch("metatron_installer.docker._run_in_pty", return_value=(0, "")):
+        ok = sh.compose_pull(
+            "install/docker-compose.yml", env={}, registry_login=None,
+        )
     assert ok is True
 
 
@@ -126,7 +121,7 @@ def test_compose_restart_argv(tmp_path):
     with patch("subprocess.run", run_mock):
         sh.compose_restart(compose_file, env={})
     assert calls[0]["argv"] == [
-        "docker", "--ansi", "always", "compose", "-f", compose_file, "restart",
+        "docker", "compose", "-f", compose_file, "restart",
     ]
 
 

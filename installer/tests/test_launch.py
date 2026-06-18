@@ -16,19 +16,22 @@ class FakeRunner:
 
 
 def test_launch_stack_pulls_then_ups_with_profiles():
-    # compose_pull and compose_up use subprocess.run directly (live output),
-    # so we mock subprocess.run for those and only use FakeRunner for
-    # compose_ps (which uses self._run).
+    """compose_pull uses _run_in_pty (PTY), compose_up uses subprocess.run."""
     runner = FakeRunner([CommandResult(0, "", "")])
     sh = DockerShell(runner=runner)
 
     pull_envs = []
 
+    def _mock_pty(argv, env):
+        pull_envs.append(env or {})
+        return 0, ""
+
     def _mock_run(argv, *, env=None, stdout=None, stderr=None, text=None, **kwargs):
         pull_envs.append(env or {})
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    with patch("subprocess.run", _mock_run):
+    with patch("metatron_installer.docker._run_in_pty", _mock_pty), \
+         patch("subprocess.run", _mock_run):
         ok = launch_stack(
             sh,
             compose_file="install/docker-compose.yml",
@@ -37,7 +40,7 @@ def test_launch_stack_pulls_then_ups_with_profiles():
         )
     # launch_stack returns (ok: bool, err: str)
     assert ok == (True, "")
-    # compose_pull and compose_up were each called with COMPOSE_PROFILES
+    # compose_pull + compose_up each called with COMPOSE_PROFILES
     assert len(pull_envs) >= 2
     for e in pull_envs:
         assert e["COMPOSE_PROFILES"] == "full"
