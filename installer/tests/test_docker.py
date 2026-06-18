@@ -76,7 +76,7 @@ def test_compose_up_passes_detach_and_profiles_env():
     with patch("subprocess.run", run_mock):
         sh.compose_up("install/docker-compose.yml", env={"COMPOSE_PROFILES": "full"})
     argv = calls[0]["argv"]
-    assert argv[:3] == ["docker", "compose", "-f"]
+    assert argv[:5] == ["docker", "--ansi", "always", "compose", "-f"]
     assert "up" in argv and "-d" in argv
 
 
@@ -125,7 +125,9 @@ def test_compose_restart_argv(tmp_path):
     calls, run_mock = _mock_subprocess_run()
     with patch("subprocess.run", run_mock):
         sh.compose_restart(compose_file, env={})
-    assert calls[0]["argv"] == ["docker", "compose", "-f", compose_file, "restart"]
+    assert calls[0]["argv"] == [
+        "docker", "--ansi", "always", "compose", "-f", compose_file, "restart",
+    ]
 
 
 def test_compose_down_with_and_without_volumes(tmp_path):

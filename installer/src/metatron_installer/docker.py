@@ -50,23 +50,6 @@ class CommandResult:
     stderr: str
 
 
-def _live_stdout():
-    """Open the controlling terminal for direct output.
-
-    Returns an fd, or ``None`` when /dev/tty is unavailable.
-    The caller MUST close the fd after the subprocess completes.
-
-    We explicitly open /dev/tty instead of relying on ``stdout=None``
-    (inherit) because intermediate layers (uv, Python buffering) can
-    break TTY detection, causing Docker to skip layer-progress bars
-    and show only "Pulling"/"Pulled" placeholders.
-    """
-    try:
-        return os.open("/dev/tty", os.O_WRONLY)
-    except OSError:
-        return None
-
-
 def _default_runner(argv: list[str], env: dict[str, str] | None = None) -> CommandResult:
     merged = {**os.environ, **env} if env is not None else None
     proc = subprocess.run(argv, capture_output=True, text=True, env=merged)
@@ -99,19 +82,16 @@ class DockerShell:
         registry_login: Callable[[], CommandResult] | None,
     ) -> bool:
         """Pull images with live progress output. Retries once on auth errors."""
-        argv = ["docker", "compose", "-f", compose_file, "pull"]
+        # --ansi always forces Docker to emit ANSI progress bars regardless
+        # of TTY detection (which can break when running through uv/Python).
+        argv = ["docker", "--ansi", "always", "compose", "-f", compose_file, "pull"]
 
         def _try_pull() -> int:
             sys.stdout.flush()
-            tty_fd = _live_stdout()
-            try:
-                proc = subprocess.run(
-                    argv, env=env, stdout=tty_fd,
-                    stderr=subprocess.PIPE, text=True,
-                )
-            finally:
-                if tty_fd is not None:
-                    os.close(tty_fd)
+            proc = subprocess.run(
+                argv, env=env, stdout=None,
+                stderr=subprocess.PIPE, text=True,
+            )
             self._last_stderr = proc.stderr
             return proc.returncode
 
@@ -128,15 +108,10 @@ class DockerShell:
     def compose_up(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         """Start the stack (`up -d`) with live output, capturing stderr for diagnostics."""
         sys.stdout.flush()
-        tty_fd = _live_stdout()
-        try:
-            proc = subprocess.run(
-                ["docker", "compose", "-f", compose_file, "up", "-d"],
-                env=env, stdout=tty_fd, stderr=subprocess.PIPE, text=True,
-            )
-        finally:
-            if tty_fd is not None:
-                os.close(tty_fd)
+        proc = subprocess.run(
+            ["docker", "--ansi", "always", "compose", "-f", compose_file, "up", "-d"],
+            env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+        )
         return CommandResult(proc.returncode, "", proc.stderr)
 
     def compose_ps(self, compose_file: str, env: dict[str, str]) -> CommandResult:
@@ -159,15 +134,10 @@ class DockerShell:
 
         try:
             sys.stdout.flush()
-            tty_fd = _live_stdout()
-            try:
-                proc = subprocess.run(
-                    ["docker", "compose", "-f", compose_file, "restart"],
-                    env=env, stdout=tty_fd, stderr=subprocess.PIPE, text=True,
-                )
-            finally:
-                if tty_fd is not None:
-                    os.close(tty_fd)
+            proc = subprocess.run(
+                ["docker", "--ansi", "always", "compose", "-f", compose_file, "restart"],
+                env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+            )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
             if env_missing:
@@ -204,15 +174,10 @@ class DockerShell:
             if remove_volumes:
                 argv.append("--volumes")
             sys.stdout.flush()
-            tty_fd = _live_stdout()
-            try:
-                proc = subprocess.run(
-                    argv, env=env, stdout=tty_fd,
-                    stderr=subprocess.PIPE, text=True,
-                )
-            finally:
-                if tty_fd is not None:
-                    os.close(tty_fd)
+            proc = subprocess.run(
+                argv, env=env, stdout=None,
+                stderr=subprocess.PIPE, text=True,
+            )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
             if env_missing:
