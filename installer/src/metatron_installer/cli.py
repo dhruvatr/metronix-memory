@@ -133,7 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     if action is InstallAction.UNINSTALL:
         from .prompter_questionary import QuestionaryPrompter
 
-        remove_volumes = QuestionaryPrompter().confirm(
+        prompter = QuestionaryPrompter()
+        remove_volumes = prompter.confirm(
             "Also delete all data volumes? (irreversible)", default=False
         )
         ui.info("Stopping the stack...")
@@ -142,7 +143,14 @@ def main(argv: list[str] | None = None) -> int:
             ui.success("Stack removed.")
         else:
             ui.error(f"Failed to stop stack:\n{res.stderr}")
-        return 0 if res.returncode == 0 else 1
+            return 1
+
+        # Offer to install fresh right away instead of forcing a re-run.
+        if prompter.confirm("Install Metatron Core now?", default=True):
+            action = InstallAction.INSTALL
+            # Fall through to the install path below.
+        else:
+            return 0
 
     # UPGRADE keeps the existing .env untouched (just re-pull + recreate).
     # INSTALL / RECONFIGURE (re)render .env first.
