@@ -76,6 +76,10 @@ def _pull_with_progress(argv: list[str], env: dict[str, str]) -> tuple[int, str]
     Non-matching lines (BuildKit output on Linux, errors) pass through
     to the terminal as-is.
 
+    Reads stdout as raw bytes and splits on *both* ``\\n`` and ``\\r`` so
+    that Docker Desktop on macOS (which emits layer-progress bars via ``\\r``
+    without ``\\n``) doesn't block line-based iteration.
+
     Returns ``(returncode, stderr_text)``.
     """
     proc = subprocess.Popen(
@@ -83,45 +87,72 @@ def _pull_with_progress(argv: list[str], env: dict[str, str]) -> tuple[int, str]
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
+        bufsize=0,
     )
 
     services: dict[str, str] = {}
     seen: list[str] = []
     stderr_lines: list[str] = []
+    stdout_remainder = b""
 
     # Read stderr in a background thread so it doesn't block stdout.
     def _drain_stderr() -> None:
         if proc.stderr is None:
             return
-        for line in proc.stderr:
-            stderr_lines.append(line.rstrip("\n"))
+        for raw_line in proc.stderr:
+            stderr_lines.append(
+                raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            )
 
     t = threading.Thread(target=_drain_stderr, daemon=True)
     t.start()
 
-    for line in proc.stdout:
-        stripped = line.rstrip()
-        m = _PULL_LINE.match(stripped)
-        if m:
-            name, action = m.group(1), m.group(2)
-            if name not in services:
-                services[name] = "⏳"
-                seen.append(name)
-            if action == "Pulling":
-                services[name] = "⬇"
-            elif action == "Pulled":
-                services[name] = "✓"
+    # Read stdout in chunks, split on \n and \r (Docker Desktop may use
+    # \r without \n for layer-progress bars — universal-newlines mode
+    # doesn't handle that).
+    while True:
+        chunk = proc.stdout.read(4096)
+        if not chunk:
+            break
+        data = stdout_remainder + chunk
+        # Split on both \n and \r; empty segments from consecutive
+        # delimiters are harmless (filtered below).
+        segments = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+        # The last segment might be incomplete — keep it for next chunk.
+        stdout_remainder = segments.pop()
 
-            # Rebuild and print the compact status line.
-            parts = [f"{services[n]} {n}" for n in seen]
-            sys.stdout.write("\r\033[K" + "  ".join(parts))
-            sys.stdout.flush()
-        else:
-            # Non-matching line (BuildKit progress, error) — print as-is.
-            sys.stdout.write(f"\r\033[K{stripped}\n")
-            sys.stdout.flush()
+        for seg in segments:
+            stripped = seg.decode("utf-8", errors="replace").strip()
+            if not stripped:
+                continue
+            m = _PULL_LINE.match(stripped)
+            if m:
+                name, action = m.group(1), m.group(2)
+                if name not in services:
+                    services[name] = "⏳"
+                    seen.append(name)
+                if action == "Pulling":
+                    services[name] = "⬇"
+                elif action == "Pulled":
+                    services[name] = "✓"
+
+                # Rebuild and print the compact status line.
+                parts = [f"{services[n]} {n}" for n in seen]
+                sys.stdout.write("\r\033[K" + "  ".join(parts))
+                sys.stdout.flush()
+            else:
+                # Non-matching line (BuildKit output, errors) — print as-is.
+                sys.stdout.write(f"\r\033[K{stripped}\n")
+                sys.stdout.flush()
+
+    # Flush any remaining partial output (shouldn't normally happen).
+    if stdout_remainder:
+        stripped = stdout_remainder.decode("utf-8", errors="replace").strip()
+        if stripped:
+            m = _PULL_LINE.match(stripped)
+            if not m:
+                sys.stdout.write(f"\r\033[K{stripped}\n")
+                sys.stdout.flush()
 
     proc.wait()
     t.join(timeout=2)
