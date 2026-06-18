@@ -1,45 +1,32 @@
 # Metatron Core — Installation Guide
 
-One-command installer for Metatron Core: hybrid RAG + agent memory infrastructure.
+One command to install Metatron Core: hybrid RAG + agent memory infrastructure.
 
 ---
 
 ## Prerequisites
 
-The installer needs these tools. The bootstrap script will offer to install them
-if they're missing, or you can set them up manually.
+### Docker (required)
 
-### Docker (required on all platforms)
-
-Metatron Core runs entirely in Docker containers. You need Docker Engine (Linux)
-or Docker Desktop (macOS / Windows) installed and running.
+Metatron Core runs entirely in Docker containers. You need Docker Engine (Linux) or Docker Desktop (macOS / Windows) installed and running.
 
 | Platform | How to install | Verify |
 |----------|---------------|--------|
-| **Linux** | `curl -fsSL https://get.docker.com \| sh` — the bootstrap script offers this automatically | `docker info` |
-| **macOS** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or `brew install --cask docker` | Launch Docker.app, wait for whale icon |
+| **Linux** | `curl -fsSL https://get.docker.com \| sh` — the installer offers this automatically | `docker info` |
+| **macOS** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) or `brew install --cask docker` | Launch Docker.app, wait for whale icon in menu bar |
 | **Windows** | [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Launch from Start Menu, wait for tray icon → "Engine running" |
 
-After installing Docker on Linux, add your user to the `docker` group to avoid `sudo`:
+**Linux only:** add your user to the `docker` group to avoid `sudo`:
 ```bash
 sudo usermod -aG docker $USER
-# Log out and back in (or run: newgrp docker)
+# Log out and back in
 ```
-
-### curl + bash (Linux / macOS)
-
-Built into macOS and all Linux distributions. No action needed.
 
 ### Git (all platforms)
 
-Required to clone the repository.
 - **Linux:** `sudo apt install git` / `sudo dnf install git`
-- **macOS:** `brew install git` or bundled with Xcode Command Line Tools (`xcode-select --install`)
+- **macOS:** `brew install git` or `xcode-select --install`
 - **Windows:** `winget install Git.Git` or https://git-scm.com/download/win
-
-### PowerShell 5.1+ (Windows only)
-
-Built into Windows 10 and later. Run `$PSVersionTable.PSVersion` to verify.
 
 ### Disk space
 
@@ -49,50 +36,49 @@ Built into Windows 10 and later. Run `$PSVersionTable.PSVersion` to verify.
 | full | ~15 GB (includes Ollama models) |
 | custom | depends on selected services |
 
-Repository must be on drive **C:** on Windows (Docker Desktop shares C: by default).
-
 ---
 
-## Linux / macOS
+## Quick Start — Linux / macOS
 
 ```bash
-# 1. Clone the branch with fixes
+# 1. Clone
 git clone -b fix/installer-linux-windows-fixes https://github.com/mtrnix/metatroncore.git
 cd metatroncore
 
-# 2. Run the installer
+# 2. Run
 ./install/bootstrap.sh
 ```
 
-The bootstrap script will:
-- Install `uv` if missing
-- Check for Docker — if not found, **offer to install it**:
-  - **Linux:** runs `get.docker.com` (asks for sudo once, then continues as user)
-  - **macOS:** runs `brew install --cask docker` (then asks you to launch Docker.app manually)
-- Launch the Python installer wizard
+The script installs `uv` and Docker automatically if missing, then launches the wizard.
 
-The wizard will ask:
+### What the wizard will ask
 
 | Question | Options |
 |----------|---------|
-| **Deployment mode** | `server` (bind 0.0.0.0, accessible from network) / `local` (bind 127.0.0.1, localhost only) |
-| **LLM provider** | `ollama` / `deepseek` / `openrouter` / `custom` |
-| **LLM API key** | Required for deepseek/openrouter/custom; skipped for ollama |
-| **Deployment profile** | `minimal` (core + metatron-ui :3000) / `full` (everything + all UIs :3000 :3001 :3080) / `custom` (pick individual services) |
+| **Deployment mode** | `server` (bind 0.0.0.0, accessible from network) / `local` (127.0.0.1, localhost only) |
+| **LLM provider** | `deepseek` / `openrouter` / `ollama` / `custom` |
+| **API key** | Required for deepseek/openrouter/custom |
+| **Deployment profile** | `minimal` (core + UI :3000) / `full` (everything + UIs :3000 :3001 :3080) / `custom` |
 | **Integrations** | Optional: OpenAI-compat key, MCP key, Telegram token |
 
-After startup you'll see the service table and UI endpoints.
+### After install — UI endpoints
 
-### Non-interactive mode
+```
+Metatron UI:      http://localhost:3000
+Metatron UI CC:   http://localhost:3001   (full profile only)
+Open WebUI:       http://localhost:3080   (full profile only)
+Metatron API:     http://localhost:8000
+```
+
+### Non-interactive mode (no questions)
 
 ```bash
-./install/bootstrap.sh --non-interactive    # server + minimal + deepseek, no questions
-./install/bootstrap.sh --dry-run            # generate .env, print it, don't touch Docker
-./install/bootstrap.sh --config answers.yaml  # read all answers from YAML
+./install/bootstrap.sh --non-interactive               # server + minimal + deepseek, no prompts
+./install/bootstrap.sh --dry-run                        # preview .env, don't touch Docker
+./install/bootstrap.sh --config answers.yaml            # read all settings from YAML
 ```
 
 `answers.yaml` example:
-
 ```yaml
 mode: server
 profile: full
@@ -102,7 +88,7 @@ integrations:
   openai_compat_key: my-key
 ```
 
-### Existing install — action menu
+### Working with an existing install
 
 If `.env` or running containers are detected:
 
@@ -111,20 +97,20 @@ If `.env` or running containers are detected:
 | `reconfigure` | Run wizard again, rewrite `.env`, pull images, restart stack |
 | `restart` | `docker compose restart` — quick restart, no pull, keep config |
 | `upgrade` | Pull fresh images, restart — keep current `.env` untouched |
-| `uninstall` | Stop & remove containers (optionally delete all data volumes) |
+| `uninstall` | Stop & remove containers (optionally delete images and data volumes) |
 
-### Post-install commands
+### Day-to-day management
 
 ```bash
-docker compose -f install/docker-compose.yml ps        # service status
-docker compose -f install/docker-compose.yml logs -f    # live logs
-docker compose -f install/docker-compose.yml down       # stop containers
-docker compose -f install/docker-compose.yml down --volumes  # stop + delete all data
+docker compose -f install/docker-compose.yml ps           # service status
+docker compose -f install/docker-compose.yml logs -f       # live logs
+docker compose -f install/docker-compose.yml down          # stop containers
+docker compose -f install/docker-compose.yml down --volumes # stop + delete all data
 ```
 
 ---
 
-## Windows
+## Quick Start — Windows
 
 ```powershell
 # 1. Allow script execution (one-time)
@@ -134,31 +120,11 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 git clone -b fix/installer-linux-windows-fixes https://github.com/mtrnix/metatroncore.git
 cd metatroncore
 
-# 3. Run the installer
+# 3. Run
 .\install\bootstrap.ps1
 ```
 
-The bootstrap script will:
-- Install `uv` if missing
-- Check for Docker — if not found, **offer to open the Docker Desktop download page** in your browser
-- Check that Docker Engine is running
-- Launch the Python installer wizard (same questions as Linux/macOS)
-
-### If Docker is still initializing after system boot
-
-Wait a minute and re-run:
-
-```powershell
-.\install\bootstrap.ps1
-```
-
-### Non-interactive mode
-
-```powershell
-.\install\bootstrap.ps1 -NonInteractive
-.\install\bootstrap.ps1 -DryRun
-.\install\bootstrap.ps1 -Config answers.yaml
-```
+Same wizard questions as Linux/macOS. Docker Desktop must be running (whale icon in system tray).
 
 ---
 
@@ -178,7 +144,7 @@ Core = always-on services: postgres, qdrant, neo4j, redis, splade, metatron-core
 
 | Provider | Requires |
 |----------|----------|
-| `ollama` | Bundled (full profile) or external host URL (minimal profile) |
+| `ollama` | Bundled with full profile, or external host URL (minimal profile) |
 | `deepseek` | API key |
 | `openrouter` | API key |
 | `custom` | API key + endpoint URL |
