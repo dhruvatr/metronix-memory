@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -59,6 +61,76 @@ def _default_runner(argv: list[str], env: dict[str, str] | None = None) -> Comma
 Runner = Callable[[list[str], dict[str, str] | None], CommandResult]
 
 
+# Matches docker compose pull output lines like:
+#   " embedding-proxy Pulling"
+#   " embedding-proxy Pulled"
+_PULL_LINE = re.compile(r"^\s*(\S+)\s+(Pulling|Pulled)")
+
+
+def _pull_with_progress(argv: list[str], env: dict[str, str]) -> tuple[int, str]:
+    """Run ``docker compose pull`` with custom progress display.
+
+    Captures stdout, parses "Pulling"/"Pulled" lines, and shows a compact
+    per-service status line: ⬇=pulling  ✓=done  ⏳=pending.
+
+    Non-matching lines (BuildKit output on Linux, errors) pass through
+    to the terminal as-is.
+
+    Returns ``(returncode, stderr_text)``.
+    """
+    proc = subprocess.Popen(
+        argv,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    services: dict[str, str] = {}
+    seen: list[str] = []
+    stderr_lines: list[str] = []
+
+    # Read stderr in a background thread so it doesn't block stdout.
+    def _drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            stderr_lines.append(line.rstrip("\n"))
+
+    t = threading.Thread(target=_drain_stderr, daemon=True)
+    t.start()
+
+    for line in proc.stdout:
+        stripped = line.rstrip()
+        m = _PULL_LINE.match(stripped)
+        if m:
+            name, action = m.group(1), m.group(2)
+            if name not in services:
+                services[name] = "⏳"
+                seen.append(name)
+            if action == "Pulling":
+                services[name] = "⬇"
+            elif action == "Pulled":
+                services[name] = "✓"
+
+            # Rebuild and print the compact status line.
+            parts = [f"{services[n]} {n}" for n in seen]
+            sys.stdout.write("\r\033[K" + "  ".join(parts))
+            sys.stdout.flush()
+        else:
+            # Non-matching line (BuildKit progress, error) — print as-is.
+            sys.stdout.write(f"\r\033[K{stripped}\n")
+            sys.stdout.flush()
+
+    proc.wait()
+    t.join(timeout=2)
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+    return proc.returncode, "".join(stderr_lines)
+
+
 class DockerShell:
     def __init__(self, runner: Runner | None = None):
         self._run = runner or _default_runner
@@ -86,11 +158,9 @@ class DockerShell:
 
         def _try_pull() -> int:
             sys.stdout.flush()
-            proc = subprocess.run(
-                argv, env=env, stdout=None, stderr=subprocess.PIPE, text=True,
-            )
-            self._last_stderr = proc.stderr
-            return proc.returncode
+            rc, stderr_text = _pull_with_progress(argv, env)
+            self._last_stderr = stderr_text
+            return rc
 
         rc = _try_pull()
         if rc == 0:

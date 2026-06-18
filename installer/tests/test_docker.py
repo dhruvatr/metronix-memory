@@ -84,17 +84,15 @@ def test_pull_falls_back_to_login_on_auth_failure():
     """First pull fails with 401 → login succeeds → retry pull succeeds."""
     call_count = [0]
 
-    def _run_sequence(argv, *, env=None, stdout=None, stderr=None, text=None, **kwargs):
+    def _mock_pull(argv, env):
         call_count[0] += 1
         if call_count[0] == 1:
-            return SimpleNamespace(
-                returncode=1, stdout="", stderr="denied: 401 Unauthorized",
-            )
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return 1, "denied: 401 Unauthorized"
+        return 0, ""
 
     runner = FakeRunner([CommandResult(0, "Login Succeeded", "")])
     sh = DockerShell(runner=runner)
-    with patch("subprocess.run", _run_sequence):
+    with patch("metatron_installer.docker._pull_with_progress", _mock_pull):
         ok = sh.compose_pull(
             "install/docker-compose.yml",
             env={},
@@ -107,8 +105,8 @@ def test_pull_falls_back_to_login_on_auth_failure():
 def test_pull_succeeds_anonymously_without_login():
     sh = DockerShell()
     with patch(
-        "subprocess.run",
-        lambda *a, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
+        "metatron_installer.docker._pull_with_progress",
+        return_value=(0, ""),
     ):
         ok = sh.compose_pull(
             "install/docker-compose.yml", env={}, registry_login=None,
