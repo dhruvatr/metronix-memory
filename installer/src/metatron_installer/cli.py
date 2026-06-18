@@ -134,11 +134,19 @@ def main(argv: list[str] | None = None) -> int:
         from .prompter_questionary import QuestionaryPrompter
 
         prompter = QuestionaryPrompter()
+        remove_images = prompter.confirm(
+            "Also remove Docker images?", default=False
+        )
         remove_volumes = prompter.confirm(
             "Also delete all data volumes? (irreversible)", default=False
         )
         ui.info("Stopping the stack...")
-        res = shell.compose_down(compose_file, base_env, remove_volumes=remove_volumes)
+        res = shell.compose_down(
+            compose_file,
+            base_env,
+            remove_volumes=remove_volumes,
+            remove_images=remove_images,
+        )
         if res.returncode == 0:
             ui.success("Stack removed.")
         else:

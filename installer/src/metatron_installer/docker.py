@@ -141,13 +141,21 @@ class DockerShell:
                 env_path.unlink(missing_ok=True)
 
     def compose_down(
-        self, compose_file: str, env: dict[str, str], remove_volumes: bool = False
+        self,
+        compose_file: str,
+        env: dict[str, str],
+        remove_volumes: bool = False,
+        remove_images: bool = False,
     ) -> CommandResult:
         """Stop and remove the stack with live output, capturing stderr for diagnostics.
 
-        If the project .env is missing (e.g. deleted between install and uninstall),
-        a temporary empty one is created so compose can still resolve ``env_file: .env``
-        references in the service definitions.
+        By default only containers are stopped and removed. Pass ``remove_images``
+        to also delete the pulled images, and ``remove_volumes`` to wipe named
+        data volumes (irreversible).
+
+        If the project .env is missing (e.g. deleted between install and
+        uninstall), a temporary empty one is created so compose can still
+        resolve ``env_file: .env`` references in the service definitions.
         """
         from pathlib import Path
 
@@ -158,6 +166,8 @@ class DockerShell:
 
         try:
             argv = ["docker", "compose", "-f", compose_file, "down"]
+            if remove_images:
+                argv.extend(["--rmi", "all"])
             if remove_volumes:
                 argv.append("--volumes")
             sys.stdout.flush()
