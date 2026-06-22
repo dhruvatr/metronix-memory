@@ -166,6 +166,54 @@ class DockerShell:
     def __init__(self, runner: Runner | None = None):
         self._run = runner or _default_runner
         self._last_stderr = ""
+        self._compose_prefix: list[str] | None = None  # cached compose argv prefix
+
+    def _detect_compose(self) -> list[str]:
+        """Detect available Docker Compose variant and return its argv prefix.
+
+        Tries ``docker compose`` (v2 plugin) first, then ``docker-compose`` (v1
+        standalone).  Caches the result so detection runs at most once per session.
+        """
+        if self._compose_prefix is not None:
+            return self._compose_prefix
+
+        # Try Compose v2 plugin
+        try:
+            proc = subprocess.run(
+                ["docker", "compose", "version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                self._compose_prefix = ["docker", "compose"]
+                return self._compose_prefix
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Try Compose v1 standalone
+        try:
+            proc = subprocess.run(
+                ["docker-compose", "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if proc.returncode == 0:
+                self._compose_prefix = ["docker-compose"]
+                return self._compose_prefix
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Neither found — default to v2 plugin so the user gets a clear error
+        # (the preflight check should have caught this already).
+        self._compose_prefix = ["docker", "compose"]
+        return self._compose_prefix
+
+    def _compose_argv(self, compose_file: str, *subcommand: str) -> list[str]:
+        """Build the full argv for a compose command.
+
+        Example: ``_compose_argv("docker-compose.yml", "pull")`` →
+        ``["docker", "compose", "-f", "docker-compose.yml", "pull"]``
+        or ``["docker-compose", "-f", "docker-compose.yml", "pull"]``.
+        """
+        return self._detect_compose() + ["-f", compose_file] + list(subcommand)
 
     def version(self) -> CommandResult:
         try:
@@ -185,7 +233,7 @@ class DockerShell:
         registry_login: Callable[[], CommandResult] | None,
     ) -> bool:
         """Pull images with live output. Retries once on auth errors."""
-        argv = ["docker", "compose", "-f", compose_file, "pull"]
+        argv = self._compose_argv(compose_file, "pull")
 
         def _try_pull() -> int:
             sys.stdout.flush()
@@ -207,14 +255,14 @@ class DockerShell:
         """Start the stack (`up -d`) with live output, capturing stderr for diagnostics."""
         sys.stdout.flush()
         proc = subprocess.run(
-            ["docker", "compose", "-f", compose_file, "up", "-d"],
+            self._compose_argv(compose_file, "up", "-d"),
             env=env, stdout=None, stderr=subprocess.PIPE, text=True,
         )
         return CommandResult(proc.returncode, "", proc.stderr)
 
     def compose_ps(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         return self._run(
-            ["docker", "compose", "-f", compose_file, "ps", "--format", "json"], env
+            self._compose_argv(compose_file, "ps", "--format", "json"), env
         )
 
     def compose_restart(self, compose_file: str, env: dict[str, str]) -> CommandResult:
@@ -233,7 +281,7 @@ class DockerShell:
         try:
             sys.stdout.flush()
             proc = subprocess.run(
-                ["docker", "compose", "-f", compose_file, "restart"],
+                self._compose_argv(compose_file, "restart"),
                 env=env, stdout=None, stderr=subprocess.PIPE, text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
@@ -266,7 +314,7 @@ class DockerShell:
             env_path.touch()
 
         try:
-            argv = ["docker", "compose", "-f", compose_file, "down"]
+            argv = self._compose_argv(compose_file, "down")
             if remove_images:
                 argv.extend(["--rmi", "all"])
             if remove_volumes:

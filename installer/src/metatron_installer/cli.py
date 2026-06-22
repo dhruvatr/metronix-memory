@@ -11,6 +11,7 @@ from .docker import CommandResult, DockerShell, parse_ps_services
 from .envfile import atomic_write
 from .preflight import (
     DockerInfo,
+    check_compose,
     check_disk_space,
     detect_os,
     find_port_conflicts,
@@ -44,7 +45,7 @@ def _resolve_config(args: argparse.Namespace) -> InstallerConfig:
 
 
 def _run_preflight(shell: DockerShell) -> bool:
-    """Probe Docker + ports and print a summary. Returns False to abort the install."""
+    """Probe Docker, Compose, ports and print a summary. Returns False to abort the install."""
     ui.info(f"Preflight on {detect_os()}")
     version_res = shell.version()
     docker: DockerInfo = (
@@ -52,9 +53,10 @@ def _run_preflight(shell: DockerShell) -> bool:
         if version_res.returncode == 0
         else DockerInfo(present=False)
     )
+    compose = check_compose()
     conflicts = find_port_conflicts()
     disk = check_disk_space()
-    ok, messages = summarize(docker, conflicts, disk)
+    ok, messages = summarize(docker, conflicts, disk, compose=compose)
     for line in messages:
         (ui.success if ok and "in use" not in line else ui.warning)(line)
     return ok
@@ -200,9 +202,11 @@ def _main_impl(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     ui.info("Pulling images and starting the stack...")
     ok, err = launch_stack(shell, compose_file, compose_profiles, registry_login=_login)
     if not ok:
+        # Use the detected compose variant for the log hint.
+        compose_bin = " ".join(shell._detect_compose())
         ui.error(
             "Stack failed to start. Check logs:\n"
-            f"  docker compose -f {compose_file} logs"
+            f"  {compose_bin} -f {compose_file} logs"
         )
         if err:
             ui.console.print(f"[dim]{err.strip()}[/dim]")

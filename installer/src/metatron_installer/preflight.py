@@ -4,6 +4,7 @@ import platform
 import re
 import shutil
 import socket
+import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,13 @@ class DockerInfo:
     present: bool
     major: int = 0
     minor: int = 0
+
+
+@dataclass(frozen=True)
+class ComposeInfo:
+    """Which Docker Compose variant is available (if any)."""
+    available: bool
+    variant: str = ""  # "plugin" (docker compose v2) | "standalone" (docker-compose v1) | ""
 
 
 @dataclass(frozen=True)
@@ -75,6 +83,37 @@ def parse_docker_version(output: str) -> DockerInfo:
     return DockerInfo(present=True, major=int(m["major"]), minor=int(m["minor"]))
 
 
+def check_compose() -> ComposeInfo:
+    """Detect which Docker Compose variant is available.
+
+    Tries ``docker compose`` (v2 plugin) first, then ``docker-compose`` (v1 standalone).
+    Returns ComposeInfo with available=False if neither is found.
+    """
+    # Try Compose v2 plugin: `docker compose version`
+    try:
+        proc = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            return ComposeInfo(available=True, variant="plugin")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Try Compose v1 standalone: `docker-compose --version`
+    try:
+        proc = subprocess.run(
+            ["docker-compose", "--version"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            return ComposeInfo(available=True, variant="standalone")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return ComposeInfo(available=False)
+
+
 def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1.0)
@@ -95,13 +134,19 @@ def find_port_conflicts(
 
 
 def summarize(
-    docker: DockerInfo, conflicts: list[PortConflict], disk: DiskInfo | None = None
+    docker: DockerInfo,
+    conflicts: list[PortConflict],
+    disk: DiskInfo | None = None,
+    compose: ComposeInfo | None = None,
 ) -> tuple[bool, list[str]]:
     """Turn preflight probes into a go/no-go decision plus human-readable lines.
 
     A missing/unreachable Docker is a hard stop (ok=False). Port conflicts are
     warnings only — the operator may have intentionally remapped or be re-running.
     Insufficient disk space (< MIN_DISK_GB) is also a hard stop.
+
+    When *compose* is provided and unavailable, it is a hard stop with a
+    platform-appropriate hint for installing Docker Compose.
     """
     messages: list[str] = []
     ok = True
@@ -113,6 +158,28 @@ def summarize(
             "Docker not available — is it installed and running? "
             "Start Docker Desktop, or `sudo systemctl start docker`."
         )
+    if compose is not None:
+        if compose.available:
+            variant_label = "plugin (v2)" if compose.variant == "plugin" else "standalone (v1)"
+            messages.append(f"Docker Compose {variant_label} detected")
+        else:
+            ok = False
+            os_name = detect_os()
+            if os_name == "darwin":
+                hint = "Install via Homebrew: `brew install docker-compose`"
+            elif os_name == "linux":
+                hint = (
+                    "Install plugin: "
+                    "`sudo apt-get install docker-compose-plugin` (Debian/Ubuntu) "
+                    "or follow https://docs.docker.com/compose/install/"
+                )
+            else:
+                hint = "Install from https://docs.docker.com/compose/install/"
+            messages.append(
+                "Docker Compose not found — the installer needs `docker compose` (v2 plugin) "
+                "or `docker-compose` (v1 standalone) to manage the stack. "
+                + hint
+            )
     if disk is not None:
         free = disk.free_gb
         if free < _MIN_DISK_GB:
