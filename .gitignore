@@ -53,3 +53,6 @@ Thumbs.db
 .gh_alerts.json
 .gh_alerts_summary.json
 .gh_probe.graphql
+
+# Runtime state (opencode tooling)
+.omx/
