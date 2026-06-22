@@ -92,8 +92,8 @@ if [[ "$OS" == "Darwin" ]]; then
         echo "     brew install colima docker"
         echo "     colima start"
         ALL_OK=false
-      elif _confirm "Install Docker Desktop via Homebrew? (may ask for sudo)"; then
-        echo "  Installing Docker Desktop..."
+      elif _confirm "Install Docker via Homebrew? (may ask for sudo)"; then
+        echo "  Trying Docker Desktop cask..."
         if brew install --cask docker; then
           if command -v docker >/dev/null 2>&1; then
             echo "  ✓ Docker CLI installed"
@@ -102,10 +102,45 @@ if [[ "$OS" == "Darwin" ]]; then
             ALL_OK=false
           fi
         else
-          echo "  ✗ Docker Desktop install failed. See error above."
-          echo "  → Install manually: https://www.docker.com/products/docker-desktop/"
-          echo "  → Or try Colima: brew install colima docker && colima start"
-          ALL_OK=false
+          # Cask failed (often: macOS version not supported by the cask, or brew issue) — offer alternatives
+          echo ""
+          echo "  ✗ Docker Desktop cask failed."
+          echo "  Pick an alternative Docker runtime:"
+          echo "    1) OrbStack — drop-in Docker Desktop replacement (recommended for newer macOS)"
+          echo "    2) Colima   — lightweight CLI-only Docker daemon"
+          echo "    3) Skip     — install Docker Desktop manually from docker.com"
+          echo ""
+          read -r -p "  Choose [1/2/3] " _docker_choice
+          case "$_docker_choice" in
+            1)
+              echo "  Installing OrbStack..."
+              if brew install --cask orbstack; then
+                echo "  ✓ OrbStack installed"
+              else
+                echo "  ✗ OrbStack install failed — check output above"
+                ALL_OK=false
+              fi
+              ;;
+            2)
+              echo "  Installing Colima + Docker CLI..."
+              if brew install colima docker; then
+                echo "  ✓ Colima + Docker CLI installed"
+                echo "  Starting Colima (this can take a minute)..."
+                colima start || echo "  → Run 'colima start' manually after this script"
+              else
+                echo "  ✗ Colima install failed — check output above"
+                ALL_OK=false
+              fi
+              ;;
+            3)
+              echo "  → Install manually: https://www.docker.com/products/docker-desktop/"
+              ALL_OK=false
+              ;;
+            *)
+              echo "  ✗ Invalid choice — install Docker manually and re-run"
+              ALL_OK=false
+              ;;
+          esac
         fi
       else
         echo "  → Install manually: https://www.docker.com/products/docker-desktop/"
@@ -117,7 +152,7 @@ if [[ "$OS" == "Darwin" ]]; then
     fi
   fi
 
-  # --- Docker daemon reachable (with retry — Docker Desktop may still be starting) ---
+  # --- Docker daemon reachable (with retry — Docker Desktop / OrbStack may still be starting) ---
   if command -v docker >/dev/null 2>&1; then
     DAEMON_OK=false
     for attempt in 1 2; do
@@ -135,10 +170,22 @@ if [[ "$OS" == "Darwin" ]]; then
     else
       echo "  ✗ Docker daemon not reachable"
       echo ""
-      echo "  Docker Desktop is installed but not running. To start it:"
-      echo "    open -a Docker"
-      echo "    Wait for the whale icon to appear in the menu bar."
-      echo "    Then re-run: ./install/bootstrap.sh"
+      if [[ -d /Applications/OrbStack.app ]]; then
+        echo "  OrbStack is installed but not running. To start it:"
+        echo "    open -a OrbStack"
+        echo "    Wait for the OrbStack icon to appear in the menu bar."
+      elif [[ -d /Applications/Docker.app ]]; then
+        echo "  Docker Desktop is installed but not running. To start it:"
+        echo "    open -a Docker"
+        echo "    Wait for the whale icon to appear in the menu bar."
+      elif command -v colima >/dev/null 2>&1; then
+        echo "  Colima is installed but not running. To start it:"
+        echo "    colima start"
+      else
+        echo "  Docker daemon is not running. Start your Docker runtime."
+      fi
+      echo ""
+      echo "  Then re-run: ./install/bootstrap.sh"
       echo ""
       ALL_OK=false
     fi
