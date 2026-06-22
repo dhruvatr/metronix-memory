@@ -141,19 +141,6 @@ services:
     env_file: .env
     environment:
       PYTHONUNBUFFERED: "1"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: metatron
-      POSTGRES_USER: metatron
-      POSTGRES_PASSWORD: metatron_dev
-      QDRANT_HOST: qdrant
-      NEO4J_HOST: neo4j
-      OLLAMA_HOST: http://ollama:11434
-      LLM_PROVIDER: ollama
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
-      SPLADE_SERVICE_URL: http://splade:8080
     volumes:
       - full_file_data:/app/data
     depends_on:
