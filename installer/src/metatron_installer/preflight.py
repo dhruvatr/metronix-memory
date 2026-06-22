@@ -156,6 +156,7 @@ def check_compose() -> ComposeInfo:
         if r.returncode == 0:
             return ComposeInfo(available=True, kind="plugin", command=("docker", "compose"))
     except (FileNotFoundError, subprocess.TimeoutExpired):
+        # `docker` is not installed/reachable or the check timed out; fall back to v1 probe.
         pass
 
     # Try v1 standalone: `docker-compose version`
@@ -169,6 +170,7 @@ def check_compose() -> ComposeInfo:
         if r.returncode == 0:
             return ComposeInfo(available=True, kind="standalone", command=("docker-compose",))
     except (FileNotFoundError, subprocess.TimeoutExpired):
+        # `docker-compose` is unavailable or timed out; report compose as unavailable below.
         pass
 
     return ComposeInfo(available=False)
