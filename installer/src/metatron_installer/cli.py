@@ -10,6 +10,7 @@ from .config import InstallerConfig, Mode, Profile, defaults_for
 from .docker import CommandResult, DockerShell, parse_ps_services
 from .envfile import atomic_write
 from .preflight import (
+    ComposeInfo,
     DockerInfo,
     check_compose,
     check_disk_space,
@@ -44,8 +45,12 @@ def _resolve_config(args: argparse.Namespace) -> InstallerConfig:
     return run_wizard(QuestionaryPrompter())
 
 
-def _run_preflight(shell: DockerShell) -> bool:
-    """Probe Docker, Compose, ports and print a summary. Returns False to abort the install."""
+def _run_preflight(shell: DockerShell) -> tuple[bool, ComposeInfo | None]:
+    """Probe Docker + Compose + ports and print a summary.
+
+    Returns (go_no_go, compose_info). When compose is available, the shell's
+    ``_compose_cmd`` is updated to use the detected command prefix.
+    """
     ui.info(f"Preflight on {detect_os()}")
     version_res = shell.version()
     docker: DockerInfo = (
@@ -54,12 +59,14 @@ def _run_preflight(shell: DockerShell) -> bool:
         else DockerInfo(present=False)
     )
     compose = check_compose()
+    if compose.available:
+        shell._compose_cmd = list(compose.command)
     conflicts = find_port_conflicts()
     disk = check_disk_space()
     ok, messages = summarize(docker, conflicts, disk, compose=compose)
     for line in messages:
         (ui.success if ok and "in use" not in line else ui.warning)(line)
-    return ok
+    return ok, compose
 
 
 def _render_status(shell: DockerShell, compose_file: str, env: dict[str, str]) -> None:
@@ -121,7 +128,7 @@ def _main_impl(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     compose_file = str(repo_root / "install" / "docker-compose.yml")
     base_env = dict(os.environ)
 
-    if not _run_preflight(shell):
+    if not _run_preflight(shell)[0]:
         ui.error("Preflight failed. Fix the issues above and re-run.")
         return 2
 
@@ -148,9 +155,7 @@ def _main_impl(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
         from .prompter_questionary import QuestionaryPrompter
 
         prompter = QuestionaryPrompter()
-        remove_images = prompter.confirm(
-            "Also remove Docker images?", default=False
-        )
+        remove_images = prompter.confirm("Also remove Docker images?", default=False)
         remove_volumes = prompter.confirm(
             "Also delete all data volumes? (irreversible)", default=False
         )
@@ -206,7 +211,7 @@ def _main_impl(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
         compose_bin = " ".join(shell._detect_compose())
         ui.error(
             "Stack failed to start. Check logs:\n"
-            f"  {compose_bin} -f {compose_file} logs"
+            f"  {' '.join(shell._compose_cmd)} -f {compose_file} logs"
         )
         if err:
             ui.console.print(f"[dim]{err.strip()}[/dim]")
