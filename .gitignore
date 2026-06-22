@@ -54,4 +54,5 @@ Thumbs.db
 .gh_alerts_summary.json
 .gh_probe.graphql
 
-env-install-sorting.txt
+# Runtime state (opencode tooling)
+.omx/
