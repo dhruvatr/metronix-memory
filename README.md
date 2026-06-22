@@ -316,10 +316,53 @@ make grid-search      # optimal scoring weights
 
 ---
 
+## 🤖 Hermes Agent MCP Setup
+
+Wire Hermes Agent to Metatron in one session — no manual config editing needed.
+
+### Prerequisites
+
+| Variable | Description | Where to get it |
+|---|---|---|
+| `{{METATRON_URL}}` | Metatron MCP endpoint | `https://<your-metatron>/mcp` |
+| `{{AGENT_UUID}}` | Agent UUID in Metatron | Control Center → Agents, or `POST /api/v1/agents` |
+| `{{WORKSPACE_ID}}` | Workspace identifier | `GET /api/v1/workspaces` |
+| `{{MCP_API_KEY}}` | Bearer token for `/mcp` | `METATRON_MCP_API_KEY` env var (ask your Metatron admin) |
+
+### One-prompt setup
+
+1. Fill in the four variables above.
+2. Open Hermes and paste the deployment prompt as your first message.
+3. Hermes will register the MCP server in `~/.hermes/config.yaml`, migrate any existing built-in memory entries into Metatron, and verify connectivity.
+4. **Restart Hermes** after the prompt completes (`/quit`, then `hermes` again). MCP servers are loaded once at session startup — the freshly registered Metatron server only becomes active in the new session.
+
+From the second session onward, all `metatron_*` tools are available and the configuration rule in built-in memory routes operations automatically.
+
+### What changes
+
+- `~/.hermes/config.yaml` — new `mcp_servers.metatron` section with URL, `Authorization: Bearer` header, and `X-Agent-Id` header
+- `~/.hermes/memories/MEMORY.md` — trimmed to a single `metatron-config` rule; all durable memory now lives in Metatron
+- `metatron_memory_*` tools become available via `/tools`
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `metatron_*` tools not visible | Restart Hermes — MCP server list is loaded once at startup |
+| `metatron_status` errors | `curl -v {{METATRON_URL}}` — check firewall, URL, server status |
+| `metatron_memory_list` returns 0 entries | Verify `agent_id` matches across all calls |
+| 401 on `/mcp` | `METATRON_MCP_API_KEY` mismatch between server `.env` and config |
+| Hermes ignores parts of prompt | Use a stronger model (DeepSeek V3, Claude Sonnet, GPT-4o) or split the prompt into stages |
+
+📄 **Full prompt with step-by-step instructions:** [Deploying Hermes Agent with Metatron MCP (Confluence)](https://mtrnix.atlassian.net/wiki/spaces/MTRNIX/pages/30998529)
+
+---
+
 ## 📖 Documentation
 
 - **[Architecture Diagram](docs/architecture-diagram.html)** — Interactive, dark-themed SVG
 - **[Hermes Integration Guide](docs/HERMES_INTEGRATION.md)** — Connect Metatron to Hermes Agent
+- **[Hermes Agent MCP Deployment](https://mtrnix.atlassian.net/wiki/spaces/MTRNIX/pages/30998529)** — One-prompt setup: register Metatron as an MCP server in Hermes, migrate memory, verify (Confluence)
 - **[Installation Guide](docs/INSTALL.md)** — Detailed setup + troubleshooting
 - **[Competitive Analysis](https://mtrnix.atlassian.net/wiki/spaces/MTRNIX/pages/64454707)** — Full landscape (Confluence)
 - **[Strategy ADR](docs/adr/2026-04-25-metatron-strategy.md)** — Architectural decisions + pilot plan

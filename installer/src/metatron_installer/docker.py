@@ -100,9 +100,7 @@ def _pull_with_progress(argv: list[str], env: dict[str, str]) -> tuple[int, str]
         if proc.stderr is None:
             return
         for raw_line in proc.stderr:
-            stderr_lines.append(
-                raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-            )
+            stderr_lines.append(raw_line.decode("utf-8", errors="replace").rstrip("\r\n"))
 
     t = threading.Thread(target=_drain_stderr, daemon=True)
     t.start()
@@ -163,63 +161,27 @@ def _pull_with_progress(argv: list[str], env: dict[str, str]) -> tuple[int, str]
 
 
 class DockerShell:
-    def __init__(self, runner: Runner | None = None):
+    def __init__(self, runner: Runner | None = None, compose_cmd: list[str] | None = None):
         self._run = runner or _default_runner
         self._last_stderr = ""
-        self._compose_prefix: list[str] | None = None  # cached compose argv prefix
+        self._compose_cmd = compose_cmd or ["docker", "compose"]
 
-    def _detect_compose(self) -> list[str]:
-        """Detect available Docker Compose variant and return its argv prefix.
-
-        Tries ``docker compose`` (v2 plugin) first, then ``docker-compose`` (v1
-        standalone).  Caches the result so detection runs at most once per session.
-        """
-        if self._compose_prefix is not None:
-            return self._compose_prefix
-
-        # Try Compose v2 plugin
-        try:
-            proc = subprocess.run(
-                ["docker", "compose", "version"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if proc.returncode == 0:
-                self._compose_prefix = ["docker", "compose"]
-                return self._compose_prefix
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-        # Try Compose v1 standalone
-        try:
-            proc = subprocess.run(
-                ["docker-compose", "--version"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if proc.returncode == 0:
-                self._compose_prefix = ["docker-compose"]
-                return self._compose_prefix
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-        # Neither found — default to v2 plugin so the user gets a clear error
-        # (the preflight check should have caught this already).
-        self._compose_prefix = ["docker", "compose"]
-        return self._compose_prefix
-
-    def _compose_argv(self, compose_file: str, *subcommand: str) -> list[str]:
-        """Build the full argv for a compose command.
-
-        Example: ``_compose_argv("docker-compose.yml", "pull")`` →
-        ``["docker", "compose", "-f", "docker-compose.yml", "pull"]``
-        or ``["docker-compose", "-f", "docker-compose.yml", "pull"]``.
-        """
-        return self._detect_compose() + ["-f", compose_file] + list(subcommand)
+    def _compose_argv(self, compose_file: str, *sub: str) -> list[str]:
+        """Build a compose argv using the detected compose command prefix."""
+        return [*self._compose_cmd, "-f", compose_file, *sub]
 
     def version(self) -> CommandResult:
         try:
             return self._run(["docker", "version", "--format", "{{.Server.Version}}"], None)
         except FileNotFoundError:
             return CommandResult(127, "", "docker: command not found")
+
+    def compose_version(self) -> CommandResult:
+        """Probe whether the configured compose command is available."""
+        try:
+            return self._run([*self._compose_cmd, "version"], None)
+        except FileNotFoundError:
+            return CommandResult(127, "", f"{' '.join(self._compose_cmd)}: command not found")
 
     def login(self, registry: str, user: str, token: str) -> CommandResult:
         # SECURITY: token is on argv (visible in `ps`) — acceptable for a local
@@ -256,14 +218,15 @@ class DockerShell:
         sys.stdout.flush()
         proc = subprocess.run(
             self._compose_argv(compose_file, "up", "-d"),
-            env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+            env=env,
+            stdout=None,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         return CommandResult(proc.returncode, "", proc.stderr)
 
     def compose_ps(self, compose_file: str, env: dict[str, str]) -> CommandResult:
-        return self._run(
-            self._compose_argv(compose_file, "ps", "--format", "json"), env
-        )
+        return self._run(self._compose_argv(compose_file, "ps", "--format", "json"), env)
 
     def compose_restart(self, compose_file: str, env: dict[str, str]) -> CommandResult:
         """Restart the stack with live output, capturing stderr for diagnostics.
@@ -282,7 +245,10 @@ class DockerShell:
             sys.stdout.flush()
             proc = subprocess.run(
                 self._compose_argv(compose_file, "restart"),
-                env=env, stdout=None, stderr=subprocess.PIPE, text=True,
+                env=env,
+                stdout=None,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:
@@ -321,8 +287,11 @@ class DockerShell:
                 argv.append("--volumes")
             sys.stdout.flush()
             proc = subprocess.run(
-                argv, env=env, stdout=None,
-                stderr=subprocess.PIPE, text=True,
+                argv,
+                env=env,
+                stdout=None,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             return CommandResult(proc.returncode, "", proc.stderr)
         finally:

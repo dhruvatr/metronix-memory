@@ -40,9 +40,16 @@ class DockerInfo:
 
 @dataclass(frozen=True)
 class ComposeInfo:
-    """Which Docker Compose variant is available (if any)."""
+    """Result of probing for Docker Compose availability.
+
+    ``kind`` is ``"plugin"`` (``docker compose`` v2), ``"standalone"``
+    (``docker-compose`` v1), or ``""`` when neither is found.
+    ``command`` is the argv prefix to use (e.g. ``["docker", "compose"]``).
+    """
+
     available: bool
-    variant: str = ""  # "plugin" (docker compose v2) | "standalone" (docker-compose v1) | ""
+    kind: str = ""
+    command: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -83,37 +90,6 @@ def parse_docker_version(output: str) -> DockerInfo:
     return DockerInfo(present=True, major=int(m["major"]), minor=int(m["minor"]))
 
 
-def check_compose() -> ComposeInfo:
-    """Detect which Docker Compose variant is available.
-
-    Tries ``docker compose`` (v2 plugin) first, then ``docker-compose`` (v1 standalone).
-    Returns ComposeInfo with available=False if neither is found.
-    """
-    # Try Compose v2 plugin: `docker compose version`
-    try:
-        proc = subprocess.run(
-            ["docker", "compose", "version"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0:
-            return ComposeInfo(available=True, variant="plugin")
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    # Try Compose v1 standalone: `docker-compose --version`
-    try:
-        proc = subprocess.run(
-            ["docker-compose", "--version"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0:
-            return ComposeInfo(available=True, variant="standalone")
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return ComposeInfo(available=False)
-
-
 def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1.0)
@@ -126,11 +102,45 @@ def _port_in_use(port: int) -> bool:
 def find_port_conflicts(
     checker: Callable[[int], bool] = _port_in_use,
 ) -> list[PortConflict]:
-    return [
-        PortConflict(port=p, service=svc)
-        for p, svc in PUBLISHED_PORTS.items()
-        if checker(p)
-    ]
+    return [PortConflict(port=p, service=svc) for p, svc in PUBLISHED_PORTS.items() if checker(p)]
+
+
+def check_compose() -> ComposeInfo:
+    """Detect whether ``docker compose`` (v2 plugin) or ``docker-compose``
+    (v1 standalone) is available.
+
+    Returns :class:`ComposeInfo` with the detected command prefix, or
+    ``available=False`` when neither is found.
+    """
+    # Try v2 plugin: `docker compose version`
+    try:
+        r = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode == 0:
+            return ComposeInfo(available=True, kind="plugin", command=("docker", "compose"))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # `docker` is not installed/reachable or the check timed out; fall back to v1 probe.
+        pass
+
+    # Try v1 standalone: `docker-compose version`
+    try:
+        r = subprocess.run(
+            ["docker-compose", "version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode == 0:
+            return ComposeInfo(available=True, kind="standalone", command=("docker-compose",))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # `docker-compose` is unavailable or timed out; report compose as unavailable below.
+        pass
+
+    return ComposeInfo(available=False)
 
 
 def summarize(
@@ -143,10 +153,8 @@ def summarize(
 
     A missing/unreachable Docker is a hard stop (ok=False). Port conflicts are
     warnings only — the operator may have intentionally remapped or be re-running.
-    Insufficient disk space (< MIN_DISK_GB) is also a hard stop.
-
-    When *compose* is provided and unavailable, it is a hard stop with a
-    platform-appropriate hint for installing Docker Compose.
+    Insufficient disk space (< MIN_DISK_GB) is also a hard stop. Missing Docker
+    Compose (neither v2 plugin nor v1 standalone) is a hard stop.
     """
     messages: list[str] = []
     ok = True
@@ -160,25 +168,18 @@ def summarize(
         )
     if compose is not None:
         if compose.available:
-            variant_label = "plugin (v2)" if compose.variant == "plugin" else "standalone (v1)"
-            messages.append(f"Docker Compose {variant_label} detected")
+            label = "v2 plugin" if compose.kind == "plugin" else "v1 standalone"
+            messages.append(f"Docker Compose {label} detected")
         else:
             ok = False
-            os_name = detect_os()
-            if os_name == "darwin":
-                hint = "Install via Homebrew: `brew install docker-compose`"
-            elif os_name == "linux":
-                hint = (
-                    "Install plugin: "
-                    "`sudo apt-get install docker-compose-plugin` (Debian/Ubuntu) "
-                    "or follow https://docs.docker.com/compose/install/"
-                )
-            else:
-                hint = "Install from https://docs.docker.com/compose/install/"
             messages.append(
-                "Docker Compose not found — the installer needs `docker compose` (v2 plugin) "
-                "or `docker-compose` (v1 standalone) to manage the stack. "
-                + hint
+                "Docker Compose not available — install it:\n"
+                "  macOS:  brew install docker-compose && "
+                "mkdir -p ~/.docker/cli-plugins && "
+                "ln -sfn $(brew --prefix)/opt/docker-compose/bin/docker-compose "
+                "~/.docker/cli-plugins/docker-compose\n"
+                "  Linux:  sudo apt-get install docker-compose-plugin  "
+                "(or: sudo yum install docker-compose-plugin)"
             )
     if disk is not None:
         free = disk.free_gb
