@@ -74,7 +74,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    profiles: ["full", "ollama"]
+    profiles: ["", "full", "ollama"]
     image: ollama/ollama:latest
     container_name: metatron-full-ollama
     ports:
@@ -185,7 +185,7 @@ services:
     restart: unless-stopped
 
   metatron-ui:
-    profiles: ["full", "ui"]
+    profiles: ["", "full", "ui"]
     image: ghcr.io/mtrnix/metatronui:ui-${TAG_SUFFIX:-develop}
     pull_policy: always
     container_name: metatron-full-ui
@@ -204,7 +204,7 @@ services:
     restart: unless-stopped
 
   embedding-proxy:
-    profiles: ["full", "embedding-proxy"]
+    profiles: ["", "full", "embedding-proxy"]
     image: ghcr.io/mtrnix/metatroncore:embedding-proxy-${TAG_SUFFIX:-develop}
     pull_policy: always
     container_name: metatron-embedding-proxy
@@ -223,7 +223,7 @@ services:
     restart: unless-stopped
 
   open-webui:
-    profiles: ["full", "openwebui"]
+    profiles: ["", "full", "openwebui"]
     image: ghcr.io/open-webui/open-webui:main
     container_name: metatron-full-openwebui
     ports:
@@ -242,7 +242,7 @@ services:
     restart: unless-stopped
 
   metatron-ui-cc:
-    profiles: ["full", "ui-cc"]
+    profiles: ["", "full", "ui-cc"]
     image: ghcr.io/mtrnix/metatronui:ui-cc-${TAG_SUFFIX:-develop}
     pull_policy: always
     container_name: metatron-full-ui-cc
