@@ -439,7 +439,7 @@ class TestList:
     async def test_include_archived_passes_through(
         self, service: AgentRegistryService, repo: AsyncMock
     ) -> None:
-        """MTRNIX-324: include_archived=True is forwarded to the repo."""
+        """PROJ-324: include_archived=True is forwarded to the repo."""
         repo.list_records.return_value = []
         await service.list_agents(include_archived=True)
         _, kwargs = repo.list_records.call_args

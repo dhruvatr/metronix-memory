@@ -63,7 +63,7 @@ class TestIntentClassification:
         assert router._classify("спасибо") == Intent.SMALLTALK
 
     def test_search_default(self, router: AgentRouter) -> None:
-        assert router._classify("what is MTRNIX-78 about?") == Intent.SEARCH
+        assert router._classify("what is PROJ-78 about?") == Intent.SEARCH
         assert router._classify("show me analytics dashboard") == Intent.SEARCH
         assert router._classify("архитектура проекта") == Intent.SEARCH
 
@@ -121,9 +121,9 @@ class TestRouteSmallTalk:
 class TestRouteSearch:
     @patch("metatron.agent.router.hybrid_search_and_answer_sync")
     def test_search_calls_hybrid(self, mock_search, router: AgentRouter) -> None:
-        mock_search.return_value = "Found: MTRNIX-78 is about analytics."
-        result = router.route("what is MTRNIX-78?", user_id="u1")
-        assert "MTRNIX-78" in result
+        mock_search.return_value = "Found: PROJ-78 is about analytics."
+        result = router.route("what is PROJ-78?", user_id="u1")
+        assert "PROJ-78" in result
         mock_search.assert_called_once()
         call_kwargs = mock_search.call_args
         assert call_kwargs.kwargs["workspace_id"] == "TEST_WS"
@@ -141,7 +141,7 @@ class TestRouteSearch:
     @patch("metatron.agent.router.hybrid_search_and_answer_sync")
     def test_search_command_dispatches(self, mock_search, router: AgentRouter) -> None:
         mock_search.return_value = "search result"
-        result = router.route("/search MTRNIX-78", user_id="u1")
+        result = router.route("/search PROJ-78", user_id="u1")
         assert result == "search result"
         mock_search.assert_called_once()
 

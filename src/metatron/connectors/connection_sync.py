@@ -116,7 +116,7 @@ async def run_connection_sync(
     # any source-side update that happens DURING fetch+ingest+graph is still
     # captured by the next sync. Otherwise, a long sync (Confluence/Jira can
     # take minutes) silently drops every doc whose `updated` falls inside
-    # that window (MTRNIX-332 review B1). Re-fetching one doc next time
+    # that window (PROJ-332 review B1). Re-fetching one doc next time
     # (content_hash dedup makes it cheap) is strictly better than losing one
     # forever.
     fetch_started_at = datetime.now(UTC)
@@ -192,7 +192,7 @@ async def run_connection_sync(
         except Exception as e:
             logger.warning("sync.raw_documents.error", error=str(e))
 
-        # Phase 1b: Enqueue KB freshness jobs for changed docs (MTRNIX-313).
+        # Phase 1b: Enqueue KB freshness jobs for changed docs (PROJ-313).
         # Flag-gated; with both freshness flags off this is a zero-Redis no-op.
         # We enqueue per PG raw_document id so the worker can look the row up
         # directly via ``get_raw_document_by_id`` without replaying natural

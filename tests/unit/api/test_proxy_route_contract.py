@@ -1,4 +1,4 @@
-"""Proxy route contract (MTRNIX-372 P3). Uses TestClient."""
+"""Proxy route contract (PROJ-372 P3). Uses TestClient."""
 
 import pytest
 from fastapi.testclient import TestClient

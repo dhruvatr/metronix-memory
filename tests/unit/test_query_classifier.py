@@ -78,7 +78,7 @@ class TestProfileWeights:
         assert set(QUERY_PROFILE_WEIGHTS[profile].keys()) == expected_keys
 
     def test_mixed_profile_weights(self) -> None:
-        """mixed (fallback) profile weights. NOTE (MTRNIX-397): these are the grid-searched
+        """mixed (fallback) profile weights. NOTE (PROJ-397): these are the grid-searched
         values committed on develop; they intentionally diverge from compute_signal_score()'s
         own defaults. All profile weights — mixed included — are re-derived by the Phase 6
         grid-search re-run (S-grid); update here if that run changes them.
@@ -114,7 +114,7 @@ class TestRuleGate:
     def test_jira_key_triggers_execution(self) -> None:
         from metatron.retrieval.query_classifier import _rule_gate
 
-        assert _rule_gate("What is the status of MTRNIX-104?") == "execution"
+        assert _rule_gate("What is the status of PROJ-104?") == "execution"
 
     def test_jira_key_case_insensitive(self) -> None:
         from metatron.retrieval.query_classifier import _rule_gate
@@ -355,7 +355,7 @@ class TestClassifyQuery:
         from metatron.retrieval.query_classifier import classify_query
 
         with patch("metatron.retrieval.query_classifier._llm_classify") as mock_llm:
-            result = classify_query("What is MTRNIX-104?")
+            result = classify_query("What is PROJ-104?")
             mock_llm.assert_not_called()
         assert result["profile"] == "execution"
         assert result["method"] == "rule"
@@ -394,7 +394,7 @@ class TestClassifyQuery:
         from metatron.retrieval.query_classifier import classify_query
 
         # Russian query with Jira key — rule gate should catch it
-        result = classify_query("Статус MTRNIX-104?")
+        result = classify_query("Статус PROJ-104?")
         assert result["profile"] == "execution"
         assert result["method"] == "rule"
 

@@ -1,4 +1,4 @@
-"""Tests for MCP memory_batch_store tool (MTRNIX-310).
+"""Tests for MCP memory_batch_store tool (PROJ-310).
 
 Covers ``metatron_memory_batch_store`` — mocks the MemoryService layer,
 so no live Postgres/Qdrant/Redis connection is required.

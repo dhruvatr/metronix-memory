@@ -1,6 +1,6 @@
 """Remaining proxy events: query_rewritten, tool_call_observed, client_cancelled.
 
-MTRNIX-372 Task 27.
+PROJ-372 Task 27.
 """
 
 from unittest.mock import AsyncMock, MagicMock

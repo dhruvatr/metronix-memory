@@ -1,4 +1,4 @@
-"""Proxy event constants + payload (MTRNIX-372 P3)."""
+"""Proxy event constants + payload (PROJ-372 P3)."""
 
 from dataclasses import asdict
 

@@ -14,7 +14,7 @@ class TestDetectResponseLanguage:
 
     def test_mixed_mostly_english(self) -> None:
         # English question with a Russian word
-        assert detect_response_language("What about задача MTRNIX-123?") == "English"
+        assert detect_response_language("What about задача PROJ-123?") == "English"
 
     def test_mixed_mostly_russian(self) -> None:
         # Russian question with an English word
@@ -34,7 +34,7 @@ class TestDetectResponseLanguage:
         assert detect_response_language("12345") == "English"
 
     def test_jira_key_only(self) -> None:
-        assert detect_response_language("MTRNIX-78") == "English"
+        assert detect_response_language("PROJ-78") == "English"
 
     def test_greeting_ru(self) -> None:
         assert detect_response_language("Привет!") == "Russian"

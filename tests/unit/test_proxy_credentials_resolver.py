@@ -1,4 +1,4 @@
-"""UpstreamCredentialsResolver (MTRNIX-372 P1)."""
+"""UpstreamCredentialsResolver (PROJ-372 P1)."""
 
 from unittest.mock import AsyncMock
 

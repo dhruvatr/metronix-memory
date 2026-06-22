@@ -87,7 +87,7 @@ def test_list_traces_shape(client):
             "total_ms": 12.0,
         }
     ]
-    # Trailing slash is the registered path (redirect_slashes=False; the ui-cc
+    # Trailing slash is the registered path (redirect_slashes=False; some proxies
     # nginx rewrites bare /api/v1/traces to /api/v1/traces/ — repo convention).
     with (
         patch("metatron.storage.pg_connection.list_rag_traces_sync", return_value=rows),

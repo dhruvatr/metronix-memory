@@ -1,4 +1,4 @@
-"""Extended assembler (MTRNIX-372 P2)."""
+"""Extended assembler (PROJ-372 P2)."""
 
 from unittest.mock import AsyncMock
 

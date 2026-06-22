@@ -1,4 +1,4 @@
-"""Proxy Settings fields (MTRNIX-372 P1)."""
+"""Proxy Settings fields (PROJ-372 P1)."""
 
 from metatron.core.config import Settings
 

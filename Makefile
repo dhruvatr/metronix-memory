@@ -32,13 +32,13 @@ migrate-new:
 	.venv/bin/alembic revision --autogenerate -m "$(name)"
 
 docker-up:
-	docker compose up -d
+	docker compose -f docker-compose.full.yml up -d --build
 
 docker-down:
-	docker compose down
+	docker compose -f docker-compose.full.yml down
 
 docker-logs:
-	docker compose logs -f metatron
+	docker compose -f docker-compose.full.yml logs -f
 
 clean:
 	rm -rf .venv dist/ *.egg-info src/*.egg-info
@@ -87,13 +87,13 @@ graph-process:
 # ============================================================================
 
 test-installer:
-	bash -n install.sh
+	bash -n install/bootstrap.sh
 
 verify-checksum:
 	sha256sum -c .sha256sum
 
 update-checksum:
-	sha256sum install.sh > .sha256sum
+	sha256sum install/bootstrap.sh install/bootstrap.ps1 > .sha256sum
 
 prepare-release: test-installer verify-checksum
 	@echo "✓ Installer ready for release"

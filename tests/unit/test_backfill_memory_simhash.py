@@ -1,4 +1,4 @@
-"""Tests for scripts/backfill_memory_simhash.py (MTRNIX-277).
+"""Tests for scripts/backfill_memory_simhash.py (PROJ-277).
 
 The backfill script is thin — tests focus on the async helper (_process_workspace
 and _run) by monkey-patching MemoryPostgresStore and the engine.

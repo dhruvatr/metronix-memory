@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill the ``content_simhash`` column on memory_records (MTRNIX-277).
+"""Backfill the ``content_simhash`` column on memory_records (PROJ-277).
 
 Pre-ticket rows have ``content_simhash IS NULL``. This script computes
 SimHash for each such row and writes it back with a single bulk-update
@@ -86,7 +86,7 @@ async def _run(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Backfill content_simhash on memory_records (MTRNIX-277)."
+        description="Backfill content_simhash on memory_records (PROJ-277)."
     )
     parser.add_argument(
         "--workspace-id",

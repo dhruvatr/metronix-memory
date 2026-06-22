@@ -1,4 +1,4 @@
-"""inject_into_system (MTRNIX-372 P3)."""
+"""inject_into_system (PROJ-372 P3)."""
 
 from metatron.proxy.inject import inject_into_system
 

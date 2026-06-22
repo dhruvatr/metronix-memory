@@ -147,7 +147,7 @@ async def test_run_connection_sync_marks_failed_on_exception(store, seeded_ids):
 
 
 async def test_run_connection_sync_failed_does_not_advance_cursor(store, seeded_ids):
-    """Regression for MTRNIX-332 B1: failed sync must NOT move last_synced_at.
+    """Regression for PROJ-332 B1: failed sync must NOT move last_synced_at.
 
     Without the guard, the cursor advances unconditionally in the finally
     block — documents updated between the last good sync and the failure
@@ -308,7 +308,7 @@ async def test_run_connection_sync_success_advances_cursor_past_prior(store, see
 
 
 # ---------------------------------------------------------------------------
-# force_full flag (MTRNIX-332)
+# force_full flag (PROJ-332)
 # ---------------------------------------------------------------------------
 
 
@@ -439,7 +439,7 @@ async def test_run_connection_sync_null_cursor_means_full_fetch(store, seeded_id
 
 
 # ---------------------------------------------------------------------------
-# Concurrent-sync guard (MTRNIX-332)
+# Concurrent-sync guard (PROJ-332)
 # ---------------------------------------------------------------------------
 
 

@@ -57,9 +57,9 @@ def test_recall_graph_caches_entity_lookups():
         settings=MagicMock(
             recall_top_n_graph=5,
             recall_graph_max_depth=2,
-            retrieval_graph_ner_enabled=False,  # MTRNIX-397 G1: default off → legacy NER path
+            retrieval_graph_ner_enabled=False,  # PROJ-397 G1: default off → legacy NER path
         ),
-        extracted_jira_keys=["MTRNIX-104"],
+        extracted_jira_keys=["PROJ-104"],
         extracted_title_entities=[],
         extracted_dates=None,
         detected_person=[],
@@ -73,7 +73,7 @@ def test_recall_graph_caches_entity_lookups():
         patch("metatron.retrieval.channels.get_hybrid_store") as mock_store,
     ):
         mock_ents.return_value = [{"name": "Auth"}]
-        mock_labels.return_value = [{"doc_label": "jira:MTRNIX-104"}]
+        mock_labels.return_value = [{"doc_label": "jira:PROJ-104"}]
         mock_rels.return_value = []
         mock_store.return_value.search_by_doc_labels.return_value = []
 

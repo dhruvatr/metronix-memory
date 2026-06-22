@@ -1,4 +1,4 @@
-"""Tests for persistent deduplication index (MTRNIX-213)."""
+"""Tests for persistent deduplication index (PROJ-213)."""
 
 from __future__ import annotations
 

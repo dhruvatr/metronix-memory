@@ -1,4 +1,4 @@
-"""call_site -> model tier resolution (MTRNIX-397, A)."""
+"""call_site -> model tier resolution (PROJ-397, A)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""ProxyService proxy-mode dispatch (MTRNIX-372 P3)."""
+"""ProxyService proxy-mode dispatch (PROJ-372 P3)."""
 
 from unittest.mock import AsyncMock, MagicMock
 

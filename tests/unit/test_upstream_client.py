@@ -1,4 +1,4 @@
-"""UpstreamLLMClient streaming + error forwarding (MTRNIX-372 P3)."""
+"""UpstreamLLMClient streaming + error forwarding (PROJ-372 P3)."""
 
 import httpx
 

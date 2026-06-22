@@ -56,7 +56,7 @@ class TestSplitMessage:
 
     def test_long_real_message(self) -> None:
         text = (
-            "**MTRNIX-78: Analytics Dashboard**\n\n"
+            "**PROJ-78: Analytics Dashboard**\n\n"
             "Status: In Progress\nAssignee: John\n\n"
             "Description: This is a long description " * 20
         )

@@ -158,7 +158,7 @@ def chat_completion(  # TODO: async migration
     def _build_messages_snapshot() -> list[dict[str, Any]]:
         return [{"role": mo.role, "content": mo.content} for mo in msg_objects]
 
-    # MTRNIX-397 (A): route service call_sites to the FAST model tier when no explicit
+    # PROJ-397 (A): route service call_sites to the FAST model tier when no explicit
     # model override was passed. No-op for non-deepseek providers and for HEAVY call_sites.
     if model is None:
         from metatron.core.config import get_settings

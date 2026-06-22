@@ -1,4 +1,4 @@
-"""ENTITY_WRITE event constant (MTRNIX-372 P4)."""
+"""ENTITY_WRITE event constant (PROJ-372 P4)."""
 
 from metatron.core.events import ENTITY_WRITE
 

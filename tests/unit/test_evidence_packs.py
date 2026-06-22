@@ -212,7 +212,7 @@ class TestCollectFragsDicts:
             {
                 "memory": "Task implementation details",
                 "data": "Task implementation details",
-                "title": "MTRNIX-104",
+                "title": "PROJ-104",
                 "type": "jira",
                 "source_role": "task_tracker",
                 "doc_label": "jira:104",
@@ -221,7 +221,7 @@ class TestCollectFragsDicts:
         ]
         frags, _, _, doc_stats = _collect_frags(base, set(), 0)
         assert "jira:104" in doc_stats
-        assert doc_stats["jira:104"]["title"] == "MTRNIX-104"
+        assert doc_stats["jira:104"]["title"] == "PROJ-104"
         assert doc_stats["jira:104"]["fetch_count"] == 1
 
 
@@ -373,7 +373,7 @@ class TestBuildCtxGrouped:
 
         frags = [
             self._make_frag("knowledge_base", "SUPPORTING", "confluence", "Arch Overview"),
-            self._make_frag("task_tracker", "PRIMARY", "jira", "MTRNIX-104"),
+            self._make_frag("task_tracker", "PRIMARY", "jira", "PROJ-104"),
         ]
         ctx = _build_ctx("What is the team doing?", "en", frags, [], [], [])
         # Task tracker section (has PRIMARY) should appear before knowledge base
@@ -387,7 +387,7 @@ class TestBuildCtxGrouped:
         from metatron.retrieval.search import _build_ctx
 
         frags = [
-            self._make_frag("task_tracker", "PRIMARY", "jira", "MTRNIX-104"),
+            self._make_frag("task_tracker", "PRIMARY", "jira", "PROJ-104"),
         ]
         ctx = _build_ctx("query", "en", frags, [], [], [])
         assert "## Task tracker sources" in ctx
@@ -400,7 +400,7 @@ class TestBuildCtxGrouped:
 
         frags = [
             self._make_frag("knowledge_base", "SUPPORTING", "confluence", "Doc1"),
-            self._make_frag("task_tracker", "SUPPORTING", "jira", "MTRNIX-99"),
+            self._make_frag("task_tracker", "SUPPORTING", "jira", "PROJ-99"),
         ]
         ctx = _build_ctx("query", "en", frags, [], [], [])
         # Fixed order: knowledge_base before task_tracker
@@ -422,14 +422,14 @@ class TestBuildCtxGrouped:
     def test_date_in_fragment_header(self) -> None:
         from metatron.retrieval.search import _build_ctx
 
-        frags = [self._make_frag("task_tracker", "PRIMARY", "jira", "MTRNIX-104", "2026-03-25")]
+        frags = [self._make_frag("task_tracker", "PRIMARY", "jira", "PROJ-104", "2026-03-25")]
         ctx = _build_ctx("query", "en", frags, [], [], [])
         assert "(2026-03-25)" in ctx
 
     def test_fragment_without_date(self) -> None:
         from metatron.retrieval.search import _build_ctx
 
-        frags = [self._make_frag("task_tracker", "PRIMARY", "jira", "MTRNIX-104", "")]
+        frags = [self._make_frag("task_tracker", "PRIMARY", "jira", "PROJ-104", "")]
         ctx = _build_ctx("query", "en", frags, [], [], [])
         assert "()" not in ctx  # no empty parens
 
@@ -496,7 +496,7 @@ class TestEvidencePacksIntegration:
             {
                 "memory": "Implementing auth module, status: in progress",
                 "data": "Implementing auth module, status: in progress",
-                "title": "MTRNIX-104",
+                "title": "PROJ-104",
                 "type": "jira",
                 "source_role": "task_tracker",
                 "doc_label": "jira:104",
@@ -531,7 +531,7 @@ class TestEvidencePacksIntegration:
         assert ctx.index("## Task tracker sources") < ctx.index("## Knowledge base sources")
         assert "[PRIMARY]" in ctx
         assert "[SUPPORTING]" in ctx
-        assert "MTRNIX-104" in ctx
+        assert "PROJ-104" in ctx
         assert "Architecture Overview" in ctx
 
     def test_full_pipeline_mixed_profile(self) -> None:
@@ -542,7 +542,7 @@ class TestEvidencePacksIntegration:
             {
                 "memory": "Some jira content",
                 "data": "Some jira content",
-                "title": "MTRNIX-99",
+                "title": "PROJ-99",
                 "type": "jira",
                 "source_role": "task_tracker",
                 "doc_label": "jira:99",

@@ -1,7 +1,7 @@
 """Unit tests for get_memory_service DI helper.
 
 Verifies that the REST path wires freshness_store and passes pg_store to
-MemorySearchService — closing the parity gap with the MCP path (MTRNIX-324).
+MemorySearchService — closing the parity gap with the MCP path (PROJ-324).
 """
 
 from __future__ import annotations

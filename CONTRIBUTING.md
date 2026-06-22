@@ -5,7 +5,8 @@ Thanks for wanting to help. Metatron Core is an open-core AI memory + knowledge 
 ## Getting Started
 
 1. **Fork** the repo and clone your fork.
-2. **Read** [CLAUDE.md](CLAUDE.md) — it's authoritative on architecture, conventions, and layer rules.
+2. **Read** [`docs/reference/architecture.md`](docs/reference/architecture.md) for
+   architecture, conventions, and layer rules.
 3. **Run tests** before touching anything:
    ```bash
    make docker-up   # start databases
@@ -16,7 +17,9 @@ Thanks for wanting to help. Metatron Core is an open-core AI memory + knowledge 
 
 ## Architecture Constraint
 
-Metatron has a **strict 6-layer one-way dependency architecture** (L0 → L6). You cannot import upward. See [CLAUDE.md](CLAUDE.md#architecture-6-layers--strict-one-way-dependencies-never-import-upward) for the layer map.
+Metatron has a **strict 6-layer one-way dependency architecture** (L0 to L6). You
+cannot import upward. See [`docs/reference/architecture.md`](docs/reference/architecture.md)
+for the layer map.
 
 Before adding any import, verify the layer belongs below your target.
 
@@ -62,7 +65,7 @@ Look for:
 area: short description (max 72 chars)
 
 Optional body explaining the why, not the what.
-Reference issues: MTRNIX-123, fixes #456
+Reference issues: fixes #456
 ```
 
 Examples: `memory: fix preference injection order`, `connectors: add incremental sync resume`, `docs: add quickstart examples`
@@ -82,7 +85,8 @@ make test-all         # unit + integration (needs docker-up)
 
 If your PR changes behavior, update:
 - The relevant `.md` in `docs/`
-- [CLAUDE.md](CLAUDE.md) if architecture or commands change
+- [`docs/reference/architecture.md`](docs/reference/architecture.md) if architecture changes
+- [`docs/reference/configuration.md`](docs/reference/configuration.md) if configuration changes
 - Inline docstrings for public APIs
 
 ## DCO

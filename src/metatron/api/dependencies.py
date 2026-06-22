@@ -283,10 +283,10 @@ def get_memory_service(request: Request) -> MemoryService:
     )
 
     # Wire pg_store into search so graph-leg status post-filter works on the
-    # REST path — parity with the MCP path (_memory_deps.py). MTRNIX-324.
+    # REST path — parity with the MCP path (_memory_deps.py). PROJ-324.
     search = MemorySearchService(qdrant=qdrant_store, redis=redis_cache, pg_store=pg_store)
 
-    # Wire freshness_store so review-queue REST endpoints work. MTRNIX-324.
+    # Wire freshness_store so review-queue REST endpoints work. PROJ-324.
     from metatron.storage.freshness_pg import FreshnessStore
 
     freshness_store = getattr(request.app.state, "memory_freshness_store", None)

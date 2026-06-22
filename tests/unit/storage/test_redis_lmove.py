@@ -1,4 +1,4 @@
-"""Unit tests for RedisStore LMOVE-family primitives (MTRNIX-316).
+"""Unit tests for RedisStore LMOVE-family primitives (PROJ-316).
 
 Covers ``lmove_rightleft`` (the RPOPLPUSH-style primitive used by the
 freshness processing-list reclaim pattern), ``peek_tail`` (LINDEX key -1),

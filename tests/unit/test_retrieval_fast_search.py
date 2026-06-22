@@ -1,4 +1,4 @@
-"""Tests for ``retrieval.search.fast_search`` + ``_extract_fast_signals`` (MTRNIX-303)."""
+"""Tests for ``retrieval.search.fast_search`` + ``_extract_fast_signals`` (PROJ-303)."""
 
 from __future__ import annotations
 
@@ -33,12 +33,12 @@ class TestExtractFastSignals:
         assert dates is None
 
         # Jira key — extracted and uppercased, deduplicated.
-        keys, dates = _extract_fast_signals("status of MTRNIX-123 and mtrnix-123 today")
-        assert keys == ["MTRNIX-123"]
+        keys, dates = _extract_fast_signals("status of PROJ-123 and mtrnix-123 today")
+        assert keys == ["PROJ-123"]
 
         # Multiple distinct keys preserved in order.
-        keys, _ = _extract_fast_signals("compare MTRNIX-1 with MTRNIX-2")
-        assert keys == ["MTRNIX-1", "MTRNIX-2"]
+        keys, _ = _extract_fast_signals("compare PROJ-1 with PROJ-2")
+        assert keys == ["PROJ-1", "PROJ-2"]
 
 
 class TestFastSearch:
@@ -136,7 +136,7 @@ class TestFastSearch:
                 return_value=meta_hits,
             ) as mock_meta,
         ):
-            out = await fast_search("status of MTRNIX-123")
+            out = await fast_search("status of PROJ-123")
 
         mock_meta.assert_awaited_once()
         assert {h["id"] for h in out} == {"a", "b"}
@@ -158,7 +158,7 @@ class TestFastSearch:
                 return_value=[_scored("b", 0.9, channel="metadata")],
             ) as mock_meta,
         ):
-            out = await fast_search("status of MTRNIX-123")
+            out = await fast_search("status of PROJ-123")
 
         mock_meta.assert_not_called()
         assert [h["id"] for h in out] == ["a"]

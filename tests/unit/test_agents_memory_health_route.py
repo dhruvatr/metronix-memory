@@ -1,4 +1,4 @@
-"""Tests for GET /api/v1/agents/{agent_id}/memory/health (MTRNIX-277)."""
+"""Tests for GET /api/v1/agents/{agent_id}/memory/health (PROJ-277)."""
 
 from __future__ import annotations
 

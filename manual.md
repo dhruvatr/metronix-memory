@@ -125,8 +125,8 @@ curl http://localhost:8001/health
 Ports: API `:8001` | PostgreSQL `:5433` | Qdrant `:6335` | Neo4j bolt `:7688` |
 Redis `:6380` | Ollama `:11435` | SPLADE `:8080` | Open WebUI `:3080` (option B)
 
-For other deployment profiles (minimal, full with Control Center UI and knowledge-base
-UI) use the installer: [docs/INSTALL.md](docs/INSTALL.md)
+For a detailed deployment reference, other profiles, and troubleshooting, see
+[`install.md`](install.md).
 
 ## 5. Troubleshooting
 

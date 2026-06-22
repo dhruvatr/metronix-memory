@@ -1,4 +1,4 @@
-"""ToolResultEnricher (MTRNIX-372 P4)."""
+"""ToolResultEnricher (PROJ-372 P4)."""
 
 from unittest.mock import AsyncMock, MagicMock
 

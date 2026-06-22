@@ -1,4 +1,4 @@
-"""WorkspaceEntityTrie (MTRNIX-372 P4)."""
+"""WorkspaceEntityTrie (PROJ-372 P4)."""
 
 from metatron.core.config import Settings
 from metatron.proxy.entity_trie import WorkspaceEntityTrie

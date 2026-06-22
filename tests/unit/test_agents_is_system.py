@@ -1,4 +1,4 @@
-"""AgentRecord.is_system + list filtering (MTRNIX-372 P1)."""
+"""AgentRecord.is_system + list filtering (PROJ-372 P1)."""
 
 from unittest.mock import AsyncMock
 

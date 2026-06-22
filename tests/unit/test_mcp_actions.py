@@ -464,7 +464,7 @@ class TestRouterActionIntent:
     def test_regular_query_not_action(self, router: MagicMock) -> None:
         from metatron.agent.router import Intent
 
-        assert router._classify("what is MTRNIX-78 about?") == Intent.SEARCH
+        assert router._classify("what is PROJ-78 about?") == Intent.SEARCH
 
     @patch("metatron.mcp.action_planner.ActionPlanner.discover_write_tools")
     @patch("metatron.agent.router.hybrid_search_and_answer_sync")
@@ -585,7 +585,7 @@ class TestRouterActionIntent:
         store.add(action)
 
         mock_search.return_value = "Search result"
-        result = router.route("what is MTRNIX-78?", user_id="u1")
+        result = router.route("what is PROJ-78?", user_id="u1")
         # Falls through to normal routing (search)
         assert "Search result" in result
 

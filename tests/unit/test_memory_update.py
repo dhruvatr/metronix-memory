@@ -1,4 +1,4 @@
-"""Tests for MemoryPostgresStore.count_records() and .update() (MTRNIX-310)."""
+"""Tests for MemoryPostgresStore.count_records() and .update() (PROJ-310)."""
 
 from __future__ import annotations
 

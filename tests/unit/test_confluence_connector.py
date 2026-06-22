@@ -126,7 +126,7 @@ class TestConnectorRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Sub-minute post-filter (MTRNIX-332) — parity with Jira
+# Sub-minute post-filter (PROJ-332) — parity with Jira
 # ---------------------------------------------------------------------------
 
 

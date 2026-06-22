@@ -1,4 +1,4 @@
-"""Tests for MTRNIX-396 autosync scheduler.
+"""Tests for PROJ-396 autosync scheduler.
 
 Two tiers:
 

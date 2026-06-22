@@ -4,7 +4,7 @@
 #
 # External ports are offset to avoid conflicts with dev services:
 #   PostgreSQL: 5433, Qdrant: 6335, Neo4j: 7475/7688,
-#   Ollama: 11435, API: 8001, UI: 3001
+#   Redis: 6380, Ollama: 11435, API: 8001, Open WebUI: 3080
 # =============================================================================
 
 services:
@@ -17,7 +17,7 @@ services:
     environment:
       POSTGRES_DB: metatron
       POSTGRES_USER: metatron
-      POSTGRES_PASSWORD: metatron_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-metatron_dev}
     ports:
       - "5433:5432"
     volumes:
@@ -56,13 +56,13 @@ services:
       - "7475:7474"
       - "7688:7687"
     environment:
-      NEO4J_AUTH: "none"
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-metatron_dev}"
     volumes:
       - full_neo4j_data:/data
     networks:
       - metatron_full
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell 'RETURN 1' || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"${NEO4J_PASSWORD:-metatron_dev}\" 'RETURN 1' || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 12
@@ -141,6 +141,9 @@ services:
     env_file: .env
     environment:
       PYTHONUNBUFFERED: "1"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-metatron_dev}
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-metatron_dev}
     volumes:
       - full_file_data:/app/data
     depends_on:
@@ -163,30 +166,6 @@ services:
       retries: 5
       start_period: 15s
     restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # Metatron UI (requires separate metatronui repo next to metatroncore)
-  # Uncomment to include UI in the stack:
-  #   docker compose -f docker-compose.full.yml up --build
-  # ---------------------------------------------------------------------------
-  # metatron-ui:
-  #   build:
-  #     context: ../metatronui
-  #     dockerfile: Dockerfile
-  #   container_name: metatron-full-ui
-  #   ports:
-  #     - "3001:3000"
-  #   depends_on:
-  #     metatron-core:
-  #       condition: service_healthy
-  #   networks:
-  #     - metatron_full
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "curl -sf http://localhost:3000/ || exit 1"]
-  #     interval: 10s
-  #     timeout: 3s
-  #     retries: 3
-  #   restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # Embedding proxy — benchmarker support

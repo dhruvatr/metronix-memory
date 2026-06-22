@@ -1,12 +1,12 @@
-"""In-process autosync scheduler (MTRNIX-396).
+"""In-process autosync scheduler (PROJ-396).
 
 Runs as an asyncio background task in the API process lifespan.
 On each tick it queries for connections whose ``next_run_at`` is due,
 claims them atomically, and spawns ``run_connection_sync`` as a
 managed asyncio.Task.
 
-See ``docs/adr/2026-06-09-autosync-architecture.md`` for the design
-rationale (in-process vs. separate worker, autosync-on-by-default).
+The scheduler is intentionally in-process and bounded by a concurrency limit so
+manual syncs remain available even when scheduled syncs are disabled.
 
 Layer: L6 — API. Imports from L3/L2/L1 only.
 """

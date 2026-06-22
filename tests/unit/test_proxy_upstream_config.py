@@ -1,4 +1,4 @@
-"""UpstreamConfig parsing (MTRNIX-372 P1)."""
+"""UpstreamConfig parsing (PROJ-372 P1)."""
 
 import pytest
 from pydantic import ValidationError

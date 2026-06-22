@@ -21,7 +21,7 @@ class TestUpsertDocumentFetchStats:
 
         doc_stats = {
             "confluence:PAGE-1": {"title": "Doc One", "word_count": 100, "fetch_count": 2},
-            "jira:MTRNIX-42": {"title": "Doc Two", "word_count": 50, "fetch_count": 1},
+            "jira:PROJ-42": {"title": "Doc Two", "word_count": 50, "fetch_count": 1},
         }
         upsert_document_fetch_stats_sync("ws_test", doc_stats)
 

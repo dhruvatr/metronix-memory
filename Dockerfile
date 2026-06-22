@@ -33,12 +33,6 @@ COPY src/ src/
 COPY migrations/ migrations/
 COPY alembic.ini .
 
-# Demo / seeding scripts and synthetic dataset (MTRNIX-327).
-# Used by the Seed-DPLAT-Demo workflow to provision the dplat-demo workspace
-# on Dev. Adds ~3 MB to the image; not on any production code path.
-COPY seed/ seed/
-COPY demo-data/ demo-data/
-
 # Pre-create writable subtrees the app needs at runtime. When `/app/data` is
 # backed by a named volume the volume inherits ownership from this directory
 # on first mount, so the non-root `metatron` user can write to it. Existing

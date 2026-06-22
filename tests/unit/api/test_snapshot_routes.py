@@ -1,4 +1,4 @@
-"""Tests for snapshot REST endpoints (MTRNIX-272).
+"""Tests for snapshot REST endpoints (PROJ-272).
 
 Covers /api/v1/agents/{id}/reset, /api/v1/agents/{id}/snapshots POST + GET,
 /api/v1/snapshots/{id}/restore, and /api/v1/snapshots/diff. Uses dependency

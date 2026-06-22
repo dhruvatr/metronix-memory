@@ -1,4 +1,4 @@
-"""Unit tests for MemorySearchService status push-down (MTRNIX-314)."""
+"""Unit tests for MemorySearchService status push-down (PROJ-314)."""
 
 from __future__ import annotations
 

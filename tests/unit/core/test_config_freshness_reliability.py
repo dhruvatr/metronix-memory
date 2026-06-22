@@ -1,4 +1,4 @@
-"""Unit tests for freshness-reliability settings (MTRNIX-316).
+"""Unit tests for freshness-reliability settings (PROJ-316).
 
 Covers the six new knobs added in Task 2:
 
@@ -10,7 +10,7 @@ Covers the six new knobs added in Task 2:
 * ``METATRON_FRESHNESS_DRAIN_LEGACY_AT_STARTUP``
 
 Defaults are chosen so enabling the flag-gated features is a no-op for
-pre-MTRNIX-316 dev rigs.
+pre-PROJ-316 dev rigs.
 """
 
 from __future__ import annotations

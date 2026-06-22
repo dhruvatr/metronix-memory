@@ -1,4 +1,4 @@
-"""Tests for MemoryPostgresStore health-tracking methods (MTRNIX-277).
+"""Tests for MemoryPostgresStore health-tracking methods (PROJ-277).
 
 All tests use mocked SQLAlchemy async engines so they run without a live DB.
 The round-trip tests for content_simhash are pure-Python and need no engine at all.

@@ -13,7 +13,7 @@ class TestJiraDocumentUrl:
         connector = JiraConnector()
         connector._config = {"url": "https://mycompany.atlassian.net"}
         raw_issue = {
-            "key": "MTRNIX-42",
+            "key": "PROJ-42",
             "fields": {
                 "summary": "Test issue",
                 "description": "Body text",
@@ -32,7 +32,7 @@ class TestJiraDocumentUrl:
             },
         }
         doc = connector._issue_to_document(raw_issue, workspace_id="ws1")
-        assert doc.url == "https://mycompany.atlassian.net/browse/MTRNIX-42"
+        assert doc.url == "https://mycompany.atlassian.net/browse/PROJ-42"
 
     def test_issue_url_strips_trailing_slash(self) -> None:
         connector = JiraConnector()
@@ -61,7 +61,7 @@ class TestJiraDocumentUrl:
 
 
 # ---------------------------------------------------------------------------
-# Sub-minute post-filter in fetch (MTRNIX-332)
+# Sub-minute post-filter in fetch (PROJ-332)
 # ---------------------------------------------------------------------------
 
 

@@ -12,9 +12,8 @@ build/
 venv/
 env/
 
-# Project planning (GSD workflow artifacts)
+# Project planning (local workflow artifacts)
 .planning/
-docs/superpowers/
 
 # IDE
 .idea/
@@ -46,9 +45,7 @@ htmlcov/
 Thumbs.db
 .metatron/
 
-# Claude/AI artifacts
-.claude/skills/
-.claude/scheduled_tasks.lock
+# Local scratch files
 .scratch/
 .gh_alerts.json
 .gh_alerts_summary.json

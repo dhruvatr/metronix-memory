@@ -1,4 +1,4 @@
-"""GET /api/v1/agents?include_system query param (MTRNIX-372 P1)."""
+"""GET /api/v1/agents?include_system query param (PROJ-372 P1)."""
 
 from unittest.mock import AsyncMock
 
