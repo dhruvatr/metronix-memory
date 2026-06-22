@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
+import sys
 from pathlib import Path
 
 from . import __version__, ui
@@ -95,7 +97,22 @@ def _choose_action() -> InstallAction:
     return label_to_action[choice]
 
 
+def _force_utf8_output() -> None:
+    """Force stdout/stderr to UTF-8.
+
+    Rich status glyphs (→ ✓ ✗ ⚠) can't be encoded by legacy Windows code
+    pages (cp1252) when output is piped/redirected, raising UnicodeEncodeError.
+    Reconfiguring to UTF-8 avoids the crash; no-op where unsupported.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            with contextlib.suppress(ValueError, OSError):
+                reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -207,8 +224,6 @@ def _main_impl(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     ui.info("Pulling images and starting the stack...")
     ok, err = launch_stack(shell, compose_file, compose_profiles, registry_login=_login)
     if not ok:
-        # Use the detected compose variant for the log hint.
-        compose_bin = " ".join(shell._detect_compose())
         ui.error(
             "Stack failed to start. Check logs:\n"
             f"  {' '.join(shell._compose_cmd)} -f {compose_file} logs"
