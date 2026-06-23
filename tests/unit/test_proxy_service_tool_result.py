@@ -1,4 +1,4 @@
-"""ProxyService invokes enricher on tool-result rounds (MTRNIX-372 P4)."""
+"""ProxyService invokes enricher on tool-result rounds (PROJ-372 P4)."""
 
 from unittest.mock import AsyncMock, MagicMock
 

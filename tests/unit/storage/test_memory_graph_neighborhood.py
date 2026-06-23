@@ -1,4 +1,4 @@
-"""Unit tests for get_memory_neighborhood (MTRNIX-324).
+"""Unit tests for get_memory_neighborhood (PROJ-324).
 
 Uses a mocked Neo4j driver so no live Neo4j required.
 """
@@ -105,7 +105,7 @@ class TestGetMemoryNeighborhoodStorage:
 
         APOC is not installed in the project's docker-compose Neo4j image, so
         any reliance on ``apoc.*`` procedures would silently produce zero
-        memory-to-memory edges in production. Regression guard for MTRNIX-324.
+        memory-to-memory edges in production. Regression guard for PROJ-324.
         """
         from metatron.storage.memory_graph import get_memory_neighborhood
 

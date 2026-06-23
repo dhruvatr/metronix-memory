@@ -70,7 +70,7 @@ class TestAliasIntegration:
             {
                 "memory": "Task X",
                 "data": "Task X",
-                "title": "MTRNIX-10",
+                "title": "PROJ-10",
                 "type": "jira",
                 "score": 1.0,
                 "payload": {},

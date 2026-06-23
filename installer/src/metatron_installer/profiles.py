@@ -3,18 +3,17 @@ from __future__ import annotations
 from .config import LlmProvider, Profile
 
 # Optional compose profile names a user may toggle under CUSTOM.
-OPTIONAL_PROFILES = ("ollama", "embedding-proxy", "openwebui", "ui", "ui-cc")
+OPTIONAL_PROFILES = ("ollama", "embedding-proxy", "openwebui", "ui")
 
 # The services that FULL turns on, expressed as the single "full" compose profile.
 FULL_PROFILE = "full"
 
-# The services that MINIMAL turns on — just the core UI.
-MINIMAL_PROFILE = "ui"
+# The services that MINIMAL turns on — backend services only.
+MINIMAL_PROFILE = ""
 
 # Map of compose profile name → (label, url) for UI endpoints.
 _UI_URLS: dict[str, tuple[str, str]] = {
-    "ui": ("Metronix UI", "http://localhost:3000"),
-    "ui-cc": ("Metronix UI CC", "http://localhost:3001"),
+    "ui": ("Metatron UI", "http://localhost:3000"),
     "openwebui": ("Open WebUI", "http://localhost:3080"),
 }
 

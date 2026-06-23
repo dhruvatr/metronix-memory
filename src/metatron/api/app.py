@@ -20,7 +20,6 @@ from metatron.api.routes import (
     admin,
     agents,
     auth,
-    benchmarker,
     chat,
     config,
     connections,
@@ -229,7 +228,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     async with mcp_server.session_manager.run():
         logger.info("mcp.session_manager.started")
 
-        # --- Autosync scheduler (MTRNIX-396) ---
+        # --- Autosync scheduler (PROJ-396) ---
         app.state.autosync_task = None
         app.state.autosync_scheduler = None
         if settings.autosync_enabled:
@@ -256,7 +255,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.info("autosync.disabled")
 
-        # --- Proxy LLM client (MTRNIX-372) ---
+        # --- Proxy LLM client (PROJ-372) ---
         from metatron.proxy.upstream import UpstreamLLMClient
 
         app.state.upstream_llm_client = UpstreamLLMClient(
@@ -391,7 +390,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(documents.router, prefix="/api/v1")
     app.include_router(workspaces.router, prefix="/api/v1")
     app.include_router(sync.router, prefix="/api/v1")
-    app.include_router(benchmarker.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(graph.router, prefix="/api/v1")
@@ -417,7 +415,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         app.include_router(openai_compat_router)
 
-    # --- Proxy LLM service builder (MTRNIX-372) ---
+    # --- Proxy LLM service builder (PROJ-372) ---
     if settings.proxy_enabled:
         from metatron.agents.persistence import AgentPersistence
         from metatron.agents.service import AgentRegistryService
@@ -481,7 +479,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             nodes = await _asyncio.to_thread(get_memories_about_entity, ws, entity, 3, agent)
             # The Neo4j MemoryRecord node intentionally stores NO content
             # ("content lives in Qdrant"). Resolve it from PG (source of truth)
-            # so the enricher has text to append (MTRNIX-372 review — P4 content).
+            # so the enricher has text to append (PROJ-372 review — P4 content).
             pg_store = getattr(app.state, "memory_pg_store", None)
             if pg_store is None:
                 return nodes

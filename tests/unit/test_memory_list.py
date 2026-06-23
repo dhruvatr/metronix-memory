@@ -1,4 +1,4 @@
-"""Tests for MCP memory_list tool (MTRNIX-310)."""
+"""Tests for MCP memory_list tool (PROJ-310)."""
 
 from __future__ import annotations
 

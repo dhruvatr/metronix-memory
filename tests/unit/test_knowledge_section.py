@@ -1,4 +1,4 @@
-"""Knowledge section formatter (MTRNIX-372 P2)."""
+"""Knowledge section formatter (PROJ-372 P2)."""
 
 from metatron.memory.knowledge_section import format_knowledge_fragments
 

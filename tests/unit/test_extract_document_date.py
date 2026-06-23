@@ -146,7 +146,7 @@ class TestRealCases:
     def test_jira_issue_no_date_in_title(self) -> None:
         """Jira issues typically have no date in title — falls back to timestamp."""
         result = extract_document_date(
-            "[MTRNIX-78] Implement Confluence connector",
+            "[PROJ-78] Implement Confluence connector",
             "## Description\nImplement the connector...",
             updated_at=datetime(2026, 2, 5),
         )

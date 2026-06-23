@@ -50,7 +50,7 @@ class ConnectionStatus(StrEnum):
 class LifecycleStatus(StrEnum):
     """Lifecycle status shared by MemoryRecord (agent memory) and RawDocument (KB).
 
-    Promoted from ``MemoryStatus`` in Phase B (MTRNIX-313). Both dataclasses
+    Promoted from ``MemoryStatus`` in Phase B (PROJ-313). Both dataclasses
     carry the same seven states; an alias ``MemoryStatus`` is kept for Phase A
     call sites and enterprise plugin imports.
     """
@@ -96,7 +96,7 @@ class RawDocument:
     fetched_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-    # --- Freshness lifecycle (MTRNIX-313, Phase B) ---
+    # --- Freshness lifecycle (PROJ-313, Phase B) ---
     # Defaults mirror Alembic 018's server-side defaults so pre-migration rows
     # "look active" with a neutral freshness score and zero evidence.
     status: LifecycleStatus = LifecycleStatus.ACTIVE
@@ -361,7 +361,7 @@ class MemoryRecord:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     session_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    # Freshness lifecycle (MTRNIX-304).
+    # Freshness lifecycle (PROJ-304).
     # Defaults keep pre-migration behaviour: existing rows look "active" with
     # a neutral freshness score and zero evidence, matching Alembic 016's
     # server-side defaults.
@@ -373,7 +373,7 @@ class MemoryRecord:
     evidence_count: int = 0
     verification_state: str | None = None
     updated_at: datetime | None = None
-    # Health tracking (MTRNIX-277).
+    # Health tracking (PROJ-277).
     last_accessed_at: datetime | None = None
     content_simhash: int = 0  # 64-bit SimHash; 0 means "not yet computed"
 
@@ -407,7 +407,7 @@ class MemorySearchResult:
 
 
 # ---------------------------------------------------------------------------
-# Freshness (MTRNIX-304)
+# Freshness (PROJ-304)
 # ---------------------------------------------------------------------------
 
 
@@ -423,7 +423,7 @@ class ReviewEntry:
     workspace_id: str = ""
     target_id: str = ""
     target_kind: str = "memory_record"
-    # --- Backward compatibility (MTRNIX-313) ---
+    # --- Backward compatibility (PROJ-313) ---
     # Phase A called this ``record_id``. New code should use ``target_id``.
     # ``record_id`` remains a settable alias during the deprecation window;
     # ``__post_init__`` mirrors the two fields.
@@ -462,7 +462,7 @@ class AssembledContext:
     Sections in order: <constitution> (reserved-empty), <preferences>,
     <relevant_memories>, <relevant_knowledge>. Empty sections are omitted from
     ``system_prompt`` but kept in ``sections`` (as "") for additive tool-result
-    enrichment without rebuilding the whole prompt (MTRNIX-372).
+    enrichment without rebuilding the whole prompt (PROJ-372).
     """
 
     system_prompt: str

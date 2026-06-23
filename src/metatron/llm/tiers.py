@@ -1,4 +1,4 @@
-"""Map an LLM ``call_site`` to a model tier (MTRNIX-397, A).
+"""Map an LLM ``call_site`` to a model tier (PROJ-397, A).
 
 Service calls (query resolution, expansion, classification, translation, NER, slot
 extraction) run on a cheaper/faster FAST model; the final answer (``rag_answer``) runs

@@ -1,4 +1,4 @@
-"""Tests for ``metatron_search_fast`` MCP tool (MTRNIX-303)."""
+"""Tests for ``metatron_search_fast`` MCP tool (PROJ-303)."""
 
 from __future__ import annotations
 

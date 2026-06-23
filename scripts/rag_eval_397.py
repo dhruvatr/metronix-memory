@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MTRNIX-397 reproducible RAG eval — before/after harness.
+"""PROJ-397 reproducible RAG eval — before/after harness.
 
 Runs a fixed set of queries (three buckets: regression / positive / adversarial) through
 the live REST chat endpoint, pulls each RAG debug trace, and prints a structured per-query
@@ -37,7 +37,7 @@ REGRESSION = [
     "what type of model do you use? how many parameters?",  # must NOT regress
 ]
 POSITIVE = [
-    "what is MTRNIX-281 about",
+    "what is PROJ-281 about",
     "summarize the 2026-05-08 daily summary",
     "who works on the freshness pipeline",
     "what was done for memory health",
@@ -137,7 +137,7 @@ def run_bucket(base: str, token: str, workspace: str, name: str, queries: list[s
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="MTRNIX-397 RAG eval harness")
+    ap = argparse.ArgumentParser(description="PROJ-397 RAG eval harness")
     ap.add_argument("--base-url", required=True)
     ap.add_argument("--email", required=True)
     ap.add_argument("--password", required=True)

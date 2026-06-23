@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove mirror duplicate-review entries (MTRNIX-395).
+"""Remove mirror duplicate-review entries (PROJ-395).
 
 A possible-duplicate finding is undirected, but the freshness Reconciler used
 to create a directed ``ReviewEntry`` per record. When both members of a pair
@@ -94,7 +94,7 @@ async def _run(workspace_id: str, dry_run: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Remove mirror duplicate-review entries (MTRNIX-395)."
+        description="Remove mirror duplicate-review entries (PROJ-395)."
     )
     parser.add_argument("--workspace-id", required=True, help="Target workspace id.")
     parser.add_argument(

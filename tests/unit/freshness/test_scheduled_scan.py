@@ -1,4 +1,4 @@
-"""Unit tests for ``ScheduledScan`` — the safety-net scan orchestrator (MTRNIX-316).
+"""Unit tests for ``ScheduledScan`` — the safety-net scan orchestrator (PROJ-316).
 
 Target-agnostic: exercises the dataclass's ``run()`` method with an in-memory
 ``CoordinationStore`` stub + a fake ``FreshnessTarget``. No live services.

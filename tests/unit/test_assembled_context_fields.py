@@ -1,4 +1,4 @@
-"""AssembledContext new fields (MTRNIX-372 P2)."""
+"""AssembledContext new fields (PROJ-372 P2)."""
 
 from metatron.core.models import AssembledContext
 

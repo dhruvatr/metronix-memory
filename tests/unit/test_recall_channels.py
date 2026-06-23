@@ -40,11 +40,11 @@ def _make_ctx(**overrides) -> RecallContext:
 
 def test_recall_context_creation():
     ctx = _make_ctx(
-        original_query="What is MTRNIX-104?",
-        extracted_jira_keys=["MTRNIX-104"],
+        original_query="What is PROJ-104?",
+        extracted_jira_keys=["PROJ-104"],
     )
-    assert ctx.original_query == "What is MTRNIX-104?"
-    assert ctx.extracted_jira_keys == ["MTRNIX-104"]
+    assert ctx.original_query == "What is PROJ-104?"
+    assert ctx.extracted_jira_keys == ["PROJ-104"]
     assert ctx.is_activity_query is False
     assert ctx.detected_person == []
 
@@ -52,12 +52,12 @@ def test_recall_context_creation():
 def test_scored_result_is_typed_dict():
     result: ScoredResult = {
         "chunk_id": "abc-123",
-        "doc_label": "MTRNIX-104",
+        "doc_label": "PROJ-104",
         "score": 0.85,
         "memory": {"title": "RBAC impl", "text": "...", "type": "jira"},
     }
     assert result["chunk_id"] == "abc-123"
-    assert result["doc_label"] == "MTRNIX-104"
+    assert result["doc_label"] == "PROJ-104"
     assert result["score"] == 0.85
 
 
@@ -230,14 +230,14 @@ def test_recall_exact_jira_keys(mock_store_fn):
     store = MagicMock()
     mock_store_fn.return_value = store
     store.search_by_doc_labels.return_value = [
-        {"id": "p1", "score": 1.0, "doc_label": "MTRNIX-104", "memory": "rbac"},
+        {"id": "p1", "score": 1.0, "doc_label": "PROJ-104", "memory": "rbac"},
     ]
     store.scroll_by_title.return_value = []
-    ctx = _make_ctx(extracted_jira_keys=["MTRNIX-104"], settings=MagicMock(recall_top_n_exact=10))
+    ctx = _make_ctx(extracted_jira_keys=["PROJ-104"], settings=MagicMock(recall_top_n_exact=10))
     results = recall_exact(ctx)
-    store.search_by_doc_labels.assert_called_once_with(["MTRNIX-104"])
+    store.search_by_doc_labels.assert_called_once_with(["PROJ-104"])
     assert len(results) == 1
-    assert results[0]["doc_label"] == "MTRNIX-104"
+    assert results[0]["doc_label"] == "PROJ-104"
 
 
 @patch("metatron.retrieval.channels.get_hybrid_store")
@@ -267,7 +267,7 @@ def test_recall_exact_graceful_on_error(mock_store_fn):
     store = MagicMock()
     mock_store_fn.return_value = store
     store.search_by_doc_labels.side_effect = Exception("Qdrant down")
-    ctx = _make_ctx(extracted_jira_keys=["MTRNIX-1"], settings=MagicMock(recall_top_n_exact=10))
+    ctx = _make_ctx(extracted_jira_keys=["PROJ-1"], settings=MagicMock(recall_top_n_exact=10))
     results = recall_exact(ctx)
     assert results == []
 
@@ -381,7 +381,7 @@ def test_recall_graph_collects_seeds_from_all_sources(
         {"id": "p3", "score": 0.6, "doc_label": "DOC-3", "memory": "t"},
     ]
     ctx = _make_ctx(
-        extracted_jira_keys=["MTRNIX-104"],
+        extracted_jira_keys=["PROJ-104"],
         extracted_title_entities=["Project Aurora"],
         detected_person=["John Smith"],
         settings=MagicMock(recall_top_n_graph=10, recall_graph_max_depth=1),
@@ -389,7 +389,7 @@ def test_recall_graph_collects_seeds_from_all_sources(
     results = recall_graph(ctx)
     first_call_args = mock_get_labels.call_args_list[0]
     seed_names = set(first_call_args[0][0])
-    assert "MTRNIX-104" in seed_names
+    assert "PROJ-104" in seed_names
     assert "Project Aurora" in seed_names
     assert "John Smith" in seed_names
     assert "RBAC" in seed_names
@@ -523,10 +523,10 @@ class TestChannelField:
     def test_recall_exact_sets_channel(self, mock_store) -> None:
         store = MagicMock()
         store.search_by_doc_labels.return_value = [
-            {"id": "1", "doc_label": "MTRNIX-1", "score": 0.9, "memory": "text"},
+            {"id": "1", "doc_label": "PROJ-1", "score": 0.9, "memory": "text"},
         ]
         mock_store.return_value = store
-        ctx = _make_ctx(extracted_jira_keys=["MTRNIX-1"])
+        ctx = _make_ctx(extracted_jira_keys=["PROJ-1"])
         results = recall_exact(ctx)
         assert len(results) >= 1
         assert all(r["channel"] == "exact" for r in results)

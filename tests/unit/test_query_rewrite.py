@@ -1,4 +1,4 @@
-"""Query rewrite stage (MTRNIX-372 P2)."""
+"""Query rewrite stage (PROJ-372 P2)."""
 
 from unittest.mock import MagicMock
 

@@ -83,7 +83,7 @@ def test_hyde_detection_long_query():
 
 def test_hyde_detection_execution_profile():
     """Short query + execution profile -> skips HyDE."""
-    query = "MTRNIX-215"
+    query = "PROJ-215"
     settings = _make_settings()
     classification = {"profile": "execution", "confidence": 0.9, "method": "rule"}
     word_count = len(query.split())

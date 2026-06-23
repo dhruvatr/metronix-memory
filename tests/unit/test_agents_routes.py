@@ -202,7 +202,7 @@ class TestListAgents:
         assert kwargs["status"] == AgentStatus.ACTIVE
         assert kwargs["name_prefix"] == "Tra"
 
-    # MTRNIX-324: default-exclude ARCHIVED + include_archived opt-in
+    # PROJ-324: default-exclude ARCHIVED + include_archived opt-in
 
     def test_list_default_excludes_archived(
         self, client: TestClient, service: AsyncMock

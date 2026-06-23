@@ -1,4 +1,4 @@
-"""Tests for MemorySnapshotService (MTRNIX-272)."""
+"""Tests for MemorySnapshotService (PROJ-272)."""
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ class TestCreate:
 
         snapshot = await service.create("agent1")
 
-        # storage_path is relative to the snapshot root since MTRNIX-272 v2.
+        # storage_path is relative to the snapshot root since PROJ-272 v2.
         target = tmp_path / snapshot.storage_path
         with gzip.open(target, "rt", encoding="utf-8") as fh:
             lines = fh.readlines()

@@ -50,7 +50,7 @@ class TestSplitMessage:
     def test_long_real_message(self) -> None:
         # Simulate a real search result
         text = (
-            "**MTRNIX-78: Analytics Dashboard**\n\n"
+            "**PROJ-78: Analytics Dashboard**\n\n"
             "Status: In Progress\nAssignee: John\n\n"
             "Description: This is a long description " * 20
         )
@@ -97,10 +97,10 @@ class TestMarkdownToHtml:
         assert _markdown_to_html("### Sub-section") == "<b>Sub-section</b>"
 
     def test_mixed_content(self) -> None:
-        text = "## Status\n**MTRNIX-78**: *In Progress*\nAssignee: `john`"
+        text = "## Status\n**PROJ-78**: *In Progress*\nAssignee: `john`"
         result = _markdown_to_html(text)
         assert "<b>Status</b>" in result
-        assert "<b>MTRNIX-78</b>" in result
+        assert "<b>PROJ-78</b>" in result
         assert "<i>In Progress</i>" in result
         assert "<code>john</code>" in result
 

@@ -145,7 +145,7 @@ class TestIsValidEntityName:
     def test_valid_names(self) -> None:
         assert is_valid_entity_name("Qdrant") is True
         assert is_valid_entity_name("John Doe") is True
-        assert is_valid_entity_name("MTRNIX-42") is True
+        assert is_valid_entity_name("PROJ-42") is True
         assert is_valid_entity_name("Knowledge Graph") is True
 
     def test_too_short(self) -> None:
@@ -415,7 +415,7 @@ class TestLooksLikeSentence:
     def test_passes_short_entity_names(self) -> None:
         assert _looks_like_sentence("Qdrant") is False
         assert _looks_like_sentence("Knowledge Graph") is False
-        assert _looks_like_sentence("MTRNIX-42") is False
+        assert _looks_like_sentence("PROJ-42") is False
 
     def test_name_length_filter_at_50(self) -> None:
         """Names over 50 chars are rejected by is_valid_entity_name."""

@@ -1,4 +1,4 @@
-"""Unit tests for metatron/llm/telemetry.py (MTRNIX-336).
+"""Unit tests for metatron/llm/telemetry.py (PROJ-336).
 
 Coverage:
 - set_telemetry_context — set/reset, nested scopes, child does not inherit
@@ -410,7 +410,7 @@ def test_emit_log_zero_tokens_flag_false_when_tokens_present() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Content-size cap (MTRNIX-336 follow-up — prevents JSONB bloat on NER path)
+# Content-size cap (PROJ-336 follow-up — prevents JSONB bloat on NER path)
 # ---------------------------------------------------------------------------
 
 
@@ -557,7 +557,7 @@ def test_emit_log_does_not_invoke_callable_when_opted_out() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Per-workspace lock LRU eviction (MTRNIX-336 follow-up — prevents lock dict
+# Per-workspace lock LRU eviction (PROJ-336 follow-up — prevents lock dict
 # growth without bound on deployments with many short-lived workspaces)
 # ---------------------------------------------------------------------------
 

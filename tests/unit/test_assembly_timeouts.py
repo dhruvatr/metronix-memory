@@ -1,4 +1,4 @@
-"""AssemblyTimeouts.from_settings (MTRNIX-372 P2)."""
+"""AssemblyTimeouts.from_settings (PROJ-372 P2)."""
 
 from metatron.core.config import Settings
 from metatron.memory.assembly_timeouts import AssemblyTimeouts

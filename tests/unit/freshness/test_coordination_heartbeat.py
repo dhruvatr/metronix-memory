@@ -1,4 +1,4 @@
-"""Unit tests for worker heartbeat helpers on ``CoordinationStore`` (MTRNIX-316)."""
+"""Unit tests for worker heartbeat helpers on ``CoordinationStore`` (PROJ-316)."""
 
 from __future__ import annotations
 

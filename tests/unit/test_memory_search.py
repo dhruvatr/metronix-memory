@@ -420,7 +420,7 @@ class TestRankingAndTruncation:
 
 
 # ---------------------------------------------------------------------------
-# Fire-and-forget touch hook (MTRNIX-277)
+# Fire-and-forget touch hook (PROJ-277)
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Unit tests for LLM telemetry integration in chat_completion (MTRNIX-336).
+"""Unit tests for LLM telemetry integration in chat_completion (PROJ-336).
 
 Coverage:
 - Provider success → emit_log called with correct fields (call_site, model,

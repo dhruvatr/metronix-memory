@@ -1,4 +1,4 @@
-"""Tests for the shared sub-minute cursor post-filter (MTRNIX-332)."""
+"""Tests for the shared sub-minute cursor post-filter (PROJ-332)."""
 
 from __future__ import annotations
 

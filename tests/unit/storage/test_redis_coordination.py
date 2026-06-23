@@ -1,4 +1,4 @@
-"""Unit tests for RedisStore freshness primitives (MTRNIX-304).
+"""Unit tests for RedisStore freshness primitives (PROJ-304).
 
 Uses ``AsyncMock`` on the underlying ``redis.asyncio.Redis`` client — no
 live Redis required. Asserts the command sequence and Lua argument shapes

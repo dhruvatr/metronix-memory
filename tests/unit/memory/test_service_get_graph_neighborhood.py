@@ -1,4 +1,4 @@
-"""Unit tests for MemoryService.get_graph_neighborhood (MTRNIX-324)."""
+"""Unit tests for MemoryService.get_graph_neighborhood (PROJ-324)."""
 
 from __future__ import annotations
 

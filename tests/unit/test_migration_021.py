@@ -1,4 +1,4 @@
-"""Tests for migration 021 — memory health fields (MTRNIX-277).
+"""Tests for migration 021 — memory health fields (PROJ-277).
 
 These tests verify the migration module's metadata and structure without
 requiring a live database. The columns/indexes are tested via the module's

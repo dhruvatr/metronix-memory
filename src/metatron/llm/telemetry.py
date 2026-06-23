@@ -1,4 +1,4 @@
-"""LLM generation telemetry context and emission (MTRNIX-336).
+"""LLM generation telemetry context and emission (PROJ-336).
 
 This module owns the per-request TelemetryContext ContextVar, the
 ``set_telemetry_context`` context-manager helper used by entry-points

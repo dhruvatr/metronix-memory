@@ -1,6 +1,6 @@
 """Unit tests for ``metatron.mcp.errors.handle_tool_error``.
 
-MTRNIX-319: regression — a PG ``UntranslatableCharacterError`` whose message
+PROJ-319: regression — a PG ``UntranslatableCharacterError`` whose message
 contained the SQL text (with the string ``workspace_id`` in column names)
 was misclassified as ``WORKSPACE_NOT_FOUND``. These tests pin the strict
 exception-type-first mapping that fixes that."""
@@ -30,7 +30,7 @@ class WorkspaceNotFoundError(Exception):
 
 class TestDBErrorMapping:
     def test_db_error_with_workspace_in_message_is_not_workspace_not_found(self) -> None:
-        # Simulate the MTRNIX-319 incident: SQL INSERT with a Unicode
+        # Simulate the PROJ-319 incident: SQL INSERT with a Unicode
         # character landing on a SQL_ASCII-encoded cluster. The error
         # message contains the SQL text, which in turn contains the column
         # name ``workspace_id``. Before the fix this was bucketed as

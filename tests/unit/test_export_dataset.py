@@ -1,4 +1,4 @@
-"""Unit tests for scripts/export_llm_dataset.py (MTRNIX-336).
+"""Unit tests for scripts/export_llm_dataset.py (PROJ-336).
 
 Coverage:
 - openai-chat-ft format produces expected JSON shape.

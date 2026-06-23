@@ -1,4 +1,4 @@
-"""Tests for MemoryHealthService (MTRNIX-277).
+"""Tests for MemoryHealthService (PROJ-277).
 
 All DB calls go through a mock MemoryPostgresStore so no live DB is needed.
 """

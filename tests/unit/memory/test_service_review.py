@@ -1,4 +1,4 @@
-"""Unit tests for MemoryService review methods (MTRNIX-314)."""
+"""Unit tests for MemoryService review methods (PROJ-314)."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def _make_service(
     pg_store: MagicMock | None = None,
 ) -> tuple[MemoryService, dict]:
     pg = pg_store or MagicMock()
-    # MTRNIX-319: resolve_review opens a shared transaction via
+    # PROJ-319: resolve_review opens a shared transaction via
     # ``pg_store.begin()`` and threads the connection through three store
     # methods. Mock the async context manager so tests can proceed.
     pg.begin = MagicMock(return_value=_FakeTxn())
@@ -176,7 +176,7 @@ class TestResolveReviewKeep:
         assert kw["status"] == LifecycleStatus.ACTIVE
         assert kw["verification_state"] == "keep_resolved"
         assert kw.get("superseded_by") is None
-        # MTRNIX-395: a human keep refreshes the freshness clock so the record
+        # PROJ-395: a human keep refreshes the freshness clock so the record
         # does not re-STALE on the next scheduled scan.
         assert kw["bump_updated_at"] is True
 
@@ -349,7 +349,7 @@ class TestResolveReviewErrors:
 
 
 class TestResolveReviewAtomicity:
-    """MTRNIX-319: resolve_review must group the three PG writes into one
+    """PROJ-319: resolve_review must group the three PG writes into one
     transaction via ``pg_store.begin()`` so a failure on save_machine_event
     does not leave a partially-committed state behind."""
 
@@ -417,7 +417,7 @@ class TestResolveReviewAtomicity:
 
 
 class TestResolveReviewMirrorCascade:
-    """MTRNIX-395: resolving one side of a duplicate pair cascade-deletes the
+    """PROJ-395: resolving one side of a duplicate pair cascade-deletes the
     mirror review entry so the pair leaves the queue as a unit."""
 
     async def test_mirror_entry_is_cascade_deleted(self) -> None:

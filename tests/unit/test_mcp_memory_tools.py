@@ -1,4 +1,4 @@
-"""Tests for MCP memory tools (MTRNIX-303).
+"""Tests for MCP memory tools (PROJ-303).
 
 Covers ``metatron_memory_search``, ``metatron_memory_store``,
 ``metatron_memory_delete`` — all tools mock the MemoryService layer, so no
