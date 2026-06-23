@@ -285,10 +285,40 @@ RAG frameworks give you building blocks. Metatron gives you an operational backe
 
 ### Consumer Surfaces
 
-- **MCP server** - Cursor, Claude Desktop, Hermes, and other MCP runtimes.
-- **OpenAI-compatible API** - Open WebUI, LibreChat, and compatible clients.
-- **REST API** - direct integration and administration.
-- **Legacy chat bots** - Telegram, Discord, and Slack compatibility surfaces.
+### Hermes Memory: Important Distinction
+
+If you are using **Hermes Agent**, do **not** start with Hermes' "memory providers"
+screen and expect Metatron to appear there.
+
+Hermes currently has two different integration concepts:
+
+- **Memory providers** — Hermes-native provider plugins such as `honcho`, `mem0`,
+  `hindsight`, and similar providers configured via Hermes' own memory setup flow
+- **MCP servers** — external backends Hermes can call as tools
+
+**Metatron today integrates with Hermes as an MCP server, not as a Hermes-native
+memory provider plugin.**
+
+That means:
+
+- use Metatron when you want Hermes to search the KB or read/write memory through
+  MCP tools like `metatron_search`, `metatron_memory_search`, and
+  `metatron_memory_store`
+- use Hermes memory providers when you specifically want Hermes' built-in provider
+  plugin system
+- use both if you want Hermes-native memory plus Metatron as a richer external
+  knowledge and memory backend
+
+**Recommended path today:** connect Hermes to Metatron through `/mcp`.
+
+See:
+- **[Hermes Integration Guide](docs/HERMES_INTEGRATION.md)** — exact MCP setup for Hermes
+- **[Hermes memory provider docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers)** — what Hermes means by "memory providers"
+
+### Deployment
+- **Self-hosted:** Docker Compose, your hardware, your keys
+- **Full stack:** PostgreSQL + Qdrant + Neo4j + Ollama + API
+- **Planned:** Air-gapped BYOC, SOC2 compliance
 
 ---
 
