@@ -1,9 +1,25 @@
 # Connecting Metatron To An Agent
 
-Metatron exposes an MCP server at `/mcp`. The easiest setup path is to paste the prompt
-below into your agent or LLM client and let it configure the MCP connection.
+Metatron exposes an MCP server at `/mcp`. Setup is **three prompts** you paste into your agent or
+LLM client, in order:
+
+1. **Install Metatron as an MCP server** — gives the agent Metatron's knowledge search (RAG) *and*
+   memory tools. After this the agent *may* use Metatron memory, but isn't required to.
+2. **Make Metatron the agent's primary & only durable-memory store** — flips durable memory from
+   optional to mandatory: it must live in Metatron, nowhere else.
+3. **Migrate the agent's existing memory** into Metatron (only if it already has prior memory).
 
 Use this after Metatron is running and `METATRON_MCP_API_KEY` is set in `.env`.
+
+## Agent-specific guides
+
+If you're using one of these agents, follow its dedicated guide instead — it walks the full setup
+with that runtime's concrete config paths and file locations:
+
+- **Hermes** — [`docs/integrations/hermes.md`](docs/integrations/hermes.md)
+
+More agents will be added here later. For any other MCP client, use the runtime-neutral prompts
+below.
 
 ## What The Agent Needs
 
@@ -12,67 +28,209 @@ Give the agent these values, or let it ask you for them:
 | Value | Example | Notes |
 |---|---|---|
 | `METATRON_URL` | `http://localhost:8001/mcp` | Use your public HTTPS URL in production. |
-| `METATRON_MCP_API_KEY` | generated token from `.env` | Sent as `Authorization: Bearer ...`. |
-| `AGENT_UUID` | `my-agent-001` | Any stable unique id for this agent. |
-| `DEFAULT_WORKSPACE_ID` | `MTRNIX` | Default workspace from `.env.example`. |
+| `METATRON_MCP_API_KEY` | token from `.env` | Sent as `Authorization: Bearer ...`. `/mcp` returns 401 without it. |
+| `AGENT_UUID` | `my-agent-001` | Any stable unique id, or the `id` returned by `POST /api/v1/agents`. |
+| `DEFAULT_WORKSPACE_ID` | `MTRNIX` | Workspaces UI, or `GET /api/v1/workspaces`. |
 
-## Prompt To Paste Into Your Agent
+## Order And Restart
+
+MCP tools usually become available only after a restart, so the order matters:
+
+- **Session 1:** run **prompt 1**, then restart the agent runtime (most runtimes load MCP servers
+  only at startup, so the `metatron_*` tools appear only in the next session).
+- **Session 2:** with the tools now active, run **prompt 2**, then **prompt 3** if the agent has
+  prior memory. No further restart is needed between them.
+
+---
+
+## Prompt 1 — Install Metatron as an MCP server
 
 ```text
-You are configuring this agent to use Metatron Core over MCP.
+You are configuring this agent to use Metatron Core over MCP. Run this once.
+If a working Metatron MCP server is already configured, verify it and report the
+result instead of creating a duplicate entry.
 
-Run the setup once. If you already have a working Metatron MCP server configuration,
-verify it and report the result instead of creating a duplicate entry.
+Parameters:
+- METATRON_URL          = {{METATRON_URL}}
+- METATRON_MCP_API_KEY  = {{METATRON_MCP_API_KEY}}
+- AGENT_UUID            = {{AGENT_UUID}}
+- DEFAULT_WORKSPACE_ID  = {{DEFAULT_WORKSPACE_ID}}
 
-Ask the user for any missing values:
+If any value above is still a {{...}} placeholder or empty, STOP and ask the user
+for it before doing anything else — never guess. Show these hints:
+- METATRON_URL: Metatron MCP endpoint, e.g. http://localhost:8001/mcp (use your
+  public HTTPS URL in production).
+- METATRON_MCP_API_KEY: token from the Metatron .env (METATRON_MCP_API_KEY);
+  the /mcp endpoint returns HTTP 401 without it.
+- AGENT_UUID: a stable unique id for this agent, or the id returned by
+  POST /api/v1/agents.
+- DEFAULT_WORKSPACE_ID: workspace id (Workspaces UI, or GET /api/v1/workspaces),
+  usually MTRNIX for the first install. Every metatron_* call (both search/RAG and
+  memory) needs it, which is why it is set now.
 
-- METATRON_URL: Metatron MCP endpoint, for example http://localhost:8001/mcp
-- METATRON_MCP_API_KEY: token from the Metatron .env file
-- AGENT_UUID: stable unique id for this agent
-- DEFAULT_WORKSPACE_ID: workspace id, usually MTRNIX for the first install
+1. Register Metatron as an MCP server in this runtime using:
+   - URL: {{METATRON_URL}}
+   - Header: Authorization: Bearer {{METATRON_MCP_API_KEY}}
+   - Header: X-Agent-Id: {{AGENT_UUID}}
+   - Timeout: 180 seconds
+   - Connect timeout: 60 seconds
+   The Authorization header is required (the /mcp endpoint rejects requests without
+   the configured METATRON_MCP_API_KEY). The X-Agent-Id header is required for
+   agent-scoped memory and observability; use the same AGENT_UUID in memory tool
+   arguments.
 
-Register Metatron as an MCP server in this agent runtime using:
+2. Record that Metatron is available. Many runtimes load a persona / system /
+   always-on instruction file at the start of every turn. APPEND the block below to
+   that file — do NOT overwrite existing content, and edit the live file the runtime
+   actually loads, not a backup or copy. If a `metatron-config` block is already
+   present (e.g. from a previous run), update it in place instead of appending a
+   second copy. If your runtime has no such file, keep it in whatever long-lived
+   instruction store it does have. This is what lets the agent use Metatron after
+   the restart; without it, the agent would not know which workspace_id / agent_id
+   to pass and could not call any metatron_* tool:
 
-- URL: {{METATRON_URL}}
-- Header: Authorization: Bearer {{METATRON_MCP_API_KEY}}
-- Header: X-Agent-Id: {{AGENT_UUID}}
-- Timeout: 180 seconds
-- Connect timeout: 60 seconds
+     --- metatron-config ---
+     Metatron MCP is available. workspace_id="{{DEFAULT_WORKSPACE_ID}}",
+     agent_id="{{AGENT_UUID}}". You MAY use the metatron_* tools — knowledge
+     search / RAG and memory. Using Metatron for durable memory is OPTIONAL at this
+     stage; it is not yet your required store.
+     --- end metatron-config ---
 
-The Authorization header is required. The Metatron /mcp endpoint rejects requests
-without the configured METATRON_MCP_API_KEY.
+3. Restart the agent runtime — most runtimes load MCP servers only at startup, so
+   the new tools appear only in the next session.
 
-The X-Agent-Id header is required for agent-scoped memory and observability. Use the
-same AGENT_UUID in memory tool arguments.
-
-After registration, restart the agent runtime if MCP servers are loaded only at startup.
-
-When tools are available, verify:
-
-1. Call metatron_status with workspace_id="{{DEFAULT_WORKSPACE_ID}}".
-2. Call metatron_memory_list with workspace_id="{{DEFAULT_WORKSPACE_ID}}",
-   agent_id="{{AGENT_UUID}}", limit=5.
-3. If the agent has existing durable memory in its built-in memory store, migrate
-   non-stale entries into Metatron:
-   - user preferences -> kind="preference"
-   - factual durable statements -> kind="fact"
-   - explicit always-remember instructions -> kind="pinned"
-   Use metatron_memory_store or metatron_memory_batch_store.
-4. Keep only a small configuration rule in built-in memory:
-   "Durable memory lives in Metatron MCP. Use workspace_id={{DEFAULT_WORKSPACE_ID}}
-   and agent_id={{AGENT_UUID}}. Do not silently fall back to built-in durable memory
-   if Metatron is unreachable."
-
-Report back in four lines:
-
+Report:
 - MCP registration: ok / changes made
-- Verification: metatron_status ok / failed with error
-- Memory: memory_list returned N records
-- Built-in memory: migrated / skipped / not applicable
+- Availability note: written to <file>
+- Next step: restart, then run prompt 2 (using Metatron memory is optional until
+  then), and prompt 3 if the agent has prior memory to migrate
+```
+
+---
+
+## Prompt 2 — Make Metatron the primary & only memory source
+
+```text
+You are an agent with the Metatron MCP server already registered and active. Run
+this once to make Metatron your primary and only durable-memory store.
+
+Until now, using Metatron memory has been optional. This step makes Metatron your
+PRIMARY and ONLY durable-memory store — from here on, durable memory goes nowhere
+else.
+
+Parameters:
+- DEFAULT_WORKSPACE_ID = {{DEFAULT_WORKSPACE_ID}}
+- AGENT_UUID           = {{AGENT_UUID}}
+
+If either value above is still a {{...}} placeholder or empty, STOP and ask the
+user for it before doing anything else — never guess. Show these hints:
+- DEFAULT_WORKSPACE_ID: workspace id (Workspaces UI, or GET /api/v1/workspaces),
+  usually MTRNIX for the first install.
+- AGENT_UUID: a stable unique id for this agent, or the id returned by
+  POST /api/v1/agents.
+
+1. Memory policy. Durable knowledge lives in Metatron, classified by kind:
+   - kind="fact" (default) — durable factual statements.
+   - kind="preference" — user preferences / behavioral rules (auto-injected).
+   - kind="pinned" — explicit instructions marked must-not-vanish.
+   Memory tools require BOTH workspace_id and agent_id in arguments.
+
+2. Upgrade the routing rule from optional to mandatory. Prompt 1 wrote a
+   `metatron-config` block (with the OPTIONAL wording) into the persona / system /
+   always-on instruction file your runtime loads every turn. Find that block and
+   REPLACE its body with the mandatory rule below, leaving everything else in the
+   file intact. If the block isn't there (prompt 1 was skipped), append it. Edit the
+   live file the runtime actually loads, not a backup or copy:
+
+     --- metatron-config ---
+     Durable memory lives in Metatron MCP. ALWAYS use the metatron_memory_* tools,
+     with workspace_id="{{DEFAULT_WORKSPACE_ID}}" and agent_id="{{AGENT_UUID}}".
+     kind: fact (default) | preference (auto-injected) | pinned (must-not-vanish).
+     Do NOT use local/built-in memory for durable knowledge and do NOT silently
+     fall back to it. If Metatron is unreachable, say so instead of storing
+     durable knowledge locally.
+     --- end metatron-config ---
+
+3. Verify:
+   - metatron_status(workspace_id="{{DEFAULT_WORKSPACE_ID}}")
+   - metatron_memory_list(workspace_id="{{DEFAULT_WORKSPACE_ID}}",
+     agent_id="{{AGENT_UUID}}", limit=5)
+   - confirm the rule is saved and any pre-existing instructions are intact.
+
+Report:
+- Routing rule: upgraded to mandatory (or appended if prompt 1 was skipped)
+- Verify: metatron_status ok / failed, memory_list returned N records
+- Next step: run prompt 3 if this agent has prior memory to migrate
+```
+
+---
+
+## Prompt 3 — Migrate existing memory
+
+Run this only if the agent already holds durable memory, in the same post-restart session.
+
+```text
+You are an agent with the Metatron MCP server registered and active. Move ALL
+durable knowledge you currently hold into Metatron, so it becomes the single
+source of truth for long-lived memory. Run once.
+
+Parameters:
+- DEFAULT_WORKSPACE_ID = {{DEFAULT_WORKSPACE_ID}}
+- AGENT_UUID           = {{AGENT_UUID}}
+
+If either value above is still a {{...}} placeholder or empty, STOP and ask the
+user for it before doing anything else — never guess. Show these hints:
+- DEFAULT_WORKSPACE_ID: workspace id (Workspaces UI, or GET /api/v1/workspaces),
+  usually MTRNIX for the first install.
+- AGENT_UUID: a stable unique id for this agent, or the id returned by
+  POST /api/v1/agents.
+
+1. Inventory every place you keep durable knowledge. Do NOT stop at the first or
+   most obvious location — durable knowledge is often spread across surfaces:
+   - your own native / built-in memory, in whatever form it takes;
+   - local notes, scratch files, or working documents you read or write;
+   - any external or shared knowledge store you treat as a source of truth
+     (a separate notes system, a shared knowledge base, a wiki, a doc collection);
+   - pinned / "always remember" instructions;
+   - durable facts or preferences carried over from earlier sessions.
+   The most common failure is migrating only user-facing notes and leaving
+   structured or external knowledge behind. Completeness of this inventory is the
+   single most important step. List every source before moving on. Do NOT migrate
+   or remove your own persona/identity definition or the routing rule itself —
+   those are configuration, not knowledge.
+
+2. Classify each item (skip empty entries, test data, finished-task items) by
+   kind: fact (default) | preference | pinned.
+
+3. Store each item with:
+   metatron_memory_store(workspace_id="{{DEFAULT_WORKSPACE_ID}}",
+     agent_id="{{AGENT_UUID}}", content=<self-contained text>, scope="per_agent",
+     source_type="conversation", kind=<fact|preference|pinned>,
+     importance_score=0.7)
+   Use metatron_memory_batch_store for more than 5 items. Always pass BOTH
+   workspace_id and agent_id. Do not store duplicates.
+
+4. Retire the originals carefully. For memory you own exclusively (your native
+   memory, private notes): remove the migrated entry so there's one source of
+   truth (but NOT your persona or the routing rule). For shared or external
+   sources you do not own exclusively: do NOT delete them — leave them intact and
+   note that they were mirrored. From now on, write new durable knowledge to
+   Metatron, not back into the old locations.
+
+5. Verify with metatron_memory_list(workspace_id="{{DEFAULT_WORKSPACE_ID}}",
+   agent_id="{{AGENT_UUID}}", limit=10) and confirm nothing inventoried in step 1
+   was left un-migrated.
+
+Report:
+- Sources found: <every memory surface from step 1>
+- Migrated: N items (X fact / Y preference / Z pinned)
+- Skipped: M items (and why)
+- Retired: which owned sources were cleared vs. external/shared left intact
+- Verify: memory_list returned K entries — all inventoried sources accounted for
 ```
 
 ## Client-Specific Notes
 
-Different MCP clients store server configuration in different places. The prompt above
-is intentionally runtime-neutral. Use the dedicated integration guides in `docs/integrations/`
-when you want manual setup instructions for a specific client.
+Different MCP clients store server configuration in different places. The neutral prompts above are
+runtime-neutral. Use the dedicated integration guides in `docs/integrations/` when you want
+manual or runtime-specific setup instructions for a specific client.
