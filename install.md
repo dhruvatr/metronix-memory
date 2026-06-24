@@ -79,15 +79,18 @@ You must set two things: an **LLM provider** and the **MCP API key**.
 
 ### 3a. LLM provider
 
-When using metronix-memory you need to connect LLM in order to perform query routing and quesry enrichment. Pick one provider, set `LLM_PROVIDER`, and add its credentials. Edit these values in
-`.env`.
+When using metronix-memory you need an LLM for query routing and query enrichment.
 
-**Custom OpenAI-compatible provider:**
+Pick a provider in `.env`:
+
+- **Ollama (default)** — bundled, no API key: `LLM_PROVIDER=ollama`
+- **Custom** — any OpenAI-compatible endpoint (DeepSeek, OpenRouter, vLLM, …):
 
 ```ini
 LLM_PROVIDER=custom
-CUSTOM_LLM_URL=https://your-llm-endpoint/v1
-CUSTOM_LLM_API_KEY=your-key
+LLM_PROVIDER_URL=https://your-llm-endpoint/v1
+LLM_PROVIDER_API_KEY=your-key
+LLM_PROVIDER_MODEL=deepseek-chat   # model the endpoint serves (required)
 ```
 
 ### 3b. MCP API key

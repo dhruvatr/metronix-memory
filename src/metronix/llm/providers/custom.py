@@ -42,17 +42,24 @@ class CustomProvider(LLMProvider):
             api_key: Optional API key for authentication.
         """
         super().__init__(model, **kwargs)
-        base_url = api_url or os.getenv("CUSTOM_LLM_URL", "")
-        # Ensure URL points to chat completions endpoint
-        self.api_url = (
-            base_url if base_url.endswith("/chat/completions")
-            else f"{base_url.rstrip('/')}/chat/completions"
+        # Prefer the generic LLM_PROVIDER_* env; fall back to legacy CUSTOM_LLM_*.
+        base_url = api_url or os.getenv("LLM_PROVIDER_URL") or os.getenv("CUSTOM_LLM_URL", "")
+        # Ensure URL points to chat completions endpoint. Keep empty when unconfigured
+        # so is_available() reports False instead of a bogus relative "/chat/completions".
+        if not base_url:
+            self.api_url = ""
+        elif base_url.endswith("/chat/completions"):
+            self.api_url = base_url
+        else:
+            self.api_url = f"{base_url.rstrip('/')}/chat/completions"
+        self.api_key = (
+            api_key or os.getenv("LLM_PROVIDER_API_KEY") or os.getenv("CUSTOM_LLM_API_KEY", "")
         )
-        self.api_key = api_key or os.getenv("CUSTOM_LLM_API_KEY", "")
 
     @property
     def default_model(self) -> str:
-        return os.getenv("CUSTOM_LLM_MODEL", "default")
+        # Prefer the generic LLM_PROVIDER_MODEL; fall back to legacy CUSTOM_LLM_MODEL.
+        return os.getenv("LLM_PROVIDER_MODEL") or os.getenv("CUSTOM_LLM_MODEL", "default")
 
     def is_available(self) -> bool:
         """Check if custom API endpoint is configured."""
@@ -69,7 +76,9 @@ class CustomProvider(LLMProvider):
     ) -> LLMResponse:
         """Send chat completion request to custom API."""
         if not self.api_url:
-            raise LLMConnectionError("CUSTOM_LLM_URL not configured")
+            raise LLMConnectionError(
+                "LLM_PROVIDER_URL not configured (or legacy CUSTOM_LLM_URL)"
+            )
 
         headers = {
             "Content-Type": "application/json",
