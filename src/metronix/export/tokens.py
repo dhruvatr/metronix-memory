@@ -6,9 +6,14 @@ from typing import Any, Protocol
 
 
 class _RedisLike(Protocol):
-    async def set(self, key: str, value: str | bytes, ttl: int | None = ...) -> None: ...
-    async def get(self, key: str) -> str | None: ...
-    async def getdel(self, key: str) -> str | None: ...
+    async def set(self, key: str, value: str | bytes, ttl: int | None = None) -> None:
+        """Set ``key`` to ``value`` with an optional TTL in seconds."""
+
+    async def get(self, key: str) -> str | None:
+        """Return the value for ``key`` or ``None`` if absent."""
+
+    async def getdel(self, key: str) -> str | None:
+        """Atomically return and delete the value for ``key`` (Redis GETDEL)."""
 
 
 def _key(token: str) -> str:

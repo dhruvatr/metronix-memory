@@ -47,22 +47,31 @@ _LIMITATIONS = [
 
 
 class MemoryReader(Protocol):
-    async def list_workspaces(self) -> list[str]: ...
-    async def list_agent_ids(self, ws: str) -> list[str]: ...
+    async def list_workspaces(self) -> list[str]:
+        """Return all workspace ids that have memory."""
+
+    async def list_agent_ids(self, ws: str) -> list[str]:
+        """Return distinct agent ids with memory in a workspace (incl. unregistered)."""
+
     async def list_records(
         self, ws: str, *, agent_id: str, lifetime: str, limit: int, offset: int
-    ) -> list[MemoryRecord]: ...
+    ) -> list[MemoryRecord]:
+        """Return a page of memory records for an agent."""
 
 
 class DocReader(Protocol):
-    async def list_document_workspaces(self) -> list[str]: ...
+    async def list_document_workspaces(self) -> list[str]:
+        """Return all workspace ids that have ingested documents."""
+
     async def list_raw_documents_keyset(
         self, ws: str, *, after_updated_at: Any, after_id: str | None, limit: int
-    ) -> list[RawDocument]: ...
+    ) -> list[RawDocument]:
+        """Return a keyset page of raw documents for a workspace."""
 
 
 class RegisteredAgents(Protocol):
-    async def registered_agent_ids(self, ws: str) -> set[str]: ...
+    async def registered_agent_ids(self, ws: str) -> set[str]:
+        """Return the set of agent ids registered in the agents table."""
 
 
 class ExportService:
