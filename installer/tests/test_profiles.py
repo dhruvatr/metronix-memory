@@ -9,7 +9,7 @@ from metronix_installer.profiles import (
 
 
 def test_minimal_has_no_optional_profiles():
-    assert compose_profiles_value(Profile.MINIMAL, []) == "ui"
+    assert compose_profiles_value(Profile.MINIMAL, []) == ""
 
 
 def test_full_enables_full_profile():
