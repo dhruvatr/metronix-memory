@@ -76,6 +76,13 @@ Get a backend running in four steps. This is the shortest path; for the full gui
 git clone -b develop https://github.com/mtrnix/metronix-memory.git
 cd metronix-memory
 ```
+
+> **One command:** after cloning, run `./install.sh` — it checks Docker, writes `.env`
+> (prompts for your LLM provider + keys, generates secrets), then builds and starts the
+> stack and health-checks it, running steps 2–4 for you. Flags: `--provider`, `--api-key`,
+> `--openwebui`, `--reconfigure`, `--yes` (`./install.sh --help`). Prefer to do it by hand?
+> Continue with the steps below.
+
 ### 2. Configure: pick one LLM provider + set an MCP key in .env
 ```bash
 cp .env.example .env

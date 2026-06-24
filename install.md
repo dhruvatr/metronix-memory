@@ -8,6 +8,12 @@ Metronix runs as a Docker Compose stack. The canonical Compose file is
 Once the backend is running, connect an AI agent to it with
 [`connecting_to_agent.md`](connecting_to_agent.md).
 
+> **Prefer one command?** From the repo root, `./install.sh` automates steps 3–5 (writes
+> `.env`, generates secrets, builds, launches, and health-checks). This page is the by-hand
+> reference — use it when you want full control or need the troubleshooting section. Run
+> `./install.sh --help` for flags (`--provider`, `--api-key`, `--openwebui`, `--reconfigure`,
+> `--yes`).
+
 ## Overview
 
 The install is five steps:
