@@ -69,6 +69,29 @@ A single `ExportService` owns all build logic. MCP and REST are thin surfaces ov
 it. Build is asynchronous; an export job has a lifecycle and a one-time download
 token minted on completion.
 
+### Deployment & process model (invariant)
+
+This feature targets the **HTTP API deployment**, where the MCP server is mounted
+into the same FastAPI/uvicorn process as REST (`api/app.py:601-610` adds the `/mcp`
+route to the API app; the default docker-compose serves both `/mcp` and `/api/v1`
+on `:8001`). The standalone `python -m metronix.mcp --transport stdio` mode
+(`mcp/__main__.py`) is an **ephemeral process with no co-located REST server** and
+therefore cannot deliver a download URL — export is **out of scope for stdio-only
+MCP**; the trigger requires the HTTP API to be reachable.
+
+Even within the single API process, the build must outlive the request that
+triggered it and survive an API restart. Invariant: **trigger, build, and download
+communicate only through durable shared state — a PostgreSQL `export_jobs` row, the
+one-time token in Redis, and the ZIP on a shared volume.** Nothing is held in the
+memory of the triggering request.
+
+This resolves the background mechanism (no longer 50/50): the build runs as an
+**in-process `asyncio` task on the API process**, but its authoritative state lives
+in the `export_jobs` table — **not** FastAPI `BackgroundTasks` (which run only
+post-response, die on restart, and are unavailable on the MCP path — there is no
+`Request`). On startup the API runs a **watchdog**: any job left `running` past a
+timeout is marked `failed` so it never sticks in limbo.
+
 ```text
 MCP  metronix_export_data ─┐
                            ├─► ExportService.start(scope) ─► job(export_id, status=pending)
@@ -98,11 +121,16 @@ REST GET /api/v1/export/{id}/download?token=<one-time>  ─► stream applicatio
   - `build_manifest(scope, files, notes) -> dict`.
 - **Archive writer** (`src/metronix/export/archive.py`): streams entries into a ZIP
   on the mounted volume (e.g. `/data/exports/<export_id>.zip`).
-- **Token store**: one-time tokens in Redis — `export_token:<token>` →
-  `{export_id, path}`, TTL (default 1 hour). Consumed (deleted) on first successful
-  download. Job state (`status`, counts, size, error) is stored in Redis (or a small
-  PostgreSQL table) keyed by `export_id`; exact store decided during planning to
-  match existing patterns.
+- **Job store**: a PostgreSQL `export_jobs` table is the source of truth for job
+  state — `export_id` (PK), `scope`, `status` (`pending|running|ready|failed`),
+  `counts`, `size_bytes`, `archive_path`, `error`, `created_at`, `updated_at`. It
+  must be durable (survive an API restart) and readable by any worker; Redis is not
+  durable enough for this.
+- **Token store**: one-time download tokens in Redis — `export_token:<token>` →
+  `{export_id, path}`, TTL (default 1 hour). The token is generated with a CSPRNG,
+  ≥128 bits of entropy (`secrets.token_urlsafe(32)`). It is consumed (deleted) on the
+  first successful download. The download route must keep the token out of access
+  logs (do not log the query string for this path).
 - **MCP tools** (`src/metronix/mcp/tools/export.py`):
   `metronix_export_data(workspace_id?, all_workspaces=false)` and
   `metronix_export_status(export_id)`.
@@ -112,14 +140,29 @@ REST GET /api/v1/export/{id}/download?token=<one-time>  ─► stream applicatio
 
 ### Surfaces and scope
 
-- **Scope** (`all_workspaces` flag): default is the caller's single `workspace_id`.
-  `all_workspaces=true` exports every workspace in one archive.
-  - MCP: freely available — the single MCP API key is already admin.
+- **Scope** (`all_workspaces` flag): exports either one workspace or every workspace
+  in one archive.
+  - MCP: `metronix_export_data(workspace_id?, all_workspaces=false)`. **No silent
+    `"default"` fallback** — unlike the other MCP tools, which coerce
+    `workspace_id or "default"` (e.g. `mcp/tools/memory_store.py:91`), this tool
+    requires an explicit `workspace_id` **or** `all_workspaces=true`; otherwise it
+    returns an `INVALID_PARAMS` error. A bare call must never dump only the
+    `"default"` workspace by accident. The single MCP API key is already admin, so
+    `all_workspaces` needs no extra gate here.
   - REST: `all_workspaces=true` requires an admin caller (JWT workspace access `*`),
     reusing existing RBAC; a single-workspace export uses the normal
     `resolve_workspace_id` check. No new auth mechanism is introduced.
 - **Download** (`GET .../download?token=`): authorized **solely** by the one-time
   token in the URL. No JWT, no API-key header.
+
+### Configuration
+
+Building an absolute `download_url` needs the API's public base URL. No suitable
+setting exists today — `core/config.py` only has `freshness_llm_api_base_url:278`.
+Add a new setting (e.g. `public_base_url`); the `download_url` is
+`{public_base_url}/api/v1/export/{export_id}/download?token=<token>`. If unset, fall
+back to the request's own base URL on the REST path; the MCP path requires it to be
+configured (no request to derive it from).
 
 ## Archive Layout
 
@@ -166,26 +209,46 @@ metronix-export-<timestamp>.zip
 
 ## Filename Safety
 
-`agent_id` and document identifiers are arbitrary strings (unregistered agents
-invent their own; connector ids may contain unsafe characters). File/dir names are
-slugified to a filesystem-safe form; on collision a short stable hash suffix is
-appended. The **real** identifier is always preserved inside the file and in
-`manifest.json`, so slugification is never lossy.
+`agent_id`, `connector_type`, `source_id`, and upload filenames are all arbitrary
+strings (unregistered agents invent their own `agent_id`; connector/source ids and
+filenames may contain `/`, `..`, or other unsafe characters). **Every path segment**
+written into the archive — directory names (`<connector_type>/`) and file names
+alike — is slugified to a filesystem-safe form to prevent path traversal; on
+collision a short stable hash suffix is appended. The **real** identifier is always
+preserved inside the file and in `manifest.json`, so slugification is never lossy.
+
+### What memory is included
+
+`MemoryPostgresStore.list_records` defaults to `status=None` and `lifetime="all"`
+(`storage/memory_postgres.py:273-274`), i.e. **no filter**. Export must be explicit
+rather than relying on those defaults:
+
+- Include **persistent** records (`lifetime="persistent"`, `ttl_expires_at IS NULL`)
+  of **all lifecycle statuses** (active, stale, superseded, archived, conflicted,
+  review-needed) — "take everything I own". The record's `status` is written into the
+  `.md` so the user can see it.
+- **Exclude** session/TTL records (`ttl_expires_at IS NOT NULL`) — these are ephemeral
+  working memory, may be expired-but-not-yet-GC'd, and are not part of the durable
+  knowledge a leaving user wants.
 
 ## Data Flow (build)
 
 1. Resolve scope → list of `workspace_id`s (one, or all via `list_workspaces()`).
 2. For each workspace:
    a. `SELECT DISTINCT agent_id FROM memory_records WHERE workspace_id = :ws` →
-      every agent with memory (registered or not). For each, `list_records(ws, agent_id=...)`
-      (paginated to bound memory), render `<agent_id>.md`.
-   b. Enumerate `raw_documents` for the workspace (paginated), render one Markdown
-      file per row grouped by `connector_type`.
+      every agent with memory (registered or not). For each, page through
+      `list_records(ws, agent_id=..., lifetime="persistent")` to bound memory, render
+      `<agent_id>.md`.
+   b. Page through `raw_documents` for the workspace and render one Markdown file per
+      row grouped by `connector_type`. Use **keyset pagination** on the existing
+      stable order `(updated_at DESC, id ASC)` (`storage/postgres.py:1401`) rather
+      than `OFFSET`, so concurrent writes during a long export can't cause rows to be
+      skipped or duplicated.
 3. Cross-reference the `agents` table only to set the `registered` flag in the
    manifest (not required for inclusion).
 4. Write all entries to the ZIP on the volume; compute counts and size.
-5. Mint a one-time token, store `{export_id, path}` in Redis with TTL; set
-   `status=ready` and `download_url`.
+5. Mint a one-time token, store `{export_id, path}` in Redis with TTL; set the
+   `export_jobs` row to `status=ready` and expose the `download_url`.
 
 ## Error Handling
 
@@ -200,12 +263,21 @@ appended. The **real** identifier is always preserved inside the file and in
 - **Large exports** → background build avoids request timeouts; memory bounded by
   paginating both `memory_records` and `raw_documents` and streaming into the ZIP.
 
+## Concurrency & Quota
+
+- **One active job per scope:** before creating a job, check `export_jobs` for an
+  existing `pending`/`running` job with the same scope; if present, return that
+  `export_id` instead of starting another. This dedups repeated triggers and stops a
+  single agent from spawning many parallel multi-GB builds.
+- **Disk cap on `/data/exports`:** enforce a configurable ceiling; if exceeded,
+  reject new jobs with a clear error and rely on cleanup (below) to free space.
+
 ## Token & Archive Lifecycle
 
 - One-time token TTL: default 1 hour (configurable).
 - Token consumed on first successful download.
-- ZIP files older than the TTL are cleaned up (lazy on access and/or a periodic
-  sweep); cleanup mechanism finalized during planning.
+- ZIP files older than the TTL are cleaned up (lazy on access plus a periodic sweep
+  reusing the existing scheduler); the same sweep removes archives for `failed` jobs.
 
 ## Testing (TDD)
 
@@ -218,12 +290,29 @@ appended. The **real** identifier is always preserved inside the file and in
 - **Integration — REST:** `POST` returns `export_id`; polling `GET` reaches `ready`;
   `download` streams a valid ZIP whose contents match the manifest; `all_workspaces`
   admin gate enforced.
-- **Integration — MCP:** `metronix_export_data` returns an `export_id`;
-  `metronix_export_status` returns a working `download_url` once ready.
+- **Integration — MCP:** `metronix_export_data` requires an explicit `workspace_id`
+  or `all_workspaces=true` (bare call → `INVALID_PARAMS`, never silently `"default"`);
+  returns an `export_id`; `metronix_export_status` returns a working `download_url`
+  once ready.
+- **Restart/watchdog:** a job left `running` past the timeout is marked `failed` on
+  startup, never stuck in limbo.
+- **Concurrency:** a second trigger for the same scope returns the existing
+  `export_id` rather than starting a parallel build.
+
+## Decisions (resolved from review)
+
+- Job state store: PostgreSQL `export_jobs` table (durable, survives restart). Redis
+  holds only the short-lived one-time download token.
+- Background mechanism: in-process `asyncio` task on the API process with state in
+  `export_jobs`; **not** FastAPI `BackgroundTasks` (post-response only, die on
+  restart, unavailable on the MCP path). Startup watchdog reaps orphaned `running`
+  jobs.
+- `download_url` base: new `public_base_url` setting (none exists today); REST may
+  fall back to the request base URL, MCP requires it configured.
+- Archive cleanup: lazy-on-access plus a periodic sweep on the existing scheduler.
 
 ## Open Items for Planning
 
-- Job/state store choice: Redis vs a small PostgreSQL `export_jobs` table.
-- Background execution mechanism: in-process `asyncio` task vs existing scheduler.
-- `public_base_url` configuration for building absolute `download_url`s.
-- Archive cleanup trigger (lazy vs periodic sweep).
+- Exact `export_jobs` columns/migration and the watchdog timeout value.
+- Default disk-cap value for `/data/exports`.
+- Whether the periodic sweep is a new scheduled job or folds into an existing one.
