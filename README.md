@@ -67,162 +67,110 @@ L0  core/           Config, models, events, plugin interfaces
 
 ## Install
 
-The primary installation sequence lives in [`manual.md`](manual.md). Use [`install.md`](install.md) if you hit errors or need detailed deployment notes.
+Get a backend running in four steps. This is the shortest path; for the full guide
+(prerequisites, Open WebUI, ports, troubleshooting) see [`install.md`](install.md).
 
-### 1. Clone the repository
 
+### 1. Clone
 ```bash
 git clone -b develop https://github.com/mtrnix/metronixcore.git
 cd metronixcore
 ```
-
-### 2. Verify Docker and Docker Compose
-
-```bash
-docker --version
-docker compose version 2>/dev/null || docker-compose --version
-docker info >/dev/null 2>&1 && echo "daemon OK" || echo "START DOCKER DAEMON"
-```
-
-Docker installation links:
-
-- Linux: <https://docs.docker.com/engine/install/>
-- macOS: <https://docs.docker.com/desktop/setup/install/mac-install/>
-- Windows: <https://docs.docker.com/desktop/setup/install/windows-install/>
-
-On macOS, Docker Desktop can lose ownership of `~/.docker` after an update. If `docker compose build` fails with `permission denied`, run:
-
-```bash
-sudo chown -R $(whoami):staff ~/.docker
-```
-
-Plan for about 15 GB of free disk space for images, build cache, volumes, and first-run Ollama models.
-
-### 3. Prepare `.env`
-
+### 2. Configure: pick one LLM provider + set an MCP key in .env
 ```bash
 cp .env.example .env
 ```
-
-Open `.env` and choose one LLM provider.
-
-DeepSeek:
-
-```ini
-LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=sk-your-deepseek-key
-```
-
-OpenRouter:
-
-```ini
-LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=sk-or-your-openrouter-key
-```
-
-Ollama from the built-in Compose stack:
-
-```ini
-LLM_PROVIDER=ollama
-```
-
-External Ollama host:
-
-```ini
-LLM_PROVIDER=ollama
-OLLAMA_HOST=http://your-ollama-host:11434
-```
-
-Custom OpenAI-compatible provider:
-
-```ini
-LLM_PROVIDER=custom
-CUSTOM_LLM_URL=https://your-llm-endpoint/v1
-CUSTOM_LLM_API_KEY=your-key
-```
-
-Generate an MCP API key for agents:
-
+In .env, set your LLM provider for the search answer generating and MCP auth-key:
 ```bash
-openssl rand -hex 32
+LLM_PROVIDER=ollama            # bundled, no key needed
+METRONIX_MCP_API_KEY=...       # generate one using: openssl rand -hex 32
 ```
-
-Set it in `.env`:
-
-```ini
-METRONIX_MCP_API_KEY=<paste-the-generated-token>
-```
-
-External agents use this token when connecting to `http://localhost:8001/mcp`.
-
-### 4. Launch
-
-Backend stack only:
-
+### 3. Launch (first run builds images + pulls models, ~10-15 min)
 ```bash
 docker compose -f docker-compose.full.yml up -d --build
 ```
-
-Backend + Open WebUI chat interface:
-
+### 4. Verify
 ```bash
-docker compose -f docker-compose.full.yml --profile openwebui up -d --build
-```
-
-Open WebUI is available at `http://localhost:3080` when the `openwebui` profile is enabled. First run can take 10-15 minutes while images build and models download.
-
-### 5. Verify
-
-```bash
-docker compose -f docker-compose.full.yml ps
 curl http://localhost:8001/health
 ```
 
-Ports:
+A healthy backend exposes the REST API, the OpenAI-compatible API at `:8001/v1`, and the
+MCP endpoint at `:8001/mcp`.
 
-| Service | Port |
-|---|---|
-| API | `8001` |
-| PostgreSQL | `5433` |
-| Qdrant | `6335` |
-| Neo4j bolt | `7688` |
-| Redis | `6380` |
-| Ollama | `11435` |
-| SPLADE | `8080` |
-| Open WebUI | `3080` |
+**Next steps:**
 
-### Troubleshooting
+- [`install.md`](install.md) — full installation info: prerequisites, Open
+  WebUI, ports, and troubleshooting.
+- [`connecting_to_agent.md`](connecting_to_agent.md) — connect an agent over MCP and give it
+  durable memory.
+- [`prompts.md`](prompts.md) — the agent setup prompts, ready to paste.
 
-If installation fails, see [`install.md`](install.md) for the full deployment reference.
+---
 
-Common commands:
+
+## Connect An Agent
+
+After Metronix is running, connect your agent through MCP. See
+[`connecting_to_agent.md`](connecting_to_agent.md) for the full walkthrough, which offers two
+paths:
+
+- **Prompt-based** — paste the prompts from [`prompts.md`](prompts.md) into your agent and it
+  configures itself. The fastest path.
+- **Manual** — wire the MCP connection and memory policy by hand, no LLM involved.
+
+Either way you give the agent four values: the Metronix MCP URL, the MCP API key, an agent
+id, and a workspace id.
+
+Runtime-specific guides:
+
+- [`docs/integrations/cursor.md`](docs/integrations/cursor.md)
+- [`docs/integrations/claude-desktop.md`](docs/integrations/claude-desktop.md)
+- [`docs/integrations/hermes.md`](docs/integrations/hermes.md)
+- [`docs/integrations/openwebui.md`](docs/integrations/openwebui.md)
+- [`docs/integrations/librechat.md`](docs/integrations/librechat.md)
+- [`docs/integrations/openclaw.md`](docs/integrations/openclaw.md)
+
+---
+
+## Quick Reference
+
+### Development Commands
 
 ```bash
-# Clean up a previous run
-docker compose -f docker-compose.full.yml down
-
-# Rebuild after .env changes
-docker compose -f docker-compose.full.yml up -d --build --force-recreate
-
-# Check API logs
-docker compose -f docker-compose.full.yml logs metronix-core
+make dev              # uvicorn --reload
+make test             # pytest unit tests
+make lint             # ruff check + format check
+make typecheck        # mypy src/metronix/
+make migrate          # alembic upgrade head
+make eval             # search quality eval
 ```
+
+### Important URLs
+
+| Surface | URL |
+|---|---|
+| API health | `http://localhost:8001/health` |
+| REST API | `http://localhost:8001/api/v1/*` |
+| MCP endpoint | `http://localhost:8001/mcp` |
+| OpenAI-compatible API | `http://localhost:8001/v1` |
+| Open WebUI | `http://localhost:3080` |
 
 ---
 
-## Demo
+## Documentation
 
-Open [`docs/architecture-diagram.html`](docs/architecture-diagram.html) in any browser for an interactive architecture walkthrough.
-
-After the stack is running, connect an MCP client and ask a question against your indexed knowledge base, for example:
-
-```text
-What changed in the project plan this week?
-```
-
-Metronix searches your knowledge base and returns a grounded answer with citations from your real data.
+- [`install.md`](install.md) - full installation: prerequisites, providers, ports, troubleshooting.
+- [`connecting_to_agent.md`](connecting_to_agent.md) - connect an agent over MCP (prompt-based or manual).
+- [`prompts.md`](prompts.md) - the agent setup prompts, ready to paste.
+- [`docs/README.md`](docs/README.md) - documentation index.
+- [`docs/MCP_API.md`](docs/MCP_API.md) - MCP tool reference.
+- [`docs/API.md`](docs/API.md) - REST API reference.
+- [`docs/reference/api-openai-compat.md`](docs/reference/api-openai-compat.md) - OpenAI-compatible API reference.
+- [`docs/product/legacy.md`](docs/product/legacy.md) - legacy and compatibility surfaces.
+- [`docs/product/open-core-boundaries.md`](docs/product/open-core-boundaries.md) - open-core boundaries.
 
 ---
+
 
 ## How Metronix Compares
 
@@ -312,71 +260,10 @@ That means:
 **Recommended path today:** connect Hermes to Metronix through `/mcp`.
 
 See:
-- **[Hermes Integration Guide](docs/HERMES_INTEGRATION.md)** — exact MCP setup for Hermes
+- **[Hermes Integration Guide](docs/integrations/hermes.md)** — exact MCP setup for Hermes
 - **[Hermes memory provider docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers)** — what Hermes means by "memory providers"
 
-### Deployment
-- **Self-hosted:** Docker Compose, your hardware, your keys
-- **Full stack:** PostgreSQL + Qdrant + Neo4j + Ollama + API
-- **Planned:** Air-gapped BYOC, SOC2 compliance
 
----
-
-## Connect An Agent
-
-After Metronix is running, connect your agent through MCP.
-
-The easiest path is to give your agent the prompt from [`connecting_to_agent.md`](connecting_to_agent.md). It asks for the Metronix MCP URL, MCP API key, agent id, and workspace id, then configures and verifies the MCP connection.
-
-Runtime-specific guides:
-
-- [`docs/integrations/cursor.md`](docs/integrations/cursor.md)
-- [`docs/integrations/claude-desktop.md`](docs/integrations/claude-desktop.md)
-- [`docs/integrations/hermes.md`](docs/integrations/hermes.md)
-- [`docs/integrations/openwebui.md`](docs/integrations/openwebui.md)
-- [`docs/integrations/librechat.md`](docs/integrations/librechat.md)
-- [`docs/integrations/openclaw.md`](docs/integrations/openclaw.md)
-
----
-
-## Quick Reference
-
-### Development Commands
-
-```bash
-make dev              # uvicorn --reload
-make test             # pytest unit tests
-make lint             # ruff check + format check
-make typecheck        # mypy src/metronix/
-make migrate          # alembic upgrade head
-make eval             # search quality eval
-```
-
-### Important URLs
-
-| Surface | URL |
-|---|---|
-| API health | `http://localhost:8001/health` |
-| REST API | `http://localhost:8001/api/v1/*` |
-| MCP endpoint | `http://localhost:8001/mcp` |
-| OpenAI-compatible API | `http://localhost:8001/v1` |
-| Open WebUI | `http://localhost:3080` |
-
----
-
-## Documentation
-
-- [`manual.md`](manual.md) - primary step-by-step install sequence.
-- [`install.md`](install.md) - detailed deployment and troubleshooting reference.
-- [`connecting_to_agent.md`](connecting_to_agent.md) - MCP agent connection prompt.
-- [`docs/README.md`](docs/README.md) - documentation index.
-- [`docs/MCP_API.md`](docs/MCP_API.md) - MCP tool reference.
-- [`docs/API.md`](docs/API.md) - REST API reference.
-- [`docs/reference/api-openai-compat.md`](docs/reference/api-openai-compat.md) - OpenAI-compatible API reference.
-- [`docs/product/legacy.md`](docs/product/legacy.md) - legacy and compatibility surfaces.
-- [`docs/product/open-core-boundaries.md`](docs/product/open-core-boundaries.md) - open-core boundaries.
-
----
 
 ## Contributing
 
