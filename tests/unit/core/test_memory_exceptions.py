@@ -19,10 +19,11 @@ def test_exception_hierarchy() -> None:
 
 
 def test_memory_not_found_raise_catch() -> None:
-    with pytest.raises(AgentMemoryError):
+    with pytest.raises(MemoryNotFoundError) as exc_info:
         raise MemoryNotFoundError("missing")
-    with pytest.raises(MetronixError):
-        raise MemoryNotFoundError("missing")
+    # Catchable as either base class (except-clause matching is isinstance-based).
+    assert isinstance(exc_info.value, AgentMemoryError)
+    assert isinstance(exc_info.value, MetronixError)
 
 
 def test_snapshot_corrupt_details() -> None:
