@@ -73,8 +73,8 @@ Get a backend running in four steps. This is the shortest path; for the full gui
 
 ### 1. Clone
 ```bash
-git clone -b develop https://github.com/mtrnix/metronixcore.git
-cd metronixcore
+git clone -b develop https://github.com/mtrnix/metronix-memory.git
+cd metronix-memory
 ```
 ### 2. Configure: pick one LLM provider + set an MCP key in .env
 ```bash
@@ -82,7 +82,8 @@ cp .env.example .env
 ```
 In .env, set your LLM provider for the search answer generating and MCP auth-key:
 ```bash
-LLM_PROVIDER=ollama            # bundled, no key needed
+LLM_PROVIDER_URL=https://your-llm-endpoint/v1
+LLM_PROVIDER_API_KEY=your-key
 METRONIX_MCP_API_KEY=...       # generate one using: openssl rand -hex 32
 ```
 ### 3. Launch (first run builds images + pulls models, ~10-15 min)
@@ -91,11 +92,11 @@ docker compose -f docker-compose.full.yml up -d --build
 ```
 ### 4. Verify
 ```bash
-curl http://localhost:8001/health
+curl http://localhost:8000/health
 ```
 
-A healthy backend exposes the REST API, the OpenAI-compatible API at `:8001/v1`, and the
-MCP endpoint at `:8001/mcp`.
+A healthy backend exposes the REST API, the OpenAI-compatible API at `:8000/v1`, and the
+MCP endpoint at `:8000/mcp`.
 
 **Next steps:**
 
@@ -116,7 +117,8 @@ paths:
 
 - **Prompt-based** — paste the prompts from [`prompts.md`](prompts.md) into your agent and it
   configures itself. The fastest path.
-- **Manual** — wire the MCP connection and memory policy by hand, no LLM involved.
+- **Manual** — register the MCP connection by hand, no LLM involved (memory policy and
+  migration are done via the prompts).
 
 Either way you give the agent four values: the Metronix MCP URL, the MCP API key, an agent
 id, and a workspace id.
@@ -149,10 +151,10 @@ make eval             # search quality eval
 
 | Surface | URL |
 |---|---|
-| API health | `http://localhost:8001/health` |
-| REST API | `http://localhost:8001/api/v1/*` |
-| MCP endpoint | `http://localhost:8001/mcp` |
-| OpenAI-compatible API | `http://localhost:8001/v1` |
+| API health | `http://localhost:8000/health` |
+| REST API | `http://localhost:8000/api/v1/*` |
+| MCP endpoint | `http://localhost:8000/mcp` |
+| OpenAI-compatible API | `http://localhost:8000/v1` |
 | Open WebUI | `http://localhost:3080` |
 
 ---

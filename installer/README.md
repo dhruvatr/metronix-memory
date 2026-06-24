@@ -5,8 +5,8 @@ One-command installer for Metronix Core — hybrid RAG + agent memory infrastruc
 ## Quick Start
 
 ```bash
-git clone -b feature/installer-cross-platform https://github.com/mtrnix/metronixcore.git
-cd metronixcore
+git clone -b feature/installer-cross-platform https://github.com/mtrnix/metronix-memory.git
+cd metronix-memory
 ./install/bootstrap.sh
 ```
 

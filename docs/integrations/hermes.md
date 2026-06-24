@@ -18,7 +18,7 @@ Use this after Metronix is running and `METRONIX_MCP_API_KEY` is set in `.env`.
 
 | Variable | Description | Where to get it | Example |
 |---|---|---|---|
-| `{{METRONIX_URL}}` | Metronix MCP endpoint URL | Server URL + `/mcp`. If Hermes runs in WSL2/Docker and Metronix runs on the Windows host, use `host.docker.internal` instead of `localhost` | `http://host.docker.internal:8001/mcp` |
+| `{{METRONIX_URL}}` | Metronix MCP endpoint URL | Server URL + `/mcp`. If Hermes runs in WSL2/Docker and Metronix runs on the Windows host, use `host.docker.internal` instead of `localhost` | `http://host.docker.internal:8000/mcp` |
 | `{{MCP_API_KEY}}` | Bearer token for `/mcp` | Server env var `METRONIX_MCP_API_KEY` (from the deployment's `.env` / secrets). Required — `/mcp` returns HTTP 401 without it. Ask the Metronix admin if you don't have it | `<token from the Metronix .env>` |
 | `{{AGENT_UUID}}` | Agent UUID in Metronix | Create the agent via `POST /api/v1/agents` and take the `id` from the response | `a3c98413c3684a0992ac0e007b93f410` |
 | `{{WORKSPACE_ID}}` | Workspace identifier | Workspaces UI, or `GET /api/v1/workspaces` | `MTRNIX` |
@@ -58,7 +58,7 @@ If you couldn't find the values, ask the
 user for it before doing anything else — never guess. Show these hints:
 - METRONIX_URL — Metronix MCP endpoint URL: server URL + /mcp. If Hermes runs in
   WSL2/Docker and Metronix is on the Windows host, use host.docker.internal
-  instead of localhost. Example: http://host.docker.internal:8001/mcp
+  instead of localhost. Example: http://host.docker.internal:8000/mcp
 - MCP_API_KEY — Bearer token for /mcp (server env var METRONIX_MCP_API_KEY; /mcp
   returns HTTP 401 without it; ask the Metronix admin if you don't have it).
   Example: the token from the Metronix deployment's .env

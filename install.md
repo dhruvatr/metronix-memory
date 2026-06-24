@@ -57,8 +57,8 @@ Docker Desktop / OrbStack / `colima start` (macOS).
 ## 2. Clone the repository
 
 ```bash
-git clone -b develop https://github.com/mtrnix/metronixcore.git
-cd metronixcore
+git clone -b develop https://github.com/mtrnix/metronix-memory.git
+cd metronix-memory
 ```
 
 ## 3. Configure `.env`
@@ -101,7 +101,7 @@ METRONIX_MCP_API_KEY=<paste-the-generated-token>
 ```
 
 Agents send this token as `Authorization: Bearer <token>` when connecting to
-`http://localhost:8001/mcp`. The endpoint returns `401` without it.
+`http://localhost:8000/mcp`. The endpoint returns `401` without it.
 
 > The default workspace id is pre-set to `MTRNIX` (`DEFAULT_WORKSPACE_ID` in `.env`). You
 > will need this value, and your MCP key, when you connect an agent.
@@ -133,17 +133,17 @@ Check that every service is up and the API is healthy:
 
 ```bash
 docker compose -f docker-compose.full.yml ps
-curl http://localhost:8001/health
+curl http://localhost:8000/health
 ```
 
 A healthy backend exposes:
 
 | Surface | URL |
 |---|---|
-| API health | `http://localhost:8001/health` |
-| REST API | `http://localhost:8001/api/v1/*` |
-| MCP endpoint | `http://localhost:8001/mcp` |
-| OpenAI-compatible API | `http://localhost:8001/v1` |
+| API health | `http://localhost:8000/health` |
+| REST API | `http://localhost:8000/api/v1/*` |
+| MCP endpoint | `http://localhost:8000/mcp` |
+| OpenAI-compatible API | `http://localhost:8000/v1` |
 | Open WebUI (with `--profile openwebui`) | `http://localhost:3080` |
 
 **Next step:** connect an agent over MCP — see
@@ -153,7 +153,7 @@ A healthy backend exposes:
 
 | Service | Host port |
 |---|---|
-| API | `8001` |
+| API | `8000` |
 | PostgreSQL | `5433` |
 | Qdrant HTTP | `6335` |
 | Qdrant gRPC | `6336` |
@@ -227,13 +227,13 @@ Stop any previous Metronix run, then find what occupies the port:
 
 ```bash
 docker compose -f docker-compose.full.yml down
-sudo lsof -i :8001                  # Linux / macOS
+sudo lsof -i :8000                  # Linux / macOS
 ```
 
 On Windows PowerShell:
 
 ```powershell
-netstat -ano | findstr :8001
+netstat -ano | findstr :8000
 ```
 
 ### MCP endpoint returns 401
@@ -251,6 +251,6 @@ The token must exactly match `METRONIX_MCP_API_KEY` in the server `.env`.
 Confirm the API is healthy first, then inspect Open WebUI logs:
 
 ```bash
-curl http://localhost:8001/health
+curl http://localhost:8000/health
 docker compose -f docker-compose.full.yml logs open-webui
 ```
