@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/metronix-banner.svg" alt="Metronix Core" width="600">
+  <img src="docs/metronix-banner.svg" alt="Metronix Memory" width="600">
 </p>
 
 <p align="center">
