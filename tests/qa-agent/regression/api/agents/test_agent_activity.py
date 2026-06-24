@@ -17,7 +17,7 @@ class TestAgentActivity:
         Expected: 200, events list with count, limit, offset, has_more.
                   Each event has id, workspace_id, agent_id, event_type,
                   event_data, created_at.
-        Source: src/metatron/api/routes/agents.py:get_agent_activity()
+        Source: src/metronix/api/routes/agents.py:get_agent_activity()
         """
         r = httpx.get(
             f"{API}/api/v1/agents/{existing_agent_id}/activity",
@@ -101,7 +101,7 @@ class TestAgentActivitySummary:
         Scenario: viewer fetches aggregated activity summary for an agent
         Expected: 200, contains period, since, until, total_events,
                   counts_by_event_type, counts_by_day
-        Source: src/metatron/api/routes/agents.py:get_agent_activity_summary()
+        Source: src/metronix/api/routes/agents.py:get_agent_activity_summary()
         """
         r = httpx.get(
             f"{API}/api/v1/agents/{existing_agent_id}/activity/summary",

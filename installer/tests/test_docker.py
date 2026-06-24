@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from metatron_installer.docker import CommandResult, DockerShell, parse_ps_services
+from metronix_installer.docker import CommandResult, DockerShell, parse_ps_services
 
 
 class FakeRunner:
@@ -60,8 +60,8 @@ def test_parse_ps_services_ndjson():
 
 
 def test_parse_ps_services_json_array():
-    out = '[{"Name": "metatron-full-api", "State": "running"}]'
-    assert parse_ps_services(out) == [("metatron-full-api", "running")]
+    out = '[{"Name": "metronix-full-api", "State": "running"}]'
+    assert parse_ps_services(out) == [("metronix-full-api", "running")]
 
 
 def test_parse_ps_services_empty_and_malformed():
@@ -70,10 +70,10 @@ def test_parse_ps_services_empty_and_malformed():
 
 
 def test_running_container_names_parses_lines():
-    runner = FakeRunner([CommandResult(0, "metatron-full-api\nmetatron-full-postgres\n", "")])
+    runner = FakeRunner([CommandResult(0, "metronix-full-api\nmetronix-full-postgres\n", "")])
     sh = DockerShell(runner=runner)
     names = sh.running_container_names()
-    assert names == ["metatron-full-api", "metatron-full-postgres"]
+    assert names == ["metronix-full-api", "metronix-full-postgres"]
     assert runner.calls[0] == ["docker", "ps", "--format", "{{.Names}}"]
 
 
@@ -109,7 +109,7 @@ def test_pull_falls_back_to_login_on_auth_failure():
     runner = FakeRunner([CommandResult(0, "Login Succeeded", "")])
     sh = DockerShell(runner=runner)
 
-    with patch("metatron_installer.docker._pull_with_progress", _mock_pull):
+    with patch("metronix_installer.docker._pull_with_progress", _mock_pull):
         ok = sh.compose_pull(
             "install/docker-compose.yml",
             env={},
@@ -122,7 +122,7 @@ def test_pull_falls_back_to_login_on_auth_failure():
 def test_pull_succeeds_anonymously_without_login(monkeypatch):
     sh = DockerShell()
     with patch(
-        "metatron_installer.docker._pull_with_progress",
+        "metronix_installer.docker._pull_with_progress",
         return_value=(0, ""),
     ):
         ok = sh.compose_pull(

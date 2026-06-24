@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Doc-generator agent — fills a documentation skeleton from a Metatron index.
+"""Doc-generator agent — fills a documentation skeleton from a Metronix index.
 
 Walks a YAML skeleton (`demo-data/skeletons/*.yaml`), and for every leaf section
-runs Metatron's hybrid_search_and_answer pipeline once per `sections_required`
+runs Metronix's hybrid_search_and_answer pipeline once per `sections_required`
 subsection. Aggregates results into a structured JSON page (per §10.2 of
 docs/superpowers/2026-05-02-amisol-demo-plan.md) and renders Markdown.
 
@@ -32,7 +32,7 @@ try:
 except ImportError:
     print("ERROR: pip install pyyaml", file=sys.stderr); sys.exit(1)
 
-from metatron.retrieval.search import hybrid_search_and_answer  # noqa: E402
+from metronix.retrieval.search import hybrid_search_and_answer  # noqa: E402
 
 
 # Heuristic flag patterns — LLM tends to use these phrasings naturally.

@@ -16,7 +16,7 @@ class TestAgentVersions:
         Scenario: agent exists; at least version 1 exists after creation
         Expected: 200, versions list with at least 1 entry containing agent_id,
                   version, config, changed_by, changed_at
-        Source: src/metatron/api/routes/agents.py:list_agent_versions()
+        Source: src/metronix/api/routes/agents.py:list_agent_versions()
         """
         r = httpx.get(
             f"{API}/api/v1/agents/{existing_agent_id}/versions",

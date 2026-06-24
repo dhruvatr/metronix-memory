@@ -23,7 +23,7 @@ class TestCreateSnapshot:
         Expected: 201, response contains snapshot id, agent_id, label, trigger=manual,
                   record_count, content_hash, size_bytes, storage_path, created_at
         Cleanup: snapshot is created and left as-is (read-only artifact)
-        Source: src/metatron/api/routes/agents.py:create_agent_snapshot()
+        Source: src/metronix/api/routes/agents.py:create_agent_snapshot()
         """
         label = f"qa-test-snapshot-{uuid.uuid4().hex[:8]}"
         r = httpx.post(
@@ -95,7 +95,7 @@ class TestListSnapshots:
         """Endpoint: GET /api/v1/agents/{agent_id}/snapshots
         Scenario: viewer lists snapshots after creating one
         Expected: 200, snapshots list with count > 0 after creating a snapshot
-        Source: src/metatron/api/routes/agents.py:list_agent_snapshots()
+        Source: src/metronix/api/routes/agents.py:list_agent_snapshots()
         """
         # Create a snapshot first
         httpx.post(

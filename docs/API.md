@@ -1,4 +1,4 @@
-# Metatron Core — REST API Reference
+# Metronix Core — REST API Reference
 
 Base URL: `http://localhost:8000`
 
@@ -10,7 +10,7 @@ For **MCP tools** (recommended for agent runtimes), see [`docs/MCP_API.md`](MCP_
 
 ## Authentication
 
-When `METATRON_AUTH_ENABLED=true` (production default), pass a JWT or personal API key:
+When `METRONIX_AUTH_ENABLED=true` (production default), pass a JWT or personal API key:
 
 ```bash
 export TOKEN="eyJ..."
@@ -21,8 +21,8 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/auth/me
 |---|---|---|
 | JWT (login) | `Authorization: Bearer <jwt>` | From `POST /api/v1/auth/login` |
 | Personal API key | `Authorization: Bearer mtk_...` | Created via `/api/v1/users/{id}/api-keys` |
-| OpenAI-compat key | `Authorization: Bearer mtk_...` or static `METATRON_OPENAI_COMPAT_KEY` | `/v1/*` endpoints only |
-| MCP | `Authorization: Bearer <METATRON_MCP_API_KEY>` | `/mcp` (see MCP doc) |
+| OpenAI-compat key | `Authorization: Bearer mtk_...` or static `METRONIX_OPENAI_COMPAT_KEY` | `/v1/*` endpoints only |
+| MCP | `Authorization: Bearer <METRONIX_MCP_API_KEY>` | `/mcp` (see MCP doc) |
 
 **RBAC hierarchy:** `viewer` < `editor` < `admin`. Endpoints below note the minimum role when auth is enabled.
 
@@ -34,7 +34,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/auth/me
 |---|---|---|
 | Auth-derived | `/api/v1/memory/*`, `/api/v1/knowledge/*`, `/api/v1/agents/*`, `/api/v1/snapshots/*`, `/api/v1/files/*`, `/api/v1/upload` | JWT claim `workspace_ids[0]`, unless `?workspace_id=` is passed **and** the token grants access (`*` or membership) → else 403 |
 | Query / body | `/api/v1/connections/*`, `/api/v1/dashboard/*`, legacy `/api/v1/chat` | `?workspace_id=` or request body field |
-| OpenAI-compat | `/v1/chat/completions` | Encoded in model name: `metatron-rag-{workspace_id}` |
+| OpenAI-compat | `/v1/chat/completions` | Encoded in model name: `metronix-rag-{workspace_id}` |
 
 Admin tokens with `workspace_ids: ["*"]` may target any workspace via `?workspace_id=`.
 
@@ -294,7 +294,7 @@ Partial failure example (unsupported `.zip` + empty file → `207`):
 
 ### POST /api/v1/files/import-path — server-side folder import
 
-**Role:** admin · Reads files from a path **on the Metatron server filesystem**.
+**Role:** admin · Reads files from a path **on the Metronix server filesystem**.
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/files/import-path?workspace_id=default" \
@@ -360,7 +360,7 @@ curl -X POST http://localhost:8000/api/v1/chat \
 
 Response: `{"answer": "...sources...", "workspace_id": "default"}`
 
-When `METATRON_RAG_TRACE_FOOTER_ENABLED=true`, answers may end with `— trace: <uuid>`.
+When `METRONIX_RAG_TRACE_FOOTER_ENABLED=true`, answers may end with `— trace: <uuid>`.
 
 ### POST /api/v1/chat/stream
 
@@ -704,7 +704,7 @@ Read-only health snapshot: totals, 30-day growth, unused records, duplicate clus
 
 Paginated activity log. Query: `since`, `until`, `event_type[]`, `session_id`, `correlation_id`, `limit`, `offset`
 
-`503` when `METATRON_ACTIVITY_LOG_ENABLED=false`.
+`503` when `METRONIX_ACTIVITY_LOG_ENABLED=false`.
 
 ### GET /api/v1/agents/{id}/activity/summary?period=7d
 
@@ -739,7 +739,7 @@ Resolve up to 200 record IDs from the snapshot **file** (not live memory). For d
 
 ## RAG debug traces
 
-Read-only. **Not** gated by `METATRON_RAG_TRACE_ENABLED`.
+Read-only. **Not** gated by `METRONIX_RAG_TRACE_ENABLED`.
 
 ### GET /api/v1/traces/
 
@@ -907,15 +907,15 @@ curl -X POST http://localhost:8000/api/v1/query/trace \
 
 ## OpenAI-compatible API
 
-Enabled when `METATRON_OPENAI_COMPAT_ENABLED=true`.
+Enabled when `METRONIX_OPENAI_COMPAT_ENABLED=true`.
 
-Auth: `Authorization: Bearer mtk_...` or static `METATRON_OPENAI_COMPAT_KEY`.
+Auth: `Authorization: Bearer mtk_...` or static `METRONIX_OPENAI_COMPAT_KEY`.
 
 Error shape: `{"error": {"message": "...", "type": "invalid_request_error"}}`
 
 ### GET /v1/models
 
-Each workspace → one model `metatron-rag-{workspace_id}`.
+Each workspace → one model `metronix-rag-{workspace_id}`.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v1/models
@@ -930,7 +930,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "metatron-rag-default",
+    "model": "metronix-rag-default",
     "messages": [{"role": "user", "content": "What is in the backlog?"}],
     "stream": false
   }'
@@ -983,6 +983,6 @@ Common status codes:
 
 ## Related docs
 
-- [`docs/MCP_API.md`](MCP_API.md) — MCP tools (`memory_*`, `metatron_search`, …)
+- [`docs/MCP_API.md`](MCP_API.md) — MCP tools (`memory_*`, `metronix_search`, …)
 - [`docs/HERMES_INTEGRATION.md`](HERMES_INTEGRATION.md) — external agent setup
 - [`docs/RAG_TRACE_FRONTEND.md`](RAG_TRACE_FRONTEND.md) — trace UI reference

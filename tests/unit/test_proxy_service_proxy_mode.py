@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from metatron.agents.models import AgentRecord
-from metatron.core.config import Settings
-from metatron.core.models import AssembledContext
-from metatron.proxy.service import AgentUpstreamNotConfiguredError, ProxyService
-from metatron.proxy.upstream import ProxyStreamFrame
+from metronix.agents.models import AgentRecord
+from metronix.core.config import Settings
+from metronix.core.models import AssembledContext
+from metronix.proxy.service import AgentUpstreamNotConfiguredError, ProxyService
+from metronix.proxy.upstream import ProxyStreamFrame
 
 
 def _agent(upstream: dict | None) -> AgentRecord:

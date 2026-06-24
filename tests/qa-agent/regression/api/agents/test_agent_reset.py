@@ -19,7 +19,7 @@ class TestResetAgentMemory:
         Scenario: editor resets agent memory (takes pre_reset snapshot first)
         Expected: 200, response contains snapshot_id (string) and deleted_count (int >= 0)
         Cleanup: agent is deleted via fixture teardown
-        Source: src/metatron/api/routes/agents.py:reset_agent_memory()
+        Source: src/metronix/api/routes/agents.py:reset_agent_memory()
         """
         r = httpx.post(
             f"{API}/api/v1/agents/{existing_agent_id}/reset",

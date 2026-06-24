@@ -16,7 +16,7 @@ class TestListAgents:
         Scenario: authenticated viewer lists agents
         Expected: 200, response has agents list, count, limit, offset, has_more.
                   Created agent appears in the list.
-        Source: src/metatron/api/routes/agents.py:list_agents()
+        Source: src/metronix/api/routes/agents.py:list_agents()
         """
         r = httpx.get(f"{API}/api/v1/agents/", headers=auth_headers, timeout=TIMEOUT)
         assert r.status_code == 200
@@ -35,7 +35,7 @@ class TestListAgents:
         """Endpoint: GET /api/v1/agents/
         Scenario: anonymous caller — no Authorization header
         Expected: 401 Unauthorized
-        Source: metatron.api.dependencies -> require_viewer
+        Source: metronix.api.dependencies -> require_viewer
         """
         r = httpx.get(f"{API}/api/v1/agents/", timeout=TIMEOUT)
         assert r.status_code == 401
@@ -121,7 +121,7 @@ class TestListAgents:
         """Endpoint: GET /api/v1/agents/?status=stopped&include_archived=true
         Scenario: status filter and include_archived are mutually exclusive
         Expected: 400 Bad Request with descriptive detail
-        Source: src/metatron/api/routes/agents.py:list_agents()
+        Source: src/metronix/api/routes/agents.py:list_agents()
         """
         r = httpx.get(
             f"{API}/api/v1/agents/?status=stopped&include_archived=true",

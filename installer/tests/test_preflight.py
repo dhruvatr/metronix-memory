@@ -1,4 +1,4 @@
-from metatron_installer.preflight import (
+from metronix_installer.preflight import (
     PUBLISHED_PORTS,
     ComposeInfo,
     DockerInfo,
@@ -25,7 +25,7 @@ def test_summarize_docker_present_no_conflicts_is_ok():
 def test_summarize_port_conflicts_are_warnings_not_blocking():
     ok, messages = summarize(
         DockerInfo(present=True, major=27, minor=1),
-        [PortConflict(port=8000, service="metatron-api")],
+        [PortConflict(port=8000, service="metronix-api")],
     )
     assert ok is True  # conflicts warn but don't block
     assert any("8000" in m for m in messages)
@@ -89,7 +89,7 @@ def test_published_ports_cover_known_services():
 
 
 def test_detect_os_returns_known_value():
-    from metatron_installer.preflight import detect_os
+    from metronix_installer.preflight import detect_os
 
     assert detect_os() in {"linux", "darwin", "windows"}
 

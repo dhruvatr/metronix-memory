@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-_SEARCH_MODULE = "metatron.retrieval.search"
+_SEARCH_MODULE = "metronix.retrieval.search"
 
 
 def _patch_search_internals():
@@ -110,10 +110,10 @@ class TestPipelineStagesInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
-                query="What is Metatron?",
+                query="What is Metronix?",
                 return_trace=True,
                 workspace_id="ws_test",
             )
@@ -130,10 +130,10 @@ class TestPipelineStagesInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
-                query="What is Metatron?",
+                query="What is Metronix?",
                 return_trace=True,
                 workspace_id="ws_test",
             )
@@ -172,19 +172,19 @@ class TestPipelineStagesInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
-                query="What is Metatron?",
+                query="What is Metronix?",
                 return_trace=True,
                 workspace_id="ws_test",
             )
 
             stages = result["pipeline_stages"]
-            assert stages["original_query"] == "What is Metatron?"
+            assert stages["original_query"] == "What is Metronix?"
             assert stages["detected_language"] == "en"
             # expand_query mock prepends "expanded "
-            assert stages["expanded_query"] == "expanded What is Metatron?"
+            assert stages["expanded_query"] == "expanded What is Metronix?"
         finally:
             for p in patches.values():
                 p.stop()
@@ -195,7 +195,7 @@ class TestPipelineStagesInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
                 query="Test query",
@@ -228,7 +228,7 @@ class TestPipelineStagesInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
                 query="Test query",
@@ -251,7 +251,7 @@ class TestRetrievedDocLabelsInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
                 query="Test query",
@@ -298,7 +298,7 @@ class TestRetrievedDocLabelsInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
                 query="Test query",
@@ -322,7 +322,7 @@ class TestRetrievedDocLabelsInTrace:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
                 query="Test query",
@@ -345,7 +345,7 @@ class TestTraceNotInNonTraceMode:
             p.start()
 
         try:
-            from metatron.retrieval.search import hybrid_search_and_answer
+            from metronix.retrieval.search import hybrid_search_and_answer
 
             result = await hybrid_search_and_answer(
                 query="Test query",

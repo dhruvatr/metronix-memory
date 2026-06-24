@@ -1,6 +1,6 @@
 # OpenAI-Compatible API
 
-Metatron exposes an OpenAI-compatible API for clients such as Open WebUI and LibreChat.
+Metronix exposes an OpenAI-compatible API for clients such as Open WebUI and LibreChat.
 
 Base URL:
 
@@ -14,7 +14,7 @@ Common endpoints:
 - `POST /v1/chat/completions`
 - `GET /v1/openapi.json`
 
-This surface is not a raw LLM proxy. It runs retrieval over Metatron knowledge and returns
+This surface is not a raw LLM proxy. It runs retrieval over Metronix knowledge and returns
 grounded answers.
 
 For Open WebUI setup, see [`../integrations/openwebui.md`](../integrations/openwebui.md).

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from metatron.benchmarker.db import crud
-from metatron.benchmarker.db.models import (
+from metronix.benchmarker.db import crud
+from metronix.benchmarker.db.models import (
     TestResultRow,
 )
 

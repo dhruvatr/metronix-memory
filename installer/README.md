@@ -5,8 +5,8 @@ One-command installer for Metronix Core — hybrid RAG + agent memory infrastruc
 ## Quick Start
 
 ```bash
-git clone -b feature/installer-cross-platform https://github.com/mtrnix/metatroncore.git
-cd metatroncore
+git clone -b feature/installer-cross-platform https://github.com/mtrnix/metronixcore.git
+cd metronixcore
 ./install/bootstrap.sh
 ```
 
@@ -19,11 +19,11 @@ After completion, UI endpoints are printed with direct links.
 
 | Profile | Services | UI Ports |
 |---------|----------|----------|
-| **minimal** | core (postgres, qdrant, neo4j, redis, splade, API, freshness) + metatron-ui | `:3000` |
+| **minimal** | core (postgres, qdrant, neo4j, redis, splade, API, freshness) + metronix-ui | `:3000` |
 | **full** | core + ollama + embedding-proxy + all UIs | `:3000` `:3001` `:3080` |
 | **custom** | core + pick from: ollama, embedding-proxy, openwebui, ui, ui-cc | depends on selection |
 
-Core = always-on services: postgres, qdrant, neo4j, redis, splade, metatron-core, freshness-worker.
+Core = always-on services: postgres, qdrant, neo4j, redis, splade, metronix-core, freshness-worker.
 
 ## Options
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from metatron.retrieval.search import (
+from metronix.retrieval.search import (
     _JIRA_KEY_RE,
     _append_sources,
     _collect_frags,
@@ -186,7 +186,7 @@ class TestExtractProperNouns:
         assert extract_proper_nouns("what happened last week?") == []
 
     def test_single_capitalized_word_ignored(self) -> None:
-        assert extract_proper_nouns("What is Metatron?") == []
+        assert extract_proper_nouns("What is Metronix?") == []
 
     def test_russian_proper_nouns(self) -> None:
         assert extract_proper_nouns("Что такое Проект Аврора?") == ["Проект Аврора"]
@@ -198,7 +198,7 @@ class TestExtractProperNouns:
 
 class TestSourcesToMarkdown:
     def test_limits_displayed_sources(self) -> None:
-        from metatron.api.routes.openai_compat import _sources_to_markdown
+        from metronix.api.routes.openai_compat import _sources_to_markdown
 
         sources = [f"\U0001f4c4 Page {i} \u2014 https://example.com/{i}" for i in range(10)]
         md = _sources_to_markdown(sources)
@@ -206,7 +206,7 @@ class TestSourcesToMarkdown:
         assert len(lines) == 5
 
     def test_custom_limit(self) -> None:
-        from metatron.api.routes.openai_compat import _sources_to_markdown
+        from metronix.api.routes.openai_compat import _sources_to_markdown
 
         sources = [f"\U0001f4c4 Page {i} \u2014 https://example.com/{i}" for i in range(10)]
         md = _sources_to_markdown(sources, limit=3)
@@ -214,7 +214,7 @@ class TestSourcesToMarkdown:
         assert len(lines) == 3
 
     def test_empty_sources(self) -> None:
-        from metatron.api.routes.openai_compat import _sources_to_markdown
+        from metronix.api.routes.openai_compat import _sources_to_markdown
 
         assert _sources_to_markdown([]) == ""
 

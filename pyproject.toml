@@ -3,13 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "metatron-core"
+name = "metronix-core"
 version = "0.1.0"
 description = "Open-source AI knowledge agent for teams"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12,<3.14"
-authors = [{ name = "Metatron Contributors" }]
+authors = [{ name = "Metronix Contributors" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Framework :: FastAPI",
@@ -84,11 +84,11 @@ dev = [
 ]
 
 [project.scripts]
-metatron = "metatron.app:main"
-metatron-api = "metatron.api.app:main"
+metronix = "metronix.app:main"
+metronix-api = "metronix.api.app:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/metatron"]
+packages = ["src/metronix"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

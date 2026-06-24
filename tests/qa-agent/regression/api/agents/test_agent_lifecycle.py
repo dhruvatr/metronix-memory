@@ -1,6 +1,6 @@
 """Tests for agent lifecycle transitions — start/stop/pause/restore.
 
-State machine (from src/metatron/agents/service.py):
+State machine (from src/metronix/agents/service.py):
   _ALLOWED_LIFECYCLE_SOURCES = {
       ACTIVE:  {ACTIVE, PAUSED, STOPPED},   # start
       PAUSED:  {ACTIVE, PAUSED, STOPPED},   # pause
@@ -25,7 +25,7 @@ class TestAgentLifecycle:
         """Endpoint: POST /api/v1/agents/{agent_id}/start
         Scenario: start a STOPPED agent (default state after creation)
         Expected: 200, status becomes 'active'
-        Source: src/metatron/api/routes/agents.py:start_agent()
+        Source: src/metronix/api/routes/agents.py:start_agent()
         """
         r = httpx.post(
             f"{API}/api/v1/agents/{existing_agent_id}/start",
@@ -140,7 +140,7 @@ class TestRestoreAgent:
         Scenario: soft-delete (archive) an agent, then restore it
         Expected: After delete → 204. After restore → 200, status=stopped.
                   Agent reappears in default GET /agents/.
-        Source: src/metatron/api/routes/agents.py:restore_agent()
+        Source: src/metronix/api/routes/agents.py:restore_agent()
         """
         # Archive
         r = httpx.delete(

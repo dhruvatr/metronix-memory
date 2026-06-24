@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Diagnostic: test Cypher syntax patterns against running Memgraph instance.
 
-Run:  cd metatroncore && .venv/bin/python scripts/memgraph_syntax_test.py
+Run:  cd metronixcore && .venv/bin/python scripts/memgraph_syntax_test.py
 """
 import sys
 sys.path.insert(0, "src")
 
-from metatron.storage.memgraph import get_memgraph_driver
+from metronix.storage.memgraph import get_memgraph_driver
 
 driver = get_memgraph_driver()
 

@@ -2,11 +2,11 @@
 
 ## Overview
 
-Metatron provides detailed observability into query processing, sync operations, and system health through structured logging, query traces, and health check endpoints.
+Metronix provides detailed observability into query processing, sync operations, and system health through structured logging, query traces, and health check endpoints.
 
 ## Query Trace Format
 
-Every query in Metatron is broken down into 7 distinct steps, each with timing and metadata. This enables performance analysis and debugging of the retrieval pipeline.
+Every query in Metronix is broken down into 7 distinct steps, each with timing and metadata. This enables performance analysis and debugging of the retrieval pipeline.
 
 ### Trace Structure
 
@@ -291,7 +291,7 @@ Every sync operation (via connectors) generates a structured log with results an
 
 Sync logs are written to stdout (JSON format) and can be:
 
-1. **Viewed in console**: `docker compose logs metatron-core`
+1. **Viewed in console**: `docker compose logs metronix-core`
 2. **Shipped to logging service**: Configure a log collector (e.g., Fluentd, Logstash) to parse JSON logs
 3. **Queried via API**: `GET /api/v1/connections/{connection_id}/sync-logs`
 
@@ -330,7 +330,7 @@ Response:
 
 ## Health Checks
 
-Metatron exposes two health check endpoints.
+Metronix exposes two health check endpoints.
 
 ### Liveness Probe
 
@@ -394,7 +394,7 @@ If any dependency is unreachable, the service reports `not_ready`.
 
 ## Structured Logging
 
-Metatron uses `structlog` for all logging. Logs are emitted in JSON format.
+Metronix uses `structlog` for all logging. Logs are emitted in JSON format.
 
 ### Log Format
 
@@ -457,7 +457,7 @@ async def handle_query(query: str, workspace_id: str):
 
 ## Metrics
 
-Metatron maintains in-memory counters for key metrics. Future versions will export these to Prometheus.
+Metronix maintains in-memory counters for key metrics. Future versions will export these to Prometheus.
 
 ### Available Metrics
 

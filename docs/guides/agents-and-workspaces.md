@@ -1,6 +1,6 @@
 # Agents And Workspaces
 
-Metatron scopes data by workspace and, for memory, by agent.
+Metronix scopes data by workspace and, for memory, by agent.
 
 ## Workspace
 
@@ -16,7 +16,7 @@ MCP clients should send:
 
 ```text
 X-Agent-Id: <agent-id>
-Authorization: Bearer <METATRON_MCP_API_KEY>
+Authorization: Bearer <METRONIX_MCP_API_KEY>
 ```
 
 Memory tool calls should also pass `agent_id` explicitly in their arguments.

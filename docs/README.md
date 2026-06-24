@@ -1,4 +1,4 @@
-# Metatron Core Documentation
+# Metronix Core Documentation
 
 Start here:
 
@@ -8,7 +8,7 @@ Start here:
 
 ## Guides
 
-- [`guides/ingestion.md`](guides/ingestion.md) — get data into Metatron.
+- [`guides/ingestion.md`](guides/ingestion.md) — get data into Metronix.
 - [`guides/memory.md`](guides/memory.md) — agent memory concepts and APIs.
 - [`guides/connectors.md`](guides/connectors.md) — connector configuration overview.
 - [`guides/agents-and-workspaces.md`](guides/agents-and-workspaces.md) — identity and isolation model.

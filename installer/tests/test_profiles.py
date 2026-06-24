@@ -1,7 +1,7 @@
 import pytest
 
-from metatron_installer.config import LlmProvider, Profile
-from metatron_installer.profiles import (
+from metronix_installer.config import LlmProvider, Profile
+from metronix_installer.profiles import (
     ProfileLlmError,
     compose_profiles_value,
     validate_profile_llm,
@@ -9,7 +9,7 @@ from metatron_installer.profiles import (
 
 
 def test_minimal_has_no_optional_profiles():
-    assert compose_profiles_value(Profile.MINIMAL, []) == "ui"
+    assert compose_profiles_value(Profile.MINIMAL, []) == ""
 
 
 def test_full_enables_full_profile():

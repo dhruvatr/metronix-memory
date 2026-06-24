@@ -17,7 +17,7 @@ class TestDeleteAgent:
         Expected: 204 No Content. Subsequent GET returns 404 (or agent is
                   archived and hidden from default list).
         Cleanup: agent was created via fixture
-        Source: src/metatron/api/routes/agents.py:delete_agent()
+        Source: src/metronix/api/routes/agents.py:delete_agent()
         """
         agent_id = created_agent["id"]
         r = httpx.delete(

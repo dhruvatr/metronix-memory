@@ -11,6 +11,6 @@ http://localhost:8001/mcp
 Required headers:
 
 ```text
-Authorization: Bearer <METATRON_MCP_API_KEY>
+Authorization: Bearer <METRONIX_MCP_API_KEY>
 X-Agent-Id: <stable-agent-id>
 ```

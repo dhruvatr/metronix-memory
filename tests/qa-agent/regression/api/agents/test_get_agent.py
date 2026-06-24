@@ -16,7 +16,7 @@ class TestGetAgent:
         Scenario: authenticated viewer fetches an existing agent
         Expected: 200, response contains id, name, status, model, workspace_id,
                   config_version, current_config, created_by, created_at, updated_at
-        Source: src/metatron/api/routes/agents.py:get_agent()
+        Source: src/metronix/api/routes/agents.py:get_agent()
         """
         agent_id = created_agent["id"]
         r = httpx.get(f"{API}/api/v1/agents/{agent_id}", headers=auth_headers, timeout=TIMEOUT)
@@ -48,7 +48,7 @@ class TestGetAgent:
         """Endpoint: GET /api/v1/agents/nonexistent-id
         Scenario: agent_id does not exist
         Expected: 404 Not Found
-        Source: metatron.agents.service -> AgentNotFoundError
+        Source: metronix.agents.service -> AgentNotFoundError
         """
         r = httpx.get(
             f"{API}/api/v1/agents/nonexistent-agent-id",

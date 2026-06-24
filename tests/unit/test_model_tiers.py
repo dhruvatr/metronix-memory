@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from metatron.llm.tiers import resolve_model_for_call_site
+from metronix.llm.tiers import resolve_model_for_call_site
 
 
 def _settings(provider="deepseek", heavy="deepseek-chat", fast=""):

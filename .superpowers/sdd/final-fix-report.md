@@ -13,9 +13,9 @@ write documents into any workspace by supplying a different workspace_id in the 
 bypassing the JWT access check that `resolve_workspace_id` enforces.
 
 **Fix:**
-- `src/metatron/api/routes/chat.py:248-251` — removed `workspace_id: str | None = Form(None)`
+- `src/metronix/api/routes/chat.py:248-251` — removed `workspace_id: str | None = Form(None)`
   parameter entirely.
-- `src/metatron/api/routes/chat.py:265` — now unconditionally calls
+- `src/metronix/api/routes/chat.py:265` — now unconditionally calls
   `ws = resolve_workspace_id(request)`, which only accepts an override via the
   `?workspace_id` query parameter (access-checked against JWT claims).
 
@@ -28,14 +28,14 @@ unauthenticated caller could ingest documents. It also had `user_id: str = Form(
 caller-controlled string, allowing caller attribution spoofing.
 
 **Fix:**
-- `src/metatron/api/routes/chat.py:15` — added import for `Depends` from fastapi.
-- `src/metatron/api/routes/chat.py:16` — added import `from typing import Annotated`.
-- `src/metatron/api/routes/chat.py:17` — added imports `from metatron.auth.dependencies import
-  require_editor` and `from metatron.core.models import User`.
-- `src/metatron/api/routes/chat.py:250` — replaced `user_id: str = Form("user")` and
+- `src/metronix/api/routes/chat.py:15` — added import for `Depends` from fastapi.
+- `src/metronix/api/routes/chat.py:16` — added import `from typing import Annotated`.
+- `src/metronix/api/routes/chat.py:17` — added imports `from metronix.auth.dependencies import
+  require_editor` and `from metronix.core.models import User`.
+- `src/metronix/api/routes/chat.py:250` — replaced `user_id: str = Form("user")` and
   `workspace_id: str | None = Form(None)` with
   `user: Annotated[User, Depends(require_editor)]` (exact pattern from `files.py`).
-- `src/metatron/api/routes/chat.py:266` — `user_id = getattr(user, "id", "user")` derived
+- `src/metronix/api/routes/chat.py:266` — `user_id = getattr(user, "id", "user")` derived
   from the authenticated user, not caller-controlled.
 - `Form` import removed from the `chat.py` fastapi import line (was only used in the fixed
   params; verified no other usage in the file).
@@ -53,13 +53,13 @@ FastAPI DI semantics as `files.py`.
 SQLAlchemy async engine with a connection pool. Abandoned pools leak file descriptors and
 DB connections on every upload request.
 
-**PostgresStore.close() verification:** `src/metatron/storage/postgres.py:1523` —
+**PostgresStore.close() verification:** `src/metronix/storage/postgres.py:1523` —
 `async def close(self) -> None:` — confirmed present and async.
 
 **Fix:**
-- `src/metatron/api/routes/files.py:88-92` — wrapped `persist_raw_documents` call in
+- `src/metronix/api/routes/files.py:88-92` — wrapped `persist_raw_documents` call in
   `try/finally` with `await store.close()`.
-- `src/metatron/api/routes/files.py:104-117` — added `finally: await store.close()` to
+- `src/metronix/api/routes/files.py:104-117` — added `finally: await store.close()` to
   `_background_sync`, preserving the existing `except Exception` warning log.
 
 ---

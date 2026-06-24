@@ -1,5 +1,5 @@
-from metatron.core.models import Document, SyncResult
-from metatron.ingestion import sync as sync_mod
+from metronix.core.models import Document, SyncResult
+from metronix.ingestion import sync as sync_mod
 
 
 class _StubStore:

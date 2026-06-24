@@ -1,4 +1,4 @@
-from metatron_installer.cli import _compose_profiles_from_env
+from metronix_installer.cli import _compose_profiles_from_env
 
 
 def test_compose_profiles_read_from_written_env(tmp_path):

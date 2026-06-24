@@ -7,7 +7,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
 def test_module_reports_version():
     out = subprocess.run(
-        [sys.executable, "-m", "metatron_installer", "--version"],
+        [sys.executable, "-m", "metronix_installer", "--version"],
         capture_output=True,
         text=True,
         cwd=str(SRC),

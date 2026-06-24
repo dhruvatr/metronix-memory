@@ -20,7 +20,7 @@ class TestCreateAgent:
         Expected: 201, response contains id, status=stopped, config_version=1,
                   defaults for optional fields (empty lists/dicts)
         Cleanup: created agent is soft-deleted in teardown
-        Source: src/metatron/api/routes/agents.py:create_agent()
+        Source: src/metronix/api/routes/agents.py:create_agent()
         """
         name = f"qa-test-{uuid.uuid4().hex[:8]}"
         payload = {"name": name, "model": "deepseek/deepseek-v4-flash"}
@@ -71,7 +71,7 @@ class TestCreateAgent:
         """Endpoint: POST /api/v1/agents/
         Scenario: create agent with same name as an existing non-archived agent
         Expected: 409 Conflict
-        Source: metatron.agents.service -> AgentNameConflictError
+        Source: metronix.agents.service -> AgentNameConflictError
         """
         payload = {"name": created_agent["name"], "model": "deepseek/deepseek-v4-flash"}
         r = httpx.post(f"{API}/api/v1/agents/", headers=auth_headers, json=payload, timeout=TIMEOUT)
@@ -155,7 +155,7 @@ class TestCreateAgent:
         """Endpoint: POST /api/v1/agents/
         Scenario: memory_bindings serialized size exceeds 32 KiB
         Expected: 422 Validation Error
-        Source: src/metatron/api/routes/agents.py:_validate_opaque_mapping()
+        Source: src/metronix/api/routes/agents.py:_validate_opaque_mapping()
         """
         huge_binding = {"data": "x" * 40_000}
         r = httpx.post(

@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from metatron.proxy.config import UpstreamConfig, parse_upstream_config
+from metronix.proxy.config import UpstreamConfig, parse_upstream_config
 
 
 def test_minimal_valid() -> None:

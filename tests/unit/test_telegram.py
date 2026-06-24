@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from metatron.channels.telegram import _markdown_to_html, _split_message
+from metronix.channels.telegram import _markdown_to_html, _split_message
 
 
 class TestSplitMessage:

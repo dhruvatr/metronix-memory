@@ -2,10 +2,10 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
-from metatron.core.config import Settings
-from metatron.core.models import AssembledContext
-from metatron.memory.assembler import AgentContextAssembler
-from metatron.proxy.tool_result import ToolResultEnricher
+from metronix.core.config import Settings
+from metronix.core.models import AssembledContext
+from metronix.memory.assembler import AgentContextAssembler
+from metronix.proxy.tool_result import ToolResultEnricher
 
 
 def _ctx() -> AssembledContext:
