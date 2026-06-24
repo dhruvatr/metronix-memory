@@ -3,8 +3,8 @@
 ## 1. Clone the repository
 
 ```bash
-git clone -b develop https://github.com/mtrnix/metatroncore.git
-cd metatroncore
+git clone -b develop https://github.com/mtrnix/metronixcore.git
+cd metronixcore
 ```
 
 ## 2. Verify Docker and Docker Compose
@@ -91,7 +91,7 @@ openssl rand -hex 32
 Set it in `.env`:
 
 ```ini
-METATRON_MCP_API_KEY=<paste-the-generated-token>
+METRONIX_MCP_API_KEY=<paste-the-generated-token>
 ```
 
 External agents use this token to authenticate when connecting to
@@ -99,7 +99,7 @@ External agents use this token to authenticate when connecting to
 
 ## 4. Launch
 
-### Option A — backend only (postgres, qdrant, neo4j, redis, ollama, splade, metatron-core)
+### Option A — backend only (postgres, qdrant, neo4j, redis, ollama, splade, metronix-core)
 
 ```bash
 docker compose -f docker-compose.full.yml up -d --build
@@ -111,7 +111,7 @@ docker compose -f docker-compose.full.yml up -d --build
 docker compose -f docker-compose.full.yml --profile openwebui up -d --build
 ```
 
-Open `http://localhost:3080` — no login required. Open WebUI connects to Metatron
+Open `http://localhost:3080` — no login required. Open WebUI connects to Metronix
 automatically via the pre-configured `OPENAI_API_BASE_URL`.
 
 First run builds images from source and pulls Ollama models (about 10-15 minutes).

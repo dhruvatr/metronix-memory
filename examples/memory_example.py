@@ -9,7 +9,7 @@ This demonstrates the three memory kinds:
 
 Prerequisites:
     pip install httpx
-    export METATRON_API_KEY=your-api-key
+    export METRONIX_API_KEY=your-api-key
 
 Usage:
     python examples/memory_example.py
@@ -17,8 +17,8 @@ Usage:
 
 import os, httpx
 
-API_KEY = os.environ.get("METATRON_API_KEY", "dev-key")
-BASE_URL = os.environ.get("METATRON_URL", "http://localhost:8000")
+API_KEY = os.environ.get("METRONIX_API_KEY", "dev-key")
+BASE_URL = os.environ.get("METRONIX_URL", "http://localhost:8000")
 
 headers = {"Authorization": f"Bearer {API_KEY}"}
 
@@ -48,7 +48,7 @@ def search_memory(query: str, kind: str = "fact", limit: int = 5) -> dict:
 
 
 if __name__ == "__main__":
-    print("🧠 Metatron Agent Memory Example\n")
+    print("🧠 Metronix Agent Memory Example\n")
 
     # 1. Store a fact
     print("1. Storing a fact...")

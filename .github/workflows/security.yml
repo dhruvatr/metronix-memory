@@ -28,7 +28,7 @@ jobs:
       - name: Scan image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'ghcr.io/mtrnix/metatroncore:metatroncore-develop'
+          image-ref: 'ghcr.io/mtrnix/metronixcore:metronixcore-develop'
           format: 'sarif'
           output: 'trivy-results.sarif'
           exit-code: '0'

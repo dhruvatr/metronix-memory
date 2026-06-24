@@ -5,8 +5,8 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from metatron.core.config import Settings
-from metatron.storage.activity_pg import ActivityRow, ActivityStore
+from metronix.core.config import Settings
+from metronix.storage.activity_pg import ActivityRow, ActivityStore
 
 pytestmark = pytest.mark.integration
 

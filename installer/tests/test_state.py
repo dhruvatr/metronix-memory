@@ -1,4 +1,4 @@
-from metatron_installer.state import InstallAction, detect_existing_install
+from metronix_installer.state import InstallAction, detect_existing_install
 
 
 def test_no_env_means_fresh_install(tmp_path):
@@ -16,7 +16,7 @@ def test_env_present_is_not_fresh(tmp_path):
 def test_running_containers_detected(tmp_path):
     state = detect_existing_install(
         env_path=tmp_path / ".env",
-        running_containers=["metatron-full-api", "metatron-full-postgres"],
+        running_containers=["metronix-full-api", "metronix-full-postgres"],
     )
     assert state.is_fresh is False
     assert state.has_running is True

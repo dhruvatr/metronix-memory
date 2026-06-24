@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from metatron_installer.docker import CommandResult, DockerShell
-from metatron_installer.runner import launch_stack
+from metronix_installer.docker import CommandResult, DockerShell
+from metronix_installer.runner import launch_stack
 
 
 class FakeRunner:
@@ -32,7 +32,7 @@ def test_launch_stack_pulls_then_ups_with_profiles():
         pull_envs.append(env or {})
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    with patch("metatron_installer.docker._pull_with_progress", _mock_pull), \
+    with patch("metronix_installer.docker._pull_with_progress", _mock_pull), \
          patch("subprocess.run", _mock_run):
         ok = launch_stack(
             sh,

@@ -70,7 +70,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Push-Location $InstallerDir
 try {
-    uv run --project . python -m metatron_installer @args
+    uv run --project . python -m metronix_installer @args
 } finally {
     Pop-Location
 }

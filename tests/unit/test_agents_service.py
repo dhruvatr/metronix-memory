@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from metatron.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
-from metatron.agents.persistence import _AgentNameConflictError as PersistenceNameConflict
-from metatron.agents.service import (
+from metronix.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
+from metronix.agents.persistence import _AgentNameConflictError as PersistenceNameConflict
+from metronix.agents.service import (
     AgentInvalidStateTransitionError,
     AgentNameConflictError,
     AgentNotFoundError,

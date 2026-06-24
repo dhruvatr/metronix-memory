@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from metatron_installer.answers import (
+from metronix_installer.answers import (
     AnswersError,
     load_answers_yaml,
     load_answers_yaml_text,
 )
-from metatron_installer.config import LlmProvider, Mode, Profile
+from metronix_installer.config import LlmProvider, Mode, Profile
 
 FIX = Path(__file__).parent / "fixtures" / "answers_minimal.yaml"
 

@@ -26,4 +26,4 @@ jobs:
       - name: Lint
         run: uvx ruff check .
       - name: Dry-run renders artifacts
-        run: uv run --project . python -m metatron_installer --non-interactive --dry-run
+        run: uv run --project . python -m metronix_installer --non-interactive --dry-run

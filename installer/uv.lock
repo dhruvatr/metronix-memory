@@ -42,7 +42,7 @@ wheels = [
 ]
 
 [[package]]
-name = "metatron-installer"
+name = "metronix-installer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

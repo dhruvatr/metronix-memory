@@ -21,9 +21,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from metatron.agents.models import AgentRecord, AgentStatus
-from metatron.agents.persistence import AgentPersistence, _AgentNameConflictError
-from metatron.core.config import Settings
+from metronix.agents.models import AgentRecord, AgentStatus
+from metronix.agents.persistence import AgentPersistence, _AgentNameConflictError
+from metronix.core.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

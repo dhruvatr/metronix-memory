@@ -1,7 +1,7 @@
 import pytest
 
-from metatron_installer.config import LlmProvider, Profile
-from metatron_installer.profiles import (
+from metronix_installer.config import LlmProvider, Profile
+from metronix_installer.profiles import (
     ProfileLlmError,
     compose_profiles_value,
     validate_profile_llm,

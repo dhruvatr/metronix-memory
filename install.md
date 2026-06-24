@@ -82,7 +82,7 @@ openssl rand -hex 32
 ```
 
 ```ini
-METATRON_MCP_API_KEY=<paste-the-generated-token>
+METRONIX_MCP_API_KEY=<paste-the-generated-token>
 ```
 
 External agents use this token when connecting to `/mcp`.
@@ -149,13 +149,13 @@ http://localhost:8001/v1
 View logs:
 
 ```bash
-docker compose -f docker-compose.full.yml logs metatron-core
+docker compose -f docker-compose.full.yml logs metronix-core
 ```
 
 Restart the API:
 
 ```bash
-docker compose -f docker-compose.full.yml restart metatron-core
+docker compose -f docker-compose.full.yml restart metronix-core
 ```
 
 Rebuild after `.env` or source changes:
@@ -230,12 +230,12 @@ netstat -ano | findstr :8001
 Check that the agent configuration uses:
 
 ```text
-Authorization: Bearer <METATRON_MCP_API_KEY>
+Authorization: Bearer <METRONIX_MCP_API_KEY>
 ```
 
 The token must match the value in the server `.env`.
 
-### Open WebUI cannot reach Metatron
+### Open WebUI cannot reach Metronix
 
 Verify the API health endpoint first:
 

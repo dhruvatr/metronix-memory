@@ -5,8 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from metatron.core.models import MemoryRecord, MemoryScope
-from metatron.storage.memory_qdrant import MemoryQdrantStore
+from metronix.core.models import MemoryRecord, MemoryScope
+from metronix.storage.memory_qdrant import MemoryQdrantStore
 
 
 def _mock_collections(*names: str):
@@ -85,11 +85,11 @@ class TestEnsureCollection:
 
 class TestUpsert:
     @patch(
-        "metatron.storage.memory_qdrant._compute_doc_sparse",
+        "metronix.storage.memory_qdrant._compute_doc_sparse",
         return_value=([1, 2], [0.5, 0.3]),
     )
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_upserts_record_with_vectors(self, mock_embed, mock_sparse) -> None:
@@ -113,11 +113,11 @@ class TestUpsert:
         assert payload["record_id"] == "mem001"
 
     @patch(
-        "metatron.storage.memory_qdrant._compute_doc_sparse",
+        "metronix.storage.memory_qdrant._compute_doc_sparse",
         return_value=([1, 2], [0.5, 0.3]),
     )
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_uses_record_id_as_point_id(self, mock_embed, mock_sparse) -> None:
@@ -131,11 +131,11 @@ class TestUpsert:
         assert points[0].id == "custom-id-123"
 
     @patch(
-        "metatron.storage.memory_qdrant._compute_doc_sparse",
+        "metronix.storage.memory_qdrant._compute_doc_sparse",
         return_value=([1, 2], [0.5, 0.3]),
     )
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_includes_both_dense_and_sparse_vectors(
@@ -162,7 +162,7 @@ class TestUpsert:
 
 class TestSearch:
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_hybrid_search_returns_results(
@@ -195,7 +195,7 @@ class TestSearch:
         assert results[0]["content"] == "dark mode"
 
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_search_with_agent_filter(self, mock_embed) -> None:
@@ -212,7 +212,7 @@ class TestSearch:
         assert prefetch_list[1].filter is not None
 
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_search_without_filters(self, mock_embed) -> None:
@@ -228,7 +228,7 @@ class TestSearch:
         assert prefetch_list[0].filter is None
 
     @patch(
-        "metatron.storage.memory_qdrant.get_cached_embedding",
+        "metronix.storage.memory_qdrant.get_cached_embedding",
         return_value=[0.1] * 768,
     )
     async def test_search_returns_empty_on_no_results(

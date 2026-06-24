@@ -18,7 +18,7 @@ class TestUpdateAgent:
         Scenario: editor updates only the name field
         Expected: 200, name is updated, config_version incremented, other fields unchanged
         Cleanup: agent is deleted via created_agent fixture teardown
-        Source: src/metatron/api/routes/agents.py:update_agent()
+        Source: src/metronix/api/routes/agents.py:update_agent()
         """
         new_name = f"qa-test-updated-{uuid.uuid4().hex[:8]}"
         r = httpx.put(

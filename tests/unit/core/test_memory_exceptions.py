@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from metatron.core.exceptions import (
+from metronix.core.exceptions import (
     AgentMemoryError,
     MemoryNotFoundError,
-    MetatronError,
+    MetronixError,
     SnapshotCorruptError,
 )
 
 
 def test_exception_hierarchy() -> None:
-    assert issubclass(AgentMemoryError, MetatronError)
+    assert issubclass(AgentMemoryError, MetronixError)
     assert issubclass(MemoryNotFoundError, AgentMemoryError)
     assert issubclass(SnapshotCorruptError, AgentMemoryError)
 
@@ -21,7 +21,7 @@ def test_exception_hierarchy() -> None:
 def test_memory_not_found_raise_catch() -> None:
     with pytest.raises(AgentMemoryError):
         raise MemoryNotFoundError("missing")
-    with pytest.raises(MetatronError):
+    with pytest.raises(MetronixError):
         raise MemoryNotFoundError("missing")
 
 

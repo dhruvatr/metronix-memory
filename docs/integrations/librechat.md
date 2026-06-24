@@ -1,14 +1,14 @@
 # LibreChat Integration
 
-LibreChat can use Metatron through the OpenAI-compatible API.
+LibreChat can use Metronix through the OpenAI-compatible API.
 
 Use:
 
 ```text
 Base URL: http://localhost:8001/v1
-API key:  <METATRON_OPENAI_COMPAT_KEY>
-Model:    metatron-rag-<workspace_id>
+API key:  <METRONIX_OPENAI_COMPAT_KEY>
+Model:    metronix-rag-<workspace_id>
 ```
 
-Metatron is not a raw LLM proxy on this endpoint. It runs retrieval over the selected
+Metronix is not a raw LLM proxy on this endpoint. It runs retrieval over the selected
 workspace and returns grounded answers.

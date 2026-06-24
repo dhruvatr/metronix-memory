@@ -2,9 +2,9 @@
 
 from unittest.mock import AsyncMock
 
-from metatron.core.config import Settings
-from metatron.core.models import MemoryRecord, MemorySearchResult
-from metatron.memory.assembler import AgentContextAssembler
+from metronix.core.config import Settings
+from metronix.core.models import MemoryRecord, MemorySearchResult
+from metronix.memory.assembler import AgentContextAssembler
 
 
 def _record(content: str) -> MemoryRecord:

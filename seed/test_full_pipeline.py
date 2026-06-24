@@ -22,7 +22,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from metatron.retrieval.search import hybrid_search_and_answer  # noqa: E402
+from metronix.retrieval.search import hybrid_search_and_answer  # noqa: E402
 
 
 DEFAULT_QUERIES = [

@@ -2,8 +2,8 @@
 
 from dataclasses import asdict
 
-from metatron.core.events import PROXY_CALL_COMPLETED
-from metatron.proxy.events import (
+from metronix.core.events import PROXY_CALL_COMPLETED
+from metronix.proxy.events import (
     ALL_PROXY_EVENTS,
     PROXY_REQUEST_RECEIVED,
     PROXY_UPSTREAM_ERROR,

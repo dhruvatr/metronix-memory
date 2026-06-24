@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from metatron.ingestion.bm25 import compute_bm25_sparse_vector, tokenize
+from metronix.ingestion.bm25 import compute_bm25_sparse_vector, tokenize
 
 
 class TestTitleBoostInBm25:
@@ -30,7 +30,7 @@ class TestTitleBoostInBm25:
         assert len(boosted_map) >= len(plain_map)
 
         # Title token indices should be present in boosted vector
-        from metatron.ingestion.bm25 import word_to_index
+        from metronix.ingestion.bm25 import word_to_index
 
         for token in title_tokens:
             token_idx = word_to_index(token)
@@ -48,17 +48,17 @@ class TestTitleBoostInBm25:
 
 class TestQdrantAddDocumentTitleBoost:
     @patch(
-        "metatron.storage.qdrant.get_cached_embedding_split",
+        "metronix.storage.qdrant.get_cached_embedding_split",
         return_value=[("chunk text here", [0.1] * 768)],
     )
-    @patch("metatron.storage.qdrant.compute_bm25_sparse_vector", return_value=([1], [1.0]))
+    @patch("metronix.storage.qdrant.compute_bm25_sparse_vector", return_value=([1], [1.0]))
     def test_add_document_prepends_title_to_bm25(
         self,
         mock_bm25: MagicMock,
         mock_embed: MagicMock,
     ) -> None:
         """add_document should prepend title twice to text for BM25 computation."""
-        from metatron.storage.qdrant import QdrantVectorStore
+        from metronix.storage.qdrant import QdrantVectorStore
 
         with patch.object(QdrantVectorStore, "__init__", lambda self, *a, **kw: None):
             store = QdrantVectorStore.__new__(QdrantVectorStore)
@@ -71,17 +71,17 @@ class TestQdrantAddDocumentTitleBoost:
         assert bm25_input == "My Report My Report chunk text here"
 
     @patch(
-        "metatron.storage.qdrant.get_cached_embedding_split",
+        "metronix.storage.qdrant.get_cached_embedding_split",
         return_value=[("chunk text here", [0.1] * 768)],
     )
-    @patch("metatron.storage.qdrant.compute_bm25_sparse_vector", return_value=([1], [1.0]))
+    @patch("metronix.storage.qdrant.compute_bm25_sparse_vector", return_value=([1], [1.0]))
     def test_add_document_no_title_uses_plain_text(
         self,
         mock_bm25: MagicMock,
         mock_embed: MagicMock,
     ) -> None:
         """Without title in metadata, BM25 uses plain chunk text."""
-        from metatron.storage.qdrant import QdrantVectorStore
+        from metronix.storage.qdrant import QdrantVectorStore
 
         with patch.object(QdrantVectorStore, "__init__", lambda self, *a, **kw: None):
             store = QdrantVectorStore.__new__(QdrantVectorStore)

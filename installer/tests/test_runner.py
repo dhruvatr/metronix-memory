@@ -1,10 +1,10 @@
 import subprocess
 import sys
 
-from metatron_installer.config import LlmProvider, Mode, Profile, defaults_for
-from metatron_installer.runner import build_overrides, render_artifacts
+from metronix_installer.config import LlmProvider, Mode, Profile, defaults_for
+from metronix_installer.runner import build_overrides, render_artifacts
 
-TEMPLATE = "POSTGRES_PASSWORD=metatron_dev\nFERNET_KEY=\nLLM_PROVIDER=ollama\nNEO4J_PASSWORD=\n"
+TEMPLATE = "POSTGRES_PASSWORD=metronix_dev\nFERNET_KEY=\nLLM_PROVIDER=ollama\nNEO4J_PASSWORD=\n"
 
 
 def test_build_overrides_autogenerates_missing_secrets():
@@ -28,7 +28,7 @@ def test_render_artifacts_sets_compose_profiles_for_full():
     cfg.llm_provider = LlmProvider.OLLAMA
     env_text, compose_profiles = render_artifacts(cfg, template=TEMPLATE)
     assert compose_profiles == "full"
-    assert "POSTGRES_PASSWORD=metatron_dev" not in env_text  # got replaced
+    assert "POSTGRES_PASSWORD=metronix_dev" not in env_text  # got replaced
     assert "COMPOSE_PROFILES=full" in env_text
 
 
@@ -42,7 +42,7 @@ def test_cli_dry_run_with_config(tmp_path):
     cfg = tmp_path / "answers.yaml"
     cfg.write_text("mode: server\nprofile: minimal\nllm_provider: deepseek\nllm_api_key: sk-x\n")
     out = subprocess.run(
-        [sys.executable, "-m", "metatron_installer", "--config", str(cfg), "--dry-run"],
+        [sys.executable, "-m", "metronix_installer", "--config", str(cfg), "--dry-run"],
         capture_output=True,
         text=True,
         encoding="utf-8",

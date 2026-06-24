@@ -18,7 +18,7 @@ class TestAgentMemoryHealth:
                   growth_rate_per_day, growth_timeseries, unused_records,
                   unused_threshold_days, duplicate_ratio, duplicate_clusters_count,
                   source_distribution, computed_at
-        Source: src/metatron/api/routes/agents.py:get_agent_memory_health()
+        Source: src/metronix/api/routes/agents.py:get_agent_memory_health()
         """
         r = httpx.get(
             f"{API}/api/v1/agents/{existing_agent_id}/memory/health",

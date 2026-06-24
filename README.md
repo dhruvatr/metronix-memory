@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/metatron-banner.svg" alt="Metatron Core" width="600">
+  <img src="docs/metronix-banner.svg" alt="Metronix Core" width="600">
 </p>
 
 <p align="center">
@@ -26,9 +26,9 @@
 
 **Self-hosting matters.** Your data, credentials, and knowledge graph should run in your own environment when compliance or privacy requires it.
 
-**Metatron Core** is the open-source answer: hybrid RAG + persistent agent memory + freshness pipeline. Self-hosted. MCP-native. Built for AI agents, not just chatbots.
+**Metronix Core** is the open-source answer: hybrid RAG + persistent agent memory + freshness pipeline. Self-hosted. MCP-native. Built for AI agents, not just chatbots.
 
-| Your Agents Need | Without Metatron | With Metatron |
+| Your Agents Need | Without Metronix | With Metronix |
 |---|---|---|
 | Search company knowledge | Build separate integrations and ingestion pipelines | Connect sources and query through one RAG surface |
 | Persistent agent memory | Reset every session or store raw notes | `fact`, `preference`, and `pinned` memory records |
@@ -40,7 +40,7 @@
 
 ## Architecture
 
-Metatron Core uses a strict one-way dependency architecture - each layer only imports downward.
+Metronix Core uses a strict one-way dependency architecture - each layer only imports downward.
 
 ```text
 L6  api/            REST + OpenAI-compatible API + MCP HTTP mount
@@ -72,8 +72,8 @@ The primary installation sequence lives in [`manual.md`](manual.md). Use [`insta
 ### 1. Clone the repository
 
 ```bash
-git clone -b develop https://github.com/mtrnix/metatroncore.git
-cd metatroncore
+git clone -b develop https://github.com/mtrnix/metronixcore.git
+cd metronixcore
 ```
 
 ### 2. Verify Docker and Docker Compose
@@ -150,7 +150,7 @@ openssl rand -hex 32
 Set it in `.env`:
 
 ```ini
-METATRON_MCP_API_KEY=<paste-the-generated-token>
+METRONIX_MCP_API_KEY=<paste-the-generated-token>
 ```
 
 External agents use this token when connecting to `http://localhost:8001/mcp`.
@@ -205,7 +205,7 @@ docker compose -f docker-compose.full.yml down
 docker compose -f docker-compose.full.yml up -d --build --force-recreate
 
 # Check API logs
-docker compose -f docker-compose.full.yml logs metatron-core
+docker compose -f docker-compose.full.yml logs metronix-core
 ```
 
 ---
@@ -220,15 +220,15 @@ After the stack is running, connect an MCP client and ask a question against you
 What changed in the project plan this week?
 ```
 
-Metatron searches your knowledge base and returns a grounded answer with citations from your real data.
+Metronix searches your knowledge base and returns a grounded answer with citations from your real data.
 
 ---
 
-## How Metatron Compares
+## How Metronix Compares
 
 ### vs. Vector Databases
 
-| | Vector DB | Metatron |
+| | Vector DB | Metronix |
 |---|---|---|
 | Stores vectors | Yes | Yes, using Qdrant internally |
 | Sparse retrieval | Usually add-on | Built-in SPLADE sparse retrieval |
@@ -237,11 +237,11 @@ Metatron searches your knowledge base and returns a grounded answer with citatio
 | Agent memory | No | Built-in memory records and lifecycle |
 | MCP-native | No | Built-in MCP server |
 
-Use a vector DB alone if you are building a custom RAG stack from scratch. Use Metatron if you want ingestion, retrieval, graph context, memory, and agent access in one system.
+Use a vector DB alone if you are building a custom RAG stack from scratch. Use Metronix if you want ingestion, retrieval, graph context, memory, and agent access in one system.
 
 ### vs. RAG Frameworks
 
-| | RAG Framework | Metatron |
+| | RAG Framework | Metronix |
 |---|---|---|
 | RAG pipeline | You build it | Built in and configurable |
 | Connectors | Community integrations | Native connector framework |
@@ -249,11 +249,11 @@ Use a vector DB alone if you are building a custom RAG stack from scratch. Use M
 | API server | You build it | REST, OpenAI-compatible, and MCP surfaces included |
 | Time to first answer | Days or weeks | One Docker Compose stack |
 
-RAG frameworks give you building blocks. Metatron gives you an operational backend for agent knowledge and memory.
+RAG frameworks give you building blocks. Metronix gives you an operational backend for agent knowledge and memory.
 
 ### vs. Agent Memory Platforms
 
-| | Memory Platform | Metatron |
+| | Memory Platform | Metronix |
 |---|---|---|
 | Persistent memory | Yes | Yes |
 | Hybrid RAG | Often limited | Dense + SPLADE + graph |
@@ -288,7 +288,7 @@ RAG frameworks give you building blocks. Metatron gives you an operational backe
 ### Hermes Memory: Important Distinction
 
 If you are using **Hermes Agent**, do **not** start with Hermes' "memory providers"
-screen and expect Metatron to appear there.
+screen and expect Metronix to appear there.
 
 Hermes currently has two different integration concepts:
 
@@ -296,20 +296,20 @@ Hermes currently has two different integration concepts:
   `hindsight`, and similar providers configured via Hermes' own memory setup flow
 - **MCP servers** — external backends Hermes can call as tools
 
-**Metatron today integrates with Hermes as an MCP server, not as a Hermes-native
+**Metronix today integrates with Hermes as an MCP server, not as a Hermes-native
 memory provider plugin.**
 
 That means:
 
-- use Metatron when you want Hermes to search the KB or read/write memory through
-  MCP tools like `metatron_search`, `metatron_memory_search`, and
-  `metatron_memory_store`
+- use Metronix when you want Hermes to search the KB or read/write memory through
+  MCP tools like `metronix_search`, `metronix_memory_search`, and
+  `metronix_memory_store`
 - use Hermes memory providers when you specifically want Hermes' built-in provider
   plugin system
-- use both if you want Hermes-native memory plus Metatron as a richer external
+- use both if you want Hermes-native memory plus Metronix as a richer external
   knowledge and memory backend
 
-**Recommended path today:** connect Hermes to Metatron through `/mcp`.
+**Recommended path today:** connect Hermes to Metronix through `/mcp`.
 
 See:
 - **[Hermes Integration Guide](docs/HERMES_INTEGRATION.md)** — exact MCP setup for Hermes
@@ -324,9 +324,9 @@ See:
 
 ## Connect An Agent
 
-After Metatron is running, connect your agent through MCP.
+After Metronix is running, connect your agent through MCP.
 
-The easiest path is to give your agent the prompt from [`connecting_to_agent.md`](connecting_to_agent.md). It asks for the Metatron MCP URL, MCP API key, agent id, and workspace id, then configures and verifies the MCP connection.
+The easiest path is to give your agent the prompt from [`connecting_to_agent.md`](connecting_to_agent.md). It asks for the Metronix MCP URL, MCP API key, agent id, and workspace id, then configures and verifies the MCP connection.
 
 Runtime-specific guides:
 
@@ -347,7 +347,7 @@ Runtime-specific guides:
 make dev              # uvicorn --reload
 make test             # pytest unit tests
 make lint             # ruff check + format check
-make typecheck        # mypy src/metatron/
+make typecheck        # mypy src/metronix/
 make migrate          # alembic upgrade head
 make eval             # search quality eval
 ```
@@ -380,7 +380,7 @@ make eval             # search quality eval
 
 ## Contributing
 
-Metatron Core is open-core. Bug reports, connector additions, documentation improvements, and focused pull requests are welcome.
+Metronix Core is open-core. Bug reports, connector additions, documentation improvements, and focused pull requests are welcome.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

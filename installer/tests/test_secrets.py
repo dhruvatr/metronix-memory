@@ -1,6 +1,6 @@
 import base64
 
-from metatron_installer.secrets import generate_fernet_key, generate_password
+from metronix_installer.secrets import generate_fernet_key, generate_password
 
 
 def test_fernet_key_is_32_url_safe_bytes():

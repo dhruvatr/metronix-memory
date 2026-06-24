@@ -1581,7 +1581,7 @@ wheels = [
 ]
 
 [[package]]
-name = "metatron-core"
+name = "metronix-core"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -1,4 +1,4 @@
-name: Deploy Metatron to Kubernetes
+name: Deploy Metronix to Kubernetes
 
 on:     
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
         # echo "${{ secrets.KUBE_CONFIG }}" > $HOME/.kube/config
 
       - name: Validate Kubernetes manifest
-        run: kubectl apply -f install/metatron-k8s.yaml --dry-run=client
+        run: kubectl apply -f install/metronix-k8s.yaml --dry-run=client
 
       - name: Deploy to Kubernetes
-        run: kubectl apply -f install/metatron-k8s.yaml
+        run: kubectl apply -f install/metronix-k8s.yaml

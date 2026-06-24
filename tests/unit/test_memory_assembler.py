@@ -16,12 +16,12 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from metatron.core.models import (
+from metronix.core.models import (
     MemoryKind,
     MemoryRecord,
     MemorySearchResult,
 )
-from metatron.memory.assembler import AgentContextAssembler
+from metronix.memory.assembler import AgentContextAssembler
 
 
 def _make_settings(**overrides: object) -> MagicMock:

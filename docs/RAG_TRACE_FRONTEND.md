@@ -25,7 +25,7 @@ const clean = answer.replace(/\n*—\s*trace:\s*[0-9a-f-]{36}\s*$/i, "");
 ## Endpoints
 
 Base: `/api/v1/traces`. **Auth: JWT Bearer** (same as `/memory`, `/knowledge`, `/agents`) — i.e.
-`require_viewer`. The OpenAI-compat key (`mtk_…` / `metatron-test-key`) does **not** work here; a
+`require_viewer`. The OpenAI-compat key (`mtk_…` / `metronix-test-key`) does **not** work here; a
 normal login token is required. Workspace is taken from the token; you may optionally pass
 `?workspace_id=<id>` (access-checked against the token, else 403).
 
@@ -37,7 +37,7 @@ GET /api/v1/traces/{trace_id}
 - **404** → not found OR belongs to another workspace (isolation).
 - **422** → `trace_id` is not a valid UUID.
 - **401** → missing/invalid Bearer token.
-- Reads are **not** gated by the `METATRON_RAG_TRACE_ENABLED` flag — historical traces are always readable.
+- Reads are **not** gated by the `METRONIX_RAG_TRACE_ENABLED` flag — historical traces are always readable.
 
 ### 2. Recent traces list
 ```

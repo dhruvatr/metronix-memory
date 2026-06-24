@@ -1,4 +1,4 @@
-from metatron_installer.config import (
+from metronix_installer.config import (
     LlmProvider,
     Mode,
     Profile,

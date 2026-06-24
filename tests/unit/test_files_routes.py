@@ -7,11 +7,11 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from metatron.api.app import create_app
-from metatron.auth.dependencies import get_current_user
-from metatron.auth.jwt import create_token
-from metatron.core.config import Settings
-from metatron.core.models import Role, User
+from metronix.api.app import create_app
+from metronix.auth.dependencies import get_current_user
+from metronix.auth.jwt import create_token
+from metronix.core.config import Settings
+from metronix.core.models import Role, User
 
 _SECRET = "test-secret-for-files-routes"
 
@@ -39,7 +39,7 @@ def _admin_token() -> str:
 @pytest.fixture
 def client(monkeypatch):
     # Stub the shared ingestion layer so the test is hermetic (no DB/Qdrant).
-    import metatron.api.routes.files as files_mod
+    import metronix.api.routes.files as files_mod
 
     captured = {"persist": [], "sync": []}
 
@@ -66,7 +66,7 @@ def client(monkeypatch):
 
     # auth_enabled=False may be overridden to True by the enterprise plugin.
     # Pass a known secret key so we can issue a valid token unconditionally.
-    app = create_app(Settings(auth_enabled=False, METATRON_SECRET_KEY=_SECRET))
+    app = create_app(Settings(auth_enabled=False, METRONIX_SECRET_KEY=_SECRET))
     # Override get_current_user so require_editor and require_admin resolve without DB lookup.
     # Role.ADMIN satisfies both require_editor and require_admin (hierarchical check).
     app.dependency_overrides[get_current_user] = _make_admin

@@ -260,4 +260,4 @@ fi
 # ──────────────────────────────────────────────
 #  3. Launch the Python installer
 # ──────────────────────────────────────────────
-exec uv run --project "$REPO_ROOT/installer" python -m metatron_installer "$@"
+exec uv run --project "$REPO_ROOT/installer" python -m metronix_installer "$@"

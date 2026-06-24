@@ -6,7 +6,7 @@ setup:
 	cp -n .env.example .env 2>/dev/null || true
 
 dev:
-	.venv/bin/uvicorn metatron.api.app:create_app --factory --reload --port 8000
+	.venv/bin/uvicorn metronix.api.app:create_app --factory --reload --port 8000
 
 test:
 	.venv/bin/pytest tests/ -v --tb=short -m "not integration"
@@ -23,7 +23,7 @@ format:
 	.venv/bin/ruff format src/ tests/
 
 typecheck:
-	.venv/bin/mypy src/metatron/
+	.venv/bin/mypy src/metronix/
 
 migrate:
 	.venv/bin/alembic upgrade head

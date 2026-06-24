@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock
 
-from metatron.proxy.activity import ProxyActivityLogger
+from metronix.proxy.activity import ProxyActivityLogger
 
 
 async def test_log_writes_row_with_correlation() -> None:

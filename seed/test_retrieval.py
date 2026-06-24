@@ -18,8 +18,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from metatron.core.config import Settings  # noqa: E402
-from metatron.retrieval.channels import RecallContext, recall_dense_async  # noqa: E402
+from metronix.core.config import Settings  # noqa: E402
+from metronix.retrieval.channels import RecallContext, recall_dense_async  # noqa: E402
 
 
 C1_QUERY = "what is the default retention period for cached connector data?"

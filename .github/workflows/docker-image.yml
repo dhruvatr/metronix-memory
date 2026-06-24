@@ -51,7 +51,7 @@ jobs:
         push: true
         platforms: linux/amd64,linux/arm64
         tags: |
-          ghcr.io/${{ steps.repo.outputs.name }}:metatroncore-${{ steps.branch.outputs.tag }}
+          ghcr.io/${{ steps.repo.outputs.name }}:metronixcore-${{ steps.branch.outputs.tag }}
         provenance: false
         sbom: false
         build-args: |

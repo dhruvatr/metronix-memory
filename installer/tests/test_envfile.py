@@ -1,8 +1,8 @@
-from metatron_installer.envfile import atomic_write, merge_env
+from metronix_installer.envfile import atomic_write, merge_env
 
 TEMPLATE = """\
 # Database
-POSTGRES_PASSWORD=metatron_dev
+POSTGRES_PASSWORD=metronix_dev
 LLM_PROVIDER=ollama
 
 # Secrets

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Example 2: Search Metatron from Python using the REST API.
+Example 2: Search Metronix from Python using the REST API.
 
 Prerequisites:
     pip install httpx
-    export METATRON_API_KEY=your-api-key
+    export METRONIX_API_KEY=your-api-key
 
 Usage:
     python examples/search_example.py "what is the Q2 budget?"
@@ -12,12 +12,12 @@ Usage:
 
 import os, sys, json, httpx
 
-API_KEY = os.environ.get("METATRON_API_KEY", "dev-key")
-BASE_URL = os.environ.get("METATRON_URL", "http://localhost:8000")
+API_KEY = os.environ.get("METRONIX_API_KEY", "dev-key")
+BASE_URL = os.environ.get("METRONIX_URL", "http://localhost:8000")
 
 
 def search(query: str, top_k: int = 5) -> dict:
-    """Search Metatron's knowledge base."""
+    """Search Metronix's knowledge base."""
     resp = httpx.post(
         f"{BASE_URL}/api/v1/search",
         json={"query": query, "top_k": top_k},
@@ -42,7 +42,7 @@ def format_results(results: dict) -> None:
 
 if __name__ == "__main__":
     query = sys.argv[1] if len(sys.argv) > 1 else "what is the Q2 migration status?"
-    print(f"🔍 Searching Metatron for: {query}\n")
+    print(f"🔍 Searching Metronix for: {query}\n")
 
     try:
         results = search(query)
@@ -54,7 +54,7 @@ if __name__ == "__main__":
             print("   /sync confluence  (from your MCP client)")
             print("   Or: curl -X POST /api/v1/sync/confluence")
     except httpx.ConnectError:
-        print("❌ Cannot connect to Metatron.")
+        print("❌ Cannot connect to Metronix.")
         print("   Is 'docker compose up -d' running?")
         print(f"   Checking: {BASE_URL}/ready")
         sys.exit(1)
