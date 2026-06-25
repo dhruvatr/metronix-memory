@@ -70,7 +70,7 @@ Copy-Item .env.benchmark.example .env.benchmark
 # Edit .env.benchmark
 ```
 
-`setup.sh` / `setup.ps1` create `.env.benchmark` automatically if it is missing (and migrate legacy `.env` in this folder if present).
+`bash ./setup.sh` / `setup.ps1` create `.env.benchmark` automatically if it is missing (and migrate legacy `.env` in this folder if present).
 
 ### MCP URL (`METRONIX_MCP_URL`)
 
@@ -163,7 +163,7 @@ Benchmark memory is isolated from daily use in `MTRNIX`. `**MABENCH` is not crea
 
 ### Automatic (Path A / preflight)
 
-`setup.sh` / `setup.ps1` and `preflight.py --ensure-workspace` idempotently create `MABENCH`:
+`bash ./setup.sh` / `setup.ps1` and `preflight.py --ensure-workspace` idempotently create `MABENCH`:
 
 - `GET /api/v1/workspaces/` — check existence
 - `POST /api/v1/workspaces/` with `workspace_id: "MABENCH"`
@@ -210,19 +210,19 @@ cp .env.benchmark.example .env.benchmark
 # Edit .env.benchmark
 
 # 3. One-time setup: venv, datasets, MABENCH workspace
-./setup.sh
+bash ./setup.sh
 
 # 4. Smoke test (~minutes)
-./run.sh --smoke
+bash ./run.sh --smoke
 
 # 5. Full LongMemEval-S (hours/days)
-./run.sh
+bash ./run.sh
 
 # 6. Monitor (another terminal)
 make bench-watch RESULTS=benchmarks/longmemeval/results/<file>.jsonl
 ```
 
-`setup.sh` / `setup.ps1`: create `.venv` → `pip install` → download datasets → `preflight.py --ensure-workspace`.
+`bash setup.sh` / `setup.ps1`: create `.venv` → `pip install` → download datasets → `preflight.py --ensure-workspace`.
 
 `run.sh` / `run.ps1`: preflight → `run_benchmark.py` → `evaluate_results.py` → print summary.
 
