@@ -211,9 +211,10 @@ resolve_agent_id() {
 }
 
 # --- Hermes wiring templates -------------------------------------------------
-# KEEP IN SYNC with docs/integrations/hermes.md (Prompt 1). These render the
-# CONNECTION only (MCP registration + optional availability note); never the
-# mandatory memory policy (Prompt 2) or migration (Prompt 3).
+# These two blocks are used for the in-place auto-edit of config.yaml / SOUL.md.
+# The paste-ready prompts (1/2/3) are NOT here — they live as canonical template
+# files in docs/integrations/hermes/ and are filled by write_hermes_prompt_dir.
+# KEEP the YAML/SOUL shape below in sync with docs/integrations/hermes/prompt-1-install.md.
 # Callers set H_URL / H_KEY / H_AGENT / H_WS before calling.
 
 hermes_config_block() {
@@ -239,30 +240,35 @@ required store.
 EOF
 }
 
-hermes_prompt_doc() {
-  cat <<EOF
-# Connect Hermes to Metronix (paste-ready)
+# Fill a {{...}} prompt template with this deployment's values and write it to dest.
+# Templates are the single source of truth (docs/integrations/hermes/prompt-*.md);
+# the filled output contains the real MCP key, so it is per-deployment / gitignored.
+fill_template() {
+  local tmpl="$1" dest="$2" content
+  content="$(cat "$tmpl")"
+  content="${content//\{\{METRONIX_URL\}\}/$H_URL}"
+  content="${content//\{\{MCP_API_KEY\}\}/$H_KEY}"
+  content="${content//\{\{AGENT_UUID\}\}/$H_AGENT}"
+  content="${content//\{\{WORKSPACE_ID\}\}/$H_WS}"
+  printf '%s\n' "$content" > "$dest"
+}
 
-Two edits, then restart Hermes. This wires the CONNECTION only — making Metronix
-your mandatory memory store is a separate, deliberate step (see Prompt 2 in
-docs/integrations/hermes.md).
-
-## 1. ~/.hermes/config.yaml — add under \`mcp_servers:\`
-\`\`\`yaml
-mcp_servers:
-$(hermes_config_block)
-\`\`\`
-
-## 2. ~/.hermes/SOUL.md — append at the end
-\`\`\`
-$(hermes_soul_block)
-\`\`\`
-
-## 3. Restart
-Run \`/quit\`, then \`hermes\` (Hermes loads its MCP client list at startup).
-Optional next: Prompt 2 (make Metronix the only durable memory) and Prompt 3
-(migrate existing memory) from docs/integrations/hermes.md.
-EOF
+# Write all three ready-to-paste Hermes prompts (filled) into a directory.
+# Returns 1 if no templates were found (e.g. install.sh run outside the repo).
+write_hermes_prompt_dir() {
+  local dir="$1" tdir="$REPO_ROOT/docs/integrations/hermes" found=0 pair src out
+  mkdir -p "$dir"
+  for pair in "prompt-1-install.md:1-install-mcp.md" \
+              "prompt-2-memory.md:2-memory-source.md" \
+              "prompt-3-migrate.md:3-migrate.md"; do
+    src="$tdir/${pair%%:*}"; out="$dir/${pair#*:}"
+    if [[ -f "$src" ]]; then fill_template "$src" "$out"; found=$((found + 1)); fi
+  done
+  if [[ "$found" -eq 0 ]]; then
+    warn "Prompt templates not found under $tdir — run the installer from the repo checkout."
+    return 0
+  fi
+  ok "Wrote $found ready-to-paste Hermes prompt(s) to $dir/ (apply them in order: 1 -> 2 -> 3)."
 }
 
 # Ensure exactly one metronix-config block in the SOUL file. Replaces the body
@@ -292,27 +298,69 @@ merge_soul_block() {
   fi
 }
 
-have_yq() { command -v yq >/dev/null 2>&1; }
+# yq is a small YAML processor ("jq for YAML"). We use it ONLY to READ/validate
+# the Hermes config (never `yq -i`, which would re-serialize and reformat the
+# whole file). The actual change is a minimal text edit (see merge_hermes_config),
+# so the user's formatting, comments, and key order are left untouched. We never
+# require a host install: if `yq` is not on PATH we run the tiny mikefarah/yq
+# image via Docker (already a hard dependency of this installer).
+yq_available()    { command -v yq >/dev/null 2>&1 || command -v docker >/dev/null 2>&1; }
+yq_needs_docker() { ! command -v yq >/dev/null 2>&1; }
 
-# Set .mcp_servers.metronix in the Hermes config, preserving everything else.
-# Requires yq (mikefarah v4). Caller must guard with have_yq.
-merge_hermes_config() {
-  local config="$1"
-  [[ -f "$config" ]] || printf 'mcp_servers: {}\n' > "$config"
-  H_URL="$H_URL" H_KEY="$H_KEY" H_AGENT="$H_AGENT" yq -i '
-    .mcp_servers.metronix.url = strenv(H_URL) |
-    .mcp_servers.metronix.headers.Authorization = "Bearer " + strenv(H_KEY) |
-    .mcp_servers.metronix.headers."X-Agent-Id" = strenv(H_AGENT) |
-    .mcp_servers.metronix.timeout = 180 |
-    .mcp_servers.metronix.connect_timeout = 60
-  ' "$config"
+# yq_read FILE EXPR — evaluate a read-only yq expression and print the result.
+# Host yq if present, else mikefarah/yq in Docker with the file's dir mounted
+# READ-ONLY (:ro) — the file is never modified by yq.
+yq_read() {
+  local file="$1" expr="$2"
+  if command -v yq >/dev/null 2>&1; then
+    yq "$expr" "$file"
+  else
+    local dir base; dir="$(cd "$(dirname "$file")" && pwd)"; base="$(basename "$file")"
+    docker run --rm --user "$(id -u):$(id -g)" -v "$dir:/work:ro" -w /work mikefarah/yq "$expr" "$base"
+  fi
 }
 
-# Write the paste-ready Hermes setup doc (the universal fallback).
-write_hermes_prompt_file() {
-  local dest="$1"
-  hermes_prompt_doc > "$dest"
-  ok "Wrote a ready-to-use Hermes setup guide to $dest"
+# Classify a config: "has_metronix" | "has_mcp" (mcp_servers but no metronix) | "none".
+# Uses mikefarah-yq-compatible boolean reads (no jq-style if/then/else).
+hermes_mcp_state() {
+  local file="$1"
+  if [[ "$(yq_read "$file" '.mcp_servers.metronix != null' 2>/dev/null)" == "true" ]]; then
+    echo has_metronix
+  elif [[ "$(yq_read "$file" '.mcp_servers != null' 2>/dev/null)" == "true" ]]; then
+    echo has_mcp
+  else
+    echo none
+  fi
+}
+
+# Add the metronix MCP server to a Hermes config with a MINIMAL text edit (no
+# reformatting of the rest of the file). Three cases, decided by hermes_mcp_state:
+#   - has_metronix : already present -> return 1 (no change; caller skips)
+#   - has_mcp      : insert the metronix entry right after the 'mcp_servers:' line
+#   - none         : append a fresh 'mcp_servers:' section at the end
+# The caller must validate the result (yq_read) — an unusual layout (e.g. inline
+# 'mcp_servers: {}') can leave nothing inserted, which validation catches.
+# Caller must guard with yq_available (hermes_mcp_state needs yq).
+merge_hermes_config() {
+  local config="$1" state ln tmp
+  state="$(hermes_mcp_state "$config")"
+  case "$state" in
+    has_metronix)
+      return 1
+      ;;
+    has_mcp)
+      ln="$(grep -nE '^mcp_servers:[[:space:]]*$' "$config" | head -1 | cut -d: -f1)"
+      [[ -n "$ln" ]] || return 0   # no plain 'mcp_servers:' line to anchor to; validation will catch it
+      tmp="$(mktemp "$(dirname "$config")/.metronix-ins.XXXXXX")"
+      { head -n "$ln" "$config"; hermes_config_block; tail -n +"$((ln + 1))" "$config"; } > "$tmp"
+      mv "$tmp" "$config"
+      ;;
+    *)
+      [[ -s "$config" ]] && printf '\n' >> "$config"
+      printf 'mcp_servers:\n' >> "$config"
+      hermes_config_block >> "$config"
+      ;;
+  esac
 }
 
 # Back up a file to <file>.bak-<ts> before editing.
@@ -327,62 +375,91 @@ wire_hermes() {
   H_AGENT="$(resolve_agent_id "$config")"
 
   # Fallback in every can't/won't-auto-edit case: write the paste-ready guide.
-  local prompt_dest="./metronix-hermes-setup.md"
+  local prompt_dir="./metronix-hermes-setup"
 
   if [[ -z "$H_KEY" ]]; then
     warn "No METRONIX_MCP_API_KEY in .env — cannot wire an agent without it."
-    write_hermes_prompt_file "$prompt_dest"; return 0
+    write_hermes_prompt_dir "$prompt_dir"; return 0
   fi
   if [[ ! -f "$config" && ! -d "$hermes_dir" ]]; then
     info "Hermes not found ($hermes_dir). Writing a setup guide to apply later."
-    write_hermes_prompt_file "$prompt_dest"; return 0
+    write_hermes_prompt_dir "$prompt_dir"; return 0
   fi
-  if ! have_yq; then
-    info "Found Hermes at $hermes_dir, but 'yq' is not installed — skipping the"
-    info "automatic config edit so your YAML can't be corrupted."
-    warn "To auto-wire next time: install yq (e.g. 'brew install yq', see"
-    warn "  https://github.com/mikefarah/yq#install), then re-run: ./install.sh --wire-hermes"
-    write_hermes_prompt_file "$prompt_dest"
-    info "The guide above is already filled in for this deployment — you can paste it into Hermes now."
-    return 0
-  fi
-
-  # Render the proposed result into temp copies and show a diff BEFORE confirming
-  # (spec §6: backup -> diff -> confirm). No live file is touched until apply.
-  local tmp_cfg tmp_soul; tmp_cfg="$(mktemp)"; tmp_soul="$(mktemp)"
-  if [[ -f "$config" ]]; then cp "$config" "$tmp_cfg"; else printf 'mcp_servers: {}\n' > "$tmp_cfg"; fi
-  [[ -f "$soul" ]] && cp "$soul" "$tmp_soul"
-  merge_hermes_config "$tmp_cfg"
-  merge_soul_block "$tmp_soul"
 
   info "Found Hermes at $hermes_dir."
   info "Metronix MCP URL: $H_URL   (use host.docker.internal if Hermes runs in WSL2/Docker)"
-  info "Proposed changes:"
-  diff -u "$config" "$tmp_cfg" 2>/dev/null || true
-  diff -u "${soul:-/dev/null}" "$tmp_soul" 2>/dev/null || true
 
-  # Apply? -y --wire-hermes applies non-interactively; bare -y never edits ~/.hermes.
-  local do_apply=false
+  # How does the user want to connect Hermes?
+  local method
   if [[ "$ASSUME_YES" == true ]]; then
-    [[ "$WIRE_HERMES" == true ]] && do_apply=true
+    if [[ "$WIRE_HERMES" == true ]]; then method=edit; else method=guide; fi
   else
-    read -rp "Apply these changes to ~/.hermes? [Y/n]: " ans \
-      || { err "Aborted (no input)."; exit 1; }
-    [[ "$ans" =~ ^[Nn] ]] || do_apply=true
+    info "Connect Hermes to Metronix:"
+    info "  1) Edit ~/.hermes for me — add only the MCP block (minimal change)   [default]"
+    info "  2) Just write a ready-to-paste guide — I'll apply it myself"
+    read -rp "Choose 1 or 2 [default: 1]: " ans || { err "Aborted (no input)."; exit 1; }
+    case "${ans:-1}" in
+      1|"") method=edit ;;
+      2)    method=guide ;;
+      *)    err "Invalid choice: $ans"; exit 1 ;;
+    esac
   fi
 
-  if [[ "$do_apply" != true ]]; then
-    rm -f "$tmp_cfg" "$tmp_soul"
-    write_hermes_prompt_file "$prompt_dest"; return 0
+  if [[ "$method" == guide ]]; then
+    write_hermes_prompt_dir "$prompt_dir"
+    info "Paste each into Hermes in order (1 install, 2 memory policy, 3 migrate)."
+    return 0
   fi
+
+  # method == edit. Editing config.yaml safely needs yq (read-only) to detect the
+  # current shape and validate the result; if it isn't available, fall back.
+  if ! yq_available; then
+    warn "Editing config.yaml safely needs yq or Docker, and neither is available —"
+    warn "writing a ready-to-paste guide instead so your file isn't touched."
+    write_hermes_prompt_dir "$prompt_dir"; return 0
+  fi
+  if yq_needs_docker; then
+    info "Reading/validating config.yaml with yq via Docker (image mikefarah/yq, pulled once)."
+  fi
+
+  # Build the change on temp copies (inside ~/.hermes: Docker-visible + atomic mv).
+  # config.yaml is edited as plain text (minimal diff); yq only reads/validates it.
+  local tmp_cfg tmp_soul
+  tmp_cfg="$(mktemp "$hermes_dir/.metronix-cfg.XXXXXX")"
+  tmp_soul="$(mktemp "$hermes_dir/.metronix-soul.XXXXXX")"
+  [[ -f "$config" ]] && cp "$config" "$tmp_cfg"
+  [[ -f "$soul" ]] && cp "$soul" "$tmp_soul"
+
+  local cfg_changed=true
+  if merge_hermes_config "$tmp_cfg"; then
+    # We added the block — validate it parses and reads back our URL. If not, the
+    # config has an unusual layout we won't risk editing: fall back to the guide.
+    if [[ "$(yq_read "$tmp_cfg" '.mcp_servers.metronix.url' 2>/dev/null)" != "$H_URL" ]]; then
+      warn "Could not safely edit config.yaml (its structure is unusual) —"
+      warn "writing a ready-to-paste guide instead so your file isn't touched."
+      rm -f "$tmp_cfg" "$tmp_soul"
+      write_hermes_prompt_dir "$prompt_dir"; return 0
+    fi
+  else
+    cfg_changed=false
+    info "Metronix is already present in config.yaml — leaving it unchanged."
+  fi
+  merge_soul_block "$tmp_soul"
+
+  info "Proposed changes:"
+  [[ "$cfg_changed" == true ]] && { diff -u "$config" "$tmp_cfg" 2>/dev/null || true; }
+  [[ -f "$soul" ]] && { diff -u "$soul" "$tmp_soul" 2>/dev/null || true; }
 
   _backup_file "$config"
   _backup_file "$soul"
-  mv "$tmp_cfg" "$config"
+  if [[ "$cfg_changed" == true ]]; then mv "$tmp_cfg" "$config"; else rm -f "$tmp_cfg"; fi
   mv "$tmp_soul" "$soul"
-  ok "Wired Metronix into Hermes (agent_id=$H_AGENT, workspace=$H_WS)."
-  info "Restart Hermes: /quit, then 'hermes'. Then optionally run Prompt 2/3 from"
-  info "  docs/integrations/hermes.md to make Metronix your mandatory memory store."
+  ok "Wired Metronix into Hermes (agent_id=$H_AGENT, workspace=$H_WS) — prompt 1 applied."
+  # Always leave all three filled prompts on disk so 2 (mandatory memory) and 3
+  # (migrate) are ready to paste; 1 is included for reference / re-runs.
+  write_hermes_prompt_dir "$prompt_dir" || true
+  info "Restart Hermes (/quit, then 'hermes'). Then paste prompts 2 and 3 from"
+  info "  $prompt_dir/ to make Metronix the mandatory memory store and migrate existing memory."
 }
 
 # Return the value .env.example ships for a given key (empty if absent).
