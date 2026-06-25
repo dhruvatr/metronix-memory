@@ -21,6 +21,11 @@ AGENT_ID=""          # override the generated X-Agent-Id (Hermes wiring)
 METRONIX_URL=""      # override the MCP URL written into the agent config
 COMPOSE=()
 
+# State globals — set by diagnose_state(), read by resume_menu() / do_resume().
+DIAG_ENV="no"; DIAG_ENV_ISSUES=""; DIAG_ANY_EXIST="no"
+DIAG_ANY_UNHEALTHY="no"; DIAG_VOL_EXISTS="no"; DIAG_API_OK="no"
+RESUME_ACTION=""
+
 if [[ -t 1 ]]; then
   C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'; C_RST=$'\033[0m'
 else
@@ -30,6 +35,21 @@ info() { printf '%s\n' "$*"; }
 ok()   { printf '%s\xe2\x9c\x93%s %s\n' "$C_OK" "$C_RST" "$*"; }
 warn() { printf '%s!%s %s\n' "$C_WARN" "$C_RST" "$*"; }
 err()  { printf '%s\xe2\x9c\x97%s %s\n' "$C_ERR" "$C_RST" "$*" >&2; }
+
+print_banner() {
+  local cyan="" rst=""
+  if [[ -t 1 ]]; then cyan=$'\033[36m'; rst=$'\033[0m'; fi
+  printf '%s' "$cyan"
+  cat <<'BANNER'
+
+ __  __ ___ ___ ___ _  _ ___ ___ _  _ _  _ ___    ___ ___ ___ _  _ ___
+|  \/ | __/ __/ __| || | __| _ \ || | || |  \/ | __| | __| _ \ || | _ \
+| |\/| _|| (_| (__| __ | _||   / __ | __ | |\/ | _|| | _||   / __ |   /
+|_|  |_|___\___\___|_||_|___|_|_\_||_|_||_|_|  |_|___| |___|_|_\_||_|_|
+
+BANNER
+  printf '%s\n' "$rst"
+}
 
 # Prompt for a required value, re-asking until the user enters something non-blank.
 # Usage: prompt_required VAR_NAME "Prompt text: " [secret]
@@ -612,6 +632,12 @@ configure() {
   set_env METRONIX_MCP_API_KEY "$val_mcp"
   set_env FERNET_KEY "$val_fernet"
 
+  # Remove NEO4J_AUTH if it is empty — an empty string overrides docker-compose's
+  # default of "neo4j/<password>", causing Neo4j to reject the initial credentials.
+  if grep -qE "^NEO4J_AUTH=$" "$ENV_FILE" 2>/dev/null; then
+    grep -v '^NEO4J_AUTH=$' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
+  fi
+
   # Everything validated — promote the staged config atomically and disarm the
   # cleanup trap so the real .env survives.
   mv "$ENV_FILE" "$final_env"
@@ -620,12 +646,254 @@ configure() {
   ok "Wrote $ENV_FILE"
 }
 
+# The core services we expect to be running (container_name:healthy-or-not).
+CORE_CONTAINERS=(
+  metronix-full-postgres metronix-full-qdrant metronix-full-neo4j
+  metronix-full-redis metronix-full-ollama metronix-full-splade
+  metronix-full-api
+)
+
+# Check the health of one container. Echo: up:healthy | up:unhealthy | up:starting
+# | down | missing. Never errors.
+container_status() {
+  local c="$1" s
+  if ! docker inspect "$c" >/dev/null 2>&1; then echo missing; return; fi
+  s="$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null)"
+  if [[ "$s" != "running" ]]; then echo down; return; fi
+  # Has a healthcheck?
+  local hs; hs="$(docker inspect --format '{{.State.Health.Status}}' "$c" 2>/dev/null)"
+  case "$hs" in
+    healthy)   echo up:healthy ;;
+    unhealthy) echo up:unhealthy ;;
+    starting)  echo up:starting ;;
+    *)         echo up:unknown ;;  # no healthcheck or blank
+  esac
+}
+
+# Print the status of every core container in a compact table.
+diagnose_state() {
+  local env_exists=no env_issues="" any_exist=no any_unhealthy=no
+
+  # If COMPOSE was never detected (e.g. check_prereqs stubbed in tests), skip
+  # the volume/compose introspection but still report what we can.
+  local compose_ok=yes
+  [[ ${#COMPOSE[@]} -eq 0 ]] && compose_ok=no
+
+  info "━━━ Inspecting current installation state ━━━"
+  info ""
+
+  # -- .env existence + common breakage --
+  if [[ -f "$ENV_FILE" ]]; then
+    env_exists=yes
+    # Check for known breakage: empty NEO4J_AUTH=
+    if grep -qE '^NEO4J_AUTH=$' "$ENV_FILE" 2>/dev/null; then
+      env_issues+="NEO4J_AUTH is set to an empty string (breaks Neo4j startup); "
+    fi
+    # Check for missing required secrets (blank POSTGRES_PASSWORD etc.)
+    local k v
+    for k in POSTGRES_PASSWORD NEO4J_PASSWORD METRONIX_MCP_API_KEY FERNET_KEY; do
+      v="$(grep -E "^${k}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+      if [[ -z "$v" ]]; then env_issues+="${k} is blank; "; fi
+    done
+    if [[ -z "$env_issues" ]]; then
+      ok ".env exists  ($ENV_FILE)"
+    else
+      warn ".env exists but has issues: ${env_issues%; }"
+    fi
+  else
+    warn ".env NOT found  ($ENV_FILE)"
+  fi
+
+  # -- Container status table --
+  info ""
+  info "Service status:"
+  local c st
+  for c in "${CORE_CONTAINERS[@]}"; do
+    st="$(container_status "$c")"
+    case "$st" in
+      up:healthy)   printf '  %s%-22s%s %s healthy%s\n' "$C_OK" "$c" "$C_RST" "$C_OK" "$C_RST" ;;
+      up:unhealthy) printf '  %s%-22s%s %s unhealthy%s\n' "$C_OK" "$c" "$C_ERR" "$C_RST" "$C_ERR"; any_unhealthy=yes ;;
+      up:starting)  printf '  %s%-22s%s %s starting…%s\n' "$C_OK" "$c" "$C_RST" "$C_WARN" "$C_RST" ;;
+      up:unknown)   printf '  %s%-22s%s running (no healthcheck)%s\n' "$C_OK" "$c" "$C_RST" "$C_RST" ;;
+      down)         printf '  %s%-22s%s %sexited%s\n' "$C_WARN" "$c" "$C_RST" "$C_WARN" "$C_RST"; any_exist=yes ;;
+      missing)      printf '  %-22s not created\n' "$c" ;;
+    esac
+    [[ "$st" != missing ]] && any_exist=yes
+  done
+  info ""
+
+  # -- Volume check (Neo4j volume exists with potentially old password) --
+  local neo_vol="" vol_exists=no
+  if [[ "$compose_ok" == yes ]]; then
+    neo_vol="$("${COMPOSE[@]}" -f "$COMPOSE_FILE" config --volumes 2>/dev/null \
+      | grep -iE 'neo4j' | head -1 || true)"
+    if [[ -n "$neo_vol" ]] && docker volume inspect "$neo_vol" >/dev/null 2>&1; then
+      vol_exists=yes
+      info "Neo4j data volume '$neo_vol' exists (password set on first startup only)."
+    fi
+  fi
+
+  # -- API reachable? --
+  local api_ok=no
+  if command -v curl >/dev/null 2>&1 && curl -fsS "http://localhost:$API_PORT/health" >/dev/null 2>&1; then
+    api_ok=yes; ok "API is reachable at http://localhost:$API_PORT/health"
+  else
+    warn "API is NOT reachable at http://localhost:$API_PORT/health"
+  fi
+
+  # Set globals for the resume menu.
+  DIAG_ENV="$env_exists"
+  DIAG_ENV_ISSUES="$env_issues"
+  DIAG_ANY_EXIST="$any_exist"
+  DIAG_ANY_UNHEALTHY="$any_unhealthy"
+  DIAG_VOL_EXISTS="$vol_exists"
+  DIAG_API_OK="$api_ok"
+}
+
+# Offer the user a menu based on what diagnose_state() found. Sets RESUME_ACTION
+# to one of: start | rebuild | reconfigure | reset | fixenv | exit.
+resume_menu() {
+  # In -y / non-interactive mode, pick the most reasonable action automatically.
+  if [[ "$ASSUME_YES" == true ]]; then
+    if [[ "$DIAG_API_OK" == yes ]]; then RESUME_ACTION="exit"; return; fi
+    if [[ "$DIAG_ENV" == yes && -n "$DIAG_ENV_ISSUES" ]]; then RESUME_ACTION="fixenv"; return; fi
+    if [[ "$DIAG_ANY_EXIST" == yes ]]; then RESUME_ACTION="rebuild"; return; fi
+    if [[ "$DIAG_ENV" == yes ]]; then RESUME_ACTION="start"; return; fi
+    RESUME_ACTION="reconfigure"; return
+  fi
+
+  # Interactive: build a list of relevant options.
+  local opts=() labels=() n=0 choice
+
+  info "What would you like to do?"
+  info ""
+
+  if [[ "$DIAG_ENV" == yes && -n "$DIAG_ENV_ISSUES" ]]; then
+    n=$((n+1)); opts+=("fixenv");       labels+=("Fix .env issues and continue")
+  fi
+  if [[ "$DIAG_API_OK" == yes ]]; then
+    n=$((n+1)); opts+=("exit");         labels+=("Stack is healthy — nothing to do, exit")
+  fi
+  if [[ "$DIAG_ENV" == yes && "$DIAG_ANY_EXIST" == no ]]; then
+    n=$((n+1)); opts+=("start");        labels+=("Start the stack (config exists, containers not created)")
+  fi
+  if [[ "$DIAG_ANY_EXIST" == yes ]]; then
+    n=$((n+1)); opts+=("rebuild");      labels+=("Rebuild and restart the stack")
+  fi
+  if [[ "$DIAG_ANY_UNHEALTHY" == yes || "$DIAG_VOL_EXISTS" == yes ]]; then
+    n=$((n+1)); opts+=("reset");        labels+=("Reset all data volumes and reinstall (destructive)")
+  fi
+  n=$((n+1)); opts+=("reconfigure");    labels+=("Re-run full configuration from scratch")
+  n=$((n+1)); opts+=("exit");           labels+=("Exit now")
+
+  local i
+  for i in "${!opts[@]}"; do
+    printf '  %d) %s\n' "$((i+1))" "${labels[$i]}"
+  done
+  info ""
+  read -rp "Choose [1-$n]: " choice || { err "Aborted."; exit 1; }
+  case "$choice" in
+    ''|*[!0-9]*) err "Invalid choice: $choice"; exit 1 ;;
+  esac
+  if [[ "$choice" -lt 1 || "$choice" -gt "$n" ]]; then
+    err "Choice out of range: $choice"; exit 1
+  fi
+  RESUME_ACTION="${opts[$((choice-1))]}"
+}
+
+# Apply the action chosen in resume_menu. May reconfigure, fixenv, launch, etc.
+do_resume() {
+  case "$RESUME_ACTION" in
+    exit)
+      ok "Nothing to do — exiting."
+      ;;
+    fixenv)
+      info "Fixing .env issues…"
+      # Strip empty NEO4J_AUTH=
+      if grep -qE "^NEO4J_AUTH=$" "$ENV_FILE" 2>/dev/null; then
+        grep -v '^NEO4J_AUTH=$' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
+        ok "Removed empty NEO4J_AUTH= from $ENV_FILE"
+      fi
+      # Fill blank secrets using the same resolve_secret logic as configure().
+      local prev val
+      for k in POSTGRES_PASSWORD NEO4J_PASSWORD METRONIX_MCP_API_KEY FERNET_KEY; do
+        prev="$(get_env "$k")"
+        if [[ -z "$prev" ]]; then
+          if [[ "$k" == "FERNET_KEY" ]]; then val="$(gen_fernet)"; else val="$(gen_secret)"; fi
+          if [[ -z "$val" ]]; then
+            err "Could not generate a value for $k (need openssl or a readable /dev/urandom). Aborting before launch."
+            exit 1
+          fi
+          set_env "$k" "$val"
+          ok "Generated missing $k"
+        fi
+      done
+      # Now rebuild/restart so the fix takes effect.
+      launch; wait_health; print_links; wire_hermes
+      ;;
+    start)
+      launch; wait_health; print_links; wire_hermes
+      ;;
+    rebuild)
+      "${COMPOSE[@]}" -f "$COMPOSE_FILE" down 2>/dev/null || true
+      launch; wait_health; print_links; wire_hermes
+      ;;
+    reset)
+      warn "This will DELETE all data volumes (PostgreSQL, Qdrant, Neo4j, Redis, Ollama)."
+      if [[ "$ASSUME_YES" != true ]]; then
+        read -rp "Type 'yes' to confirm: " confirm || { err "Aborted."; exit 1; }
+        [[ "$confirm" == "yes" ]] || { err "Aborted."; exit 1; }
+      fi
+      "${COMPOSE[@]}" -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+      RECONFIGURE=true
+      configure
+      launch; wait_health; print_links; wire_hermes
+      ;;
+    reconfigure)
+      RECONFIGURE=true
+      configure
+      launch; wait_health; print_links; wire_hermes
+      ;;
+  esac
+}
+
 launch() {
+  # Warn if the Neo4j volume exists with a potentially different password.
+  # Neo4j only sets the initial password on first startup; on an existing volume
+  # it keeps the old one, so the healthcheck (which reads NEO4J_PASSWORD from
+  # .env) will fail if the password has changed since the volume was created.
+  local neo_vol=""
+  neo_vol="$("${COMPOSE[@]}" -f "$COMPOSE_FILE" config --volumes 2>/dev/null \
+    | grep -E 'neo4j' | head -1 || true)"
+  if [[ -n "$neo_vol" ]] && docker volume inspect "$neo_vol" >/dev/null 2>&1 \
+     && [[ "$RECONFIGURE" == true ]]; then
+    warn "Neo4j data volume '$neo_vol' already exists."
+    warn "  Neo4j only sets the initial password on FIRST startup. If NEO4J_PASSWORD"
+    warn "  changed since this volume was created, the healthcheck will fail."
+    warn "  To reset: ${COMPOSE[*]} -f $COMPOSE_FILE down -v && ${COMPOSE[*]} -f $COMPOSE_FILE up -d"
+  fi
+
   local args=(-f "$COMPOSE_FILE")
   [[ "$ENABLE_WEBUI" == true ]] && args+=(--profile openwebui)
   args+=(up -d --build)
   info "Building and starting the stack (first run can take 10-15 min)..."
-  "${COMPOSE[@]}" "${args[@]}"
+  if ! "${COMPOSE[@]}" "${args[@]}"; then
+    warn ""
+    warn "Docker Compose failed while starting the stack."
+    warn "If Neo4j is unhealthy, the most common cause is an existing Neo4j data"
+    warn "volume whose first-start password differs from NEO4J_PASSWORD in .env."
+    if [[ -n "$neo_vol" ]]; then
+      warn "Detected Neo4j volume: $neo_vol"
+    fi
+    warn ""
+    warn "To keep existing data, restore the original NEO4J_PASSWORD in .env and rerun:"
+    warn "  ./install.sh -y"
+    warn ""
+    warn "To discard local install data and start clean:"
+    warn "  ${COMPOSE[*]} -f $COMPOSE_FILE down -v"
+    warn "  ./install.sh -y --reconfigure"
+    return 1
+  fi
 }
 
 wait_health() {
@@ -641,6 +909,16 @@ wait_health() {
   done
   warn "API did not report healthy within ~5 min. It may still be building."
   warn "  Check logs: ${COMPOSE[*]} -f $COMPOSE_FILE logs -f metronix-core"
+  # If Neo4j is unhealthy, give a targeted hint (common: password/volume mismatch).
+  if docker inspect --format='{{.State.Health.Status}}' metronix-full-neo4j 2>/dev/null \
+     | grep -q unhealthy; then
+    warn ""
+    warn "Neo4j container is UNHEALTHY. Common causes:"
+    warn "  1. NEO4J_AUTH set to empty in .env (remove the line to use the default)"
+    warn "  2. NEO4J_PASSWORD changed on an existing volume (reset: docker compose -f $COMPOSE_FILE down -v)"
+    warn "  3. NEO4J_PASSWORD is a hash, not plain text (use a plain text password)"
+    warn "  Neo4j logs: docker logs metronix-full-neo4j"
+  fi
   return 0
 }
 
@@ -658,6 +936,7 @@ print_links() {
 }
 
 main() {
+  print_banner
   parse_args "$@"
   cd "$REPO_ROOT"
   # Standalone agent-wiring: skip the stack build entirely.
@@ -667,6 +946,26 @@ main() {
     exit 0
   fi
   check_prereqs
+
+  # Detect existing installation state and offer a resume menu instead of
+  # blindly reconfiguring/launching on every run. Only run the diagnosis when
+  # there are signs of a previous attempt: .env exists, or containers exist.
+  local has_env=no
+  [[ -f "$ENV_FILE" ]] && has_env=yes
+
+  if [[ "$has_env" == yes ]]; then
+    diagnose_state
+    # If everything is already healthy and API is up, the user may just want status.
+    if [[ "$DIAG_API_OK" == yes && "$RECONFIGURE" != true ]]; then
+      resume_menu; do_resume; exit 0
+    fi
+    # If there are containers or volumes but config has issues, offer the menu.
+    if [[ "$DIAG_ANY_EXIST" == yes || -n "$DIAG_ENV_ISSUES" ]] && [[ "$RECONFIGURE" != true ]]; then
+      resume_menu; do_resume; exit 0
+    fi
+  fi
+
+  # Fresh install path (no .env, no containers) — or --reconfigure forced.
   configure
   launch
   wait_health
