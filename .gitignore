@@ -55,7 +55,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .metronix/
-.metatron/
 
 # Local scratch files
 .scratch/

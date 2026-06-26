@@ -6,8 +6,9 @@ Docker containers, networks, volumes (your data), built images, the generated `.
 any AI-agent wiring (e.g. Hermes) that the installer added outside this repository.
 
 Work from the repository root — the directory containing `docker-compose.full.yml`. The
-Compose **project name** defaults to that directory's name (here: `metatroncore`), which is
-why resource names below are prefixed accordingly.
+Compose **project name** defaults to that directory's name — `metronix-memory` for a standard
+`git clone`. The resource names below assume that prefix; if your clone directory differs (or
+you set `COMPOSE_PROJECT_NAME`), substitute it accordingly.
 
 > **Pick your depth.** Stopping the stack (step 1) is reversible. Removing volumes (step 2)
 > **deletes all stored memory, embeddings, and graph data permanently** — there is no undo.
@@ -20,9 +21,9 @@ why resource names below are prefixed accordingly.
 | Where | Artifact |
 |---|---|
 | Docker — containers | `metronix-full-{api,postgres,qdrant,neo4j,redis,ollama,splade}` (+ `-openwebui`, `-embedding-proxy` if those profiles were used) |
-| Docker — network | `metatroncore_metronix_full` |
-| Docker — volumes (data) | `metatroncore_full_{pg,qdrant,neo4j,redis,ollama,file}_data` (+ `_openwebui_data`) |
-| Docker — built images | `metatroncore-metronix-core`, `metatroncore-splade` (+ `metatroncore-embedding-proxy`) |
+| Docker — network | `metronix-memory_metronix_full` |
+| Docker — volumes (data) | `metronix-memory_full_{pg,qdrant,neo4j,redis,ollama,file}_data` (+ `_openwebui_data`) |
+| Docker — built images | `metronix-memory-metronix-core`, `metronix-memory-splade` (+ `metronix-memory-embedding-proxy`) |
 | Docker — pulled images | `postgres:16-alpine`, `qdrant/qdrant:v1.18.0`, `neo4j:5-community`, `redis:7-alpine`, `ollama/ollama:latest` (+ `ghcr.io/open-webui/open-webui:main`) |
 | Repo root | `.env` (generated secrets), `metronix-hermes-setup.md` (paste-ready guide, if written) |
 | `~/.hermes/` | `config.yaml` (`mcp_servers.metronix` block), `SOUL.md` (`--- metronix-config ---` block), plus `*.bak-<timestamp>` backups |
@@ -54,16 +55,16 @@ Verify nothing is left for the project:
 
 ```bash
 docker ps -a                       # no metronix-full-* containers
-docker volume ls | grep metatroncore   # no metatroncore_full_* volumes
+docker volume ls | grep metronix-memory   # no metronix-memory_full_* volumes
 ```
 
 If a volume lingers (e.g. it was created under a different project name), remove it by name:
 
 ```bash
-docker volume rm metatroncore_full_pg_data metatroncore_full_neo4j_data \
-                 metatroncore_full_qdrant_data metatroncore_full_redis_data \
-                 metatroncore_full_ollama_data metatroncore_full_file_data \
-                 metatroncore_full_openwebui_data
+docker volume rm metronix-memory_full_pg_data metronix-memory_full_neo4j_data \
+                 metronix-memory_full_qdrant_data metronix-memory_full_redis_data \
+                 metronix-memory_full_ollama_data metronix-memory_full_file_data \
+                 metronix-memory_full_openwebui_data
 ```
 
 ## 3. Remove images (reclaim disk)
@@ -71,8 +72,8 @@ docker volume rm metatroncore_full_pg_data metatroncore_full_neo4j_data \
 **Locally built images** — delete these to force a clean rebuild on the next install:
 
 ```bash
-docker rmi metatroncore-metronix-core:latest metatroncore-splade:latest
-docker rmi metatroncore-embedding-proxy:latest 2>/dev/null || true   # only if benchmarker profile was used
+docker rmi metronix-memory-metronix-core:latest metronix-memory-splade:latest
+docker rmi metronix-memory-embedding-proxy:latest 2>/dev/null || true   # only if benchmarker profile was used
 ```
 
 **Pulled base images** — optional. Keeping them makes the next install faster (no re-download);
@@ -160,7 +161,7 @@ each line before running:
 ```bash
 # From the repo root
 docker compose -f docker-compose.full.yml down -v
-docker rmi metatroncore-metronix-core:latest metatroncore-splade:latest 2>/dev/null || true
+docker rmi metronix-memory-metronix-core:latest metronix-memory-splade:latest 2>/dev/null || true
 rm -f .env metronix-hermes-setup.md
 # Hermes: restore backups if present (see step 5 for the by-hand alternative)
 [ -e ~/.hermes/config.yaml.bak-* ] && cp $(ls -t ~/.hermes/config.yaml.bak-* | head -1) ~/.hermes/config.yaml
