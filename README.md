@@ -77,32 +77,44 @@ git clone -b develop https://github.com/mtrnix/metronix-memory.git
 cd metronix-memory
 ```
 
-**Quick install** — one script replaces steps 2–4: checks Docker, writes `.env`, builds and starts the stack, and health-checks it.
-Flags: `--provider`, `--api-key`, `--openwebui`, `--reconfigure`, `--yes` (`./install.sh --help`).
+**Quick install** — one script replaces steps 2–4: checks Docker, writes `.env`, builds and
+starts the stack, health-checks the API, and optionally wires Hermes.
 
 ```bash
-./install.sh
+./install.sh                              # agent memory (default)
+./install.sh --mode answers --chat-url https://api.deepseek.com/v1 \
+  --chat-model deepseek-chat --openwebui -y   # chat UI + answer generation
 ```
+
+Flags: `--mode memory|answers`, `--chat-url`, `--chat-model`, `--chat-api-key`, `--openwebui`,
+`--wire-hermes`, `--reconfigure`, `-y` (`./install.sh --help`).
 
 *Prefer manual setup? Continue with step 2 below.*
 
-### 2. Configure: pick one LLM provider + set an MCP key in .env
+### 2. Configure: set the MCP key in `.env`
+
 ```bash
 cp .env.example .env
 ```
-In .env, set the MCP auth key. The default LLM is the bundled Ollama (works out of
-the box). To use an external OpenAI-compatible endpoint (DeepSeek, OpenRouter, vLLM, …)
-instead, set the provider block too:
-```bash
-METRONIX_MCP_API_KEY=...                        # generate one using: openssl rand -hex 32
 
-# Optional — external LLM instead of bundled Ollama:
+For **agent memory over MCP** (Hermes, Cursor, …) you only need the MCP auth key. Embeddings
+for ingest come from the bundled Ollama container (`nomic-embed-text`, pulled on first
+`docker compose up`) — no chat LLM in `.env`.
+
+```bash
+METRONIX_MCP_API_KEY=...   # generate: openssl rand -hex 32
+```
+
+Optional — only if you run **Open WebUI** or want Metronix to generate answers itself:
+
+```bash
 LLM_PROVIDER=custom
 LLM_PROVIDER_URL=https://your-llm-endpoint/v1   # e.g. https://api.deepseek.com/v1
 LLM_PROVIDER_API_KEY=your-key
 LLM_PROVIDER_MODEL=deepseek-chat                # model the endpoint serves
 ```
-### 3. Launch (first run builds images + pulls models, ~10-15 min)
+
+### 3. Launch (first run builds images + pulls embedding model, ~10–15 min)
 ```bash
 docker compose -f docker-compose.full.yml up -d --build
 ```

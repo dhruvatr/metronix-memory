@@ -8,11 +8,27 @@ Metronix runs as a Docker Compose stack. The canonical Compose file is
 Once the backend is running, connect an AI agent to it with
 [`connecting_to_agent.md`](connecting_to_agent.md).
 
-**Quick install** — after you ahve cloned the repo, you can use a sh script to: check Docker, write `.env`, start the stack, and health-check it.
-Flags: `--provider`, `--api-key`, `--openwebui`, `--reconfigure`, `--yes` (`./install.sh --help`).
+**Quick install** — after you have cloned the repo, `./install.sh` checks Docker, writes
+`.env`, builds and starts the stack, health-checks the API, and optionally wires Hermes.
+
+Common flags (see `./install.sh --help` for the full list):
+
+| Flag | Purpose |
+|---|---|
+| `-y`, `--yes` | Non-interactive; use defaults and flags, never prompt |
+| `--mode memory\|answers` | **memory** (default): agent memory over MCP, no chat model. **answers**: Metronix generates replies |
+| `--chat-url`, `--chat-model`, `--chat-api-key` | Chat LLM endpoint when `--mode answers` |
+| `--openwebui` | Enable Open WebUI (`:3080`); only applies in **answers** mode |
+| `--wire-hermes` | Connect Hermes after install (or `./install.sh --wire-hermes -y` alone) |
+| `--agent-id`, `--metronix-url` | Override agent id / MCP URL written into Hermes config |
+| `--reconfigure` | Re-run `.env` setup even if `.env` already exists |
+| `--fresh-docker-reset` | Delete Metronix containers, images, volumes, and build cache before reinstall |
 
 ```bash
-./install.sh
+./install.sh                              # memory store (default)
+./install.sh --mode answers \
+  --chat-url https://api.deepseek.com/v1 --chat-model deepseek-chat \
+  --chat-api-key sk-... --openwebui -y    # answers + Open WebUI, non-interactive
 ```
 
 *This page is the by-hand reference — use it for full control or troubleshooting.*
@@ -23,7 +39,7 @@ The install is five steps:
 
 1. [Check prerequisites](#1-prerequisites)
 2. [Clone the repository](#2-clone-the-repository)
-3. [Configure `.env`](#3-configure-env) — pick an LLM provider and set the MCP key
+3. [Configure `.env`](#3-configure-env) — set the MCP key (+ optional chat LLM if using Open WebUI)
 4. [Launch the stack](#4-launch)
 5. [Verify](#5-verify)
 
@@ -78,25 +94,24 @@ Create your environment file from the template:
 cp .env.example .env
 ```
 
-You must set two things: an **LLM provider** and the **MCP API key**.
+For the usual path — **agent memory over MCP** (Hermes, Cursor, Claude Desktop, …) — you
+only need to set **`METRONIX_MCP_API_KEY`**. Embeddings for ingest run on the bundled Ollama
+container automatically (see [§3d](#3d-bundled-ollama-embeddings)); you do **not** need a chat
+LLM in `.env`.
 
-### 3a. LLM provider
+| Scenario | What to set in `.env` |
+|---|---|
+| **Agent memory (MCP)** — default | `METRONIX_MCP_API_KEY` only |
+| **Open WebUI** ([§4](#4-launch)) | MCP key **+** chat LLM ([§3b](#3b-optional-chat-llm-open-webui-or-answer-generation)) |
+| **Metronix generates answers** | Same as Open WebUI — custom chat endpoint |
 
-When using metronix-memory you need an LLM for query routing and query enrichment.
+> **`./install.sh`** copies `.env.example` and auto-generates `POSTGRES_PASSWORD`,
+> `NEO4J_PASSWORD`, `METRONIX_MCP_API_KEY`, and `FERNET_KEY`. On a manual install you can
+> leave DB passwords at the `.env.example` defaults (`metronix_dev`) unless you change them.
+> Remove any empty `NEO4J_AUTH=` line from `.env` — it breaks Neo4j startup (see
+> [Troubleshooting](#neo4j-container-is-unhealthy)).
 
-Pick a provider in `.env`:
-
-- **Ollama (default)** — bundled, no API key: `LLM_PROVIDER=ollama`
-- **Custom** — any OpenAI-compatible endpoint (DeepSeek, OpenRouter, vLLM, …):
-
-```ini
-LLM_PROVIDER=custom
-LLM_PROVIDER_URL=https://your-llm-endpoint/v1
-LLM_PROVIDER_API_KEY=your-key
-LLM_PROVIDER_MODEL=deepseek-chat   # model the endpoint serves (required)
-```
-
-### 3b. MCP API key
+### 3a. MCP API key (required)
 
 The MCP API key guards the MCP server endpoint (`/mcp`), which is how AI agents
 (Hermes, Cursor, Claude Desktop, and other MCP clients) connect to Metronix. The key is a
@@ -120,11 +135,32 @@ Agents send this token as `Authorization: Bearer <token>` when connecting to
 path **`/mcp`**.
 
 > The default workspace id is pre-set to `MTRNIX` (`DEFAULT_WORKSPACE_ID` in `.env`). You
-> will need this value, and your MCP key, when you connect an agent.
+> will need this value, your MCP key, and an agent UUID (configured in the agent runtime, not
+> in this `.env`) when you connect an agent — see [`connecting_to_agent.md`](connecting_to_agent.md).
+
+### 3b. Optional: chat LLM (Open WebUI or answer generation)
+
+Configure this **only** if you will run **Open WebUI** ([§4](#4-launch)) or want Metronix
+itself to generate chat answers. For agent memory over MCP, **skip this section** — your
+external agent handles replies.
+
+Set any OpenAI-compatible chat endpoint in `.env`:
+
+```ini
+LLM_PROVIDER=custom
+LLM_PROVIDER_URL=https://your-llm-endpoint/v1
+LLM_PROVIDER_API_KEY=your-key
+LLM_PROVIDER_MODEL=deepseek-chat   # model the endpoint serves (required)
+```
+
+With `./install.sh`, use `--mode answers` plus `--chat-url`, `--chat-model`, and optionally
+`--chat-api-key` instead of editing by hand.
 
 ### 3c. Neo4j authentication
 
-Neo4j requires a username/password. The default credentials are:
+Neo4j requires a username/password. On a **manual** install with unchanged `.env.example`,
+the defaults are:
+
 - Username: `neo4j`
 - Password: `metronix_dev`
 
@@ -133,19 +169,37 @@ not accept pre-hashed passwords. The `install.sh` script generates a random pass
 automatically; if you edit `.env` manually, ensure `NEO4J_PASSWORD` is set to a plain-text
 value and leave `NEO4J_AUTH` unset (or do not edit it).
 
+### 3d. Bundled Ollama (embeddings)
+
+Docker Compose starts an **Ollama** container (`metronix-full-ollama`, host port **11435**)
+with the rest of the stack — no extra `.env` setup. On first launch its entrypoint runs
+**`ollama pull nomic-embed-text`**. That embedding model is required for **data ingest**
+(indexing documents, memory records, and connector content into Qdrant).
+
+This is **not** a chat LLM and is separate from [§3b](#3b-optional-chat-llm-open-webui-or-answer-generation).
+By default no chat model is downloaded (`OLLAMA_CHAT_MODEL` empty). The first
+`docker compose up` may take extra time while the embedding model downloads.
+
+Inside the Docker network the service is `ollama:11434`. Metronix uses it for vector
+embeddings only; `./install.sh` in memory mode prints the same: embeddings on bundled
+Ollama (`nomic-embed-text`), set up automatically.
+
 ## 4. Launch
 
-Build and start the stack. The first run builds images from source and pulls Ollama models,
-which takes about **10–15 minutes**. Subsequent runs are fast.
+Build and start the stack. The first run builds images from source and pulls the Ollama
+**embedding** model (`nomic-embed-text`), which takes about **10–15 minutes**. Subsequent
+runs are fast.
 
-**Backend only** — PostgreSQL, Qdrant, Neo4j, Redis, Ollama, SPLADE, embedding proxy, and
-the Metronix API:
+**Backend only** — PostgreSQL, Qdrant, Neo4j, Redis, Ollama (embeddings), SPLADE, embedding
+proxy, and the Metronix API:
 
 ```bash
 docker compose -f docker-compose.full.yml up -d --build
 ```
 
-**Backend + Open WebUI** — adds a browser chat interface at `http://localhost:3080`:
+**Backend + Open WebUI** — adds a browser chat interface at `http://localhost:3080`.
+Configure a chat LLM first ([§3b](#3b-optional-chat-llm-open-webui-or-answer-generation));
+Open WebUI calls Metronix's OpenAI-compatible API for answers and is useless without one.
 
 ```bash
 docker compose -f docker-compose.full.yml --profile openwebui up -d --build
@@ -153,6 +207,9 @@ docker compose -f docker-compose.full.yml --profile openwebui up -d --build
 
 Open WebUI requires no login and connects to Metronix automatically via the pre-configured
 `OPENAI_API_BASE_URL`.
+
+> **`./install.sh`** enables Open WebUI only in **`--mode answers`**. In memory mode,
+> `--openwebui` is ignored with a warning.
 
 ## 5. Verify
 
@@ -179,6 +236,30 @@ A healthy backend exposes:
 **Optional:** run the LongMemEval-S agent-memory benchmark — see
 [`docs/benchmarks/longmemeval.md`](docs/benchmarks/longmemeval.md). Configure the benchmark in
 `benchmarks/longmemeval/.env.benchmark` (not the repo-root `.env`).
+
+## Using `./install.sh` beyond the first run
+
+If `.env` or containers already exist, re-running `./install.sh` **inspects** the deployment
+and offers a menu instead of blindly overwriting config:
+
+| Action | When |
+|---|---|
+| Fix `.env` and restart | Blank secrets or empty `NEO4J_AUTH=` |
+| Rebuild stack | Containers exist but API is down |
+| Reset volumes (`down -v`) | Unhealthy Neo4j / password mismatch on old volume |
+| Fresh Docker reset | `--fresh-docker-reset` — removes images, volumes, build cache |
+| Reconfigure | `--reconfigure` — rewrite `.env` from scratch |
+
+After a successful install the script may **wire Hermes**:
+
+- Interactive prompt: edit `~/.hermes/config.yaml` + `SOUL.md`, or write a paste-ready guide.
+- `./install.sh --wire-hermes -y` — apply MCP wiring without prompting (requires existing `.env`).
+- Either way, filled prompts land in **`metronix-hermes-setup/`** (`1-install-mcp.md`,
+  `2-memory-source.md`, `3-migrate.md`; gitignored). Paste prompts 2 and 3 after restarting
+  Hermes — see [`docs/integrations/hermes.md`](docs/integrations/hermes.md).
+
+Manual install: use [`connecting_to_agent.md`](connecting_to_agent.md) instead of the script
+for agent setup.
 
 ## Ports
 
