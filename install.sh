@@ -809,7 +809,8 @@ resume_menu() {
 }
 
 fresh_docker_reset() {
-  warn "This will DELETE Metronix Docker containers, images, volumes, orphan containers, and build cache."
+  warn "This will DELETE Metronix Docker containers, images, volumes, and orphan containers."
+  warn "It will ALSO prune the ENTIRE Docker build cache on this machine — not just Metronix."
   warn "Data in PostgreSQL, Qdrant, Neo4j, Redis, Ollama, and uploaded files will be removed."
   if [[ "$ASSUME_YES" != true ]]; then
     read -rp "Type 'delete docker data' to confirm: " confirm || { err "Aborted."; exit 1; }
@@ -819,7 +820,7 @@ fresh_docker_reset() {
   info "Removing Metronix containers, images, volumes, and orphans..."
   "${COMPOSE[@]}" -f "$COMPOSE_FILE" down -v --rmi all --remove-orphans 2>/dev/null || true
 
-  info "Pruning Docker build cache..."
+  info "Pruning Docker build cache (machine-wide, all projects)..."
   docker builder prune -af >/dev/null 2>&1 || warn "Could not prune Docker build cache; continuing."
   ok "Docker resources for Metronix were reset."
 }
