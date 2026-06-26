@@ -13,8 +13,8 @@ from starlette.testclient import TestClient
 if TYPE_CHECKING:
     from starlette.requests import Request
 
-from metatron.activity.context import current_agent_id
-from metatron.api.middleware.agent_id import AgentIdContextMiddleware
+from metronix.activity.context import current_agent_id
+from metronix.api.middleware.agent_id import AgentIdContextMiddleware
 
 
 def _app() -> Starlette:

@@ -12,13 +12,18 @@ build/
 venv/
 env/
 
-# Project planning (GSD workflow artifacts)
+# Project planning (local workflow artifacts)
 .planning/
 docs/superpowers/
+docs/specs/
+
+# Claude/AI artifacts
+.claude/
 
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 *~
@@ -27,6 +32,11 @@ docs/superpowers/
 .env
 .env.local
 .env.*.local
+.env*.backup
+.env.old
+
+# Installer-generated, per-deployment artifacts (contain the MCP API key)
+metronix-hermes-setup/
 
 # Data
 /data/
@@ -44,7 +54,20 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
-.metatron/
+.metronix/
 
-# Claude/AI artifacts
-.claude/skills/
+# Local scratch files
+.scratch/
+.gh_alerts.json
+.gh_alerts_summary.json
+.gh_probe.graphql
+
+# Runtime state (opencode tooling)
+.omx/
+
+# LongMemEval benchmark
+benchmarks/longmemeval/.venv/
+benchmarks/longmemeval/results/
+benchmarks/longmemeval/data/
+benchmarks/longmemeval/.env.benchmark
+benchmarks/longmemeval/.env

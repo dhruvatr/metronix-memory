@@ -1,6 +1,6 @@
 # Skills
 
-> **ℹ️ INACTIVE (2026-04):** The `src/metatron/skills/` engine described below is
+> **ℹ️ INACTIVE (2026-04):** The `src/metronix/skills/` engine described below is
 > currently not implemented — `SkillEngine.load_skills()`, `select_skills()`, and
 > `seed_builtins()` all raise `NotImplementedError`, and no code calls them.
 >
@@ -34,7 +34,7 @@ Skills do not contain code. They are purely declarative: they describe how to us
 
 ## Builtin Skills
 
-Metatron ships with four builtin skills in `src/skills/builtin/`:
+Metronix ships with four builtin skills in `src/skills/builtin/`:
 
 ### 1. knowledge_search
 

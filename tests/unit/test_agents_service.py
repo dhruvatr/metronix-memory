@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from metatron.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
-from metatron.agents.persistence import _AgentNameConflictError as PersistenceNameConflict
-from metatron.agents.service import (
+from metronix.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
+from metronix.agents.persistence import _AgentNameConflictError as PersistenceNameConflict
+from metronix.agents.service import (
     AgentInvalidStateTransitionError,
     AgentNameConflictError,
     AgentNotFoundError,
@@ -420,6 +420,7 @@ class TestList:
             status=AgentStatus.ACTIVE,
             name_prefix="Trad",
             include_archived=False,
+            include_system=False,
             limit=10,
             offset=5,
         )
@@ -438,7 +439,7 @@ class TestList:
     async def test_include_archived_passes_through(
         self, service: AgentRegistryService, repo: AsyncMock
     ) -> None:
-        """MTRNIX-324: include_archived=True is forwarded to the repo."""
+        """PROJ-324: include_archived=True is forwarded to the repo."""
         repo.list_records.return_value = []
         await service.list_agents(include_archived=True)
         _, kwargs = repo.list_records.call_args

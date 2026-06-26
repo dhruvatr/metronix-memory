@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""List all workspaces in this Metatron instance, bypassing the auth-gated API.
+"""List all workspaces in this Metronix instance, bypassing the auth-gated API.
 
 Goes straight through WorkspaceManager (loads from PG/Neo4j via the in-memory
-manager). Run from the metatroncore repo root.
+manager). Run from the metronixcore repo root.
 
 Usage:
     python seed/list_workspaces.py
@@ -15,7 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
-from metatron.workspaces.manager import get_workspace_manager  # noqa: E402
+from metronix.workspaces.manager import get_workspace_manager  # noqa: E402
 
 
 def main() -> int:

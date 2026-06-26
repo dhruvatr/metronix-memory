@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Backfill the ``status`` payload field on memory Qdrant points (MTRNIX-314).
+"""Backfill the ``status`` payload field on memory Qdrant points (PROJ-314).
 
 Pre-ticket points in ``mem_agent_memory_{workspace_id}`` have no ``status``
-field in their payload. MTRNIX-314's exclude-filter semantics treat missing
+field in their payload. PROJ-314's exclude-filter semantics treat missing
 ``status`` as ``active`` (the safe default), so running this backfill is
 optional. It is included so operators who want fully-tagged Qdrant points
 can run it once per workspace.
@@ -26,9 +26,9 @@ sys.path.insert(0, "src")
 
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from metatron.core.config import get_settings
-from metatron.storage.memory_postgres import MemoryPostgresStore
-from metatron.storage.memory_qdrant import MemoryQdrantStore
+from metronix.core.config import get_settings
+from metronix.storage.memory_postgres import MemoryPostgresStore
+from metronix.storage.memory_qdrant import MemoryQdrantStore
 
 
 async def _run(workspace_id: str, batch_size: int, dry_run: bool) -> None:
@@ -72,7 +72,7 @@ async def _run(workspace_id: str, batch_size: int, dry_run: bool) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Backfill status payload on memory Qdrant points (MTRNIX-314)."
+        description="Backfill status payload on memory Qdrant points (PROJ-314)."
     )
     parser.add_argument("--workspace-id", required=True, help="Target workspace id.")
     parser.add_argument(

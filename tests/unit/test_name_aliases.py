@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from metatron.retrieval.aliases import NAME_ALIASES, resolve_person_name
+from metronix.retrieval.aliases import NAME_ALIASES, resolve_person_name
 
 
 class TestResolvePersonName:
@@ -56,10 +56,10 @@ class TestRussianCaseNormalization:
 
 
 class TestAliasIntegration:
-    @patch("metatron.retrieval.channels.get_async_hybrid_store")
-    @patch("metatron.retrieval.search.expand_query", side_effect=lambda q: q)
-    @patch("metatron.retrieval.search.get_graph_entities", return_value=[])
-    @patch("metatron.retrieval.search.chat_completion", return_value="Answer about Evgeny")
+    @patch("metronix.retrieval.channels.get_async_hybrid_store")
+    @patch("metronix.retrieval.search.expand_query", side_effect=lambda q: q)
+    @patch("metronix.retrieval.search.get_graph_entities", return_value=[])
+    @patch("metronix.retrieval.search.chat_completion", return_value="Answer about Evgeny")
     async def test_russian_nickname_triggers_assignee_search(
         self, mock_llm, mock_gents, mock_expand, mock_channels_store
     ) -> None:
@@ -70,7 +70,7 @@ class TestAliasIntegration:
             {
                 "memory": "Task X",
                 "data": "Task X",
-                "title": "MTRNIX-10",
+                "title": "PROJ-10",
                 "type": "jira",
                 "score": 1.0,
                 "payload": {},
@@ -80,7 +80,7 @@ class TestAliasIntegration:
         store_instance.scroll_by_title.return_value = []
         mock_channels_store.return_value = store_instance
 
-        from metatron.retrieval.search import hybrid_search_and_answer
+        from metronix.retrieval.search import hybrid_search_and_answer
 
         await hybrid_search_and_answer(query="Что делает Женя?", intent_query="Что делает Женя?")
 

@@ -1,4 +1,4 @@
-"""Unit tests for MemoryService review methods (MTRNIX-314)."""
+"""Unit tests for MemoryService review methods (PROJ-314)."""
 
 from __future__ import annotations
 
@@ -7,16 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from metatron.core.events import FRESHNESS_REVIEW_RESOLVED
-from metatron.core.exceptions import MemoryNotFoundError
-from metatron.core.models import (
+from metronix.core.events import FRESHNESS_REVIEW_RESOLVED
+from metronix.core.exceptions import MemoryNotFoundError
+from metronix.core.models import (
     LifecycleStatus,
     MachineEvent,
     MemoryRecord,
     MemoryScope,
     ReviewEntry,
 )
-from metatron.memory.service import MemoryService
+from metronix.memory.service import MemoryService
 
 
 def _record(
@@ -66,7 +66,7 @@ def _make_service(
     pg_store: MagicMock | None = None,
 ) -> tuple[MemoryService, dict]:
     pg = pg_store or MagicMock()
-    # MTRNIX-319: resolve_review opens a shared transaction via
+    # PROJ-319: resolve_review opens a shared transaction via
     # ``pg_store.begin()`` and threads the connection through three store
     # methods. Mock the async context manager so tests can proceed.
     pg.begin = MagicMock(return_value=_FakeTxn())
@@ -176,6 +176,9 @@ class TestResolveReviewKeep:
         assert kw["status"] == LifecycleStatus.ACTIVE
         assert kw["verification_state"] == "keep_resolved"
         assert kw.get("superseded_by") is None
+        # PROJ-395: a human keep refreshes the freshness clock so the record
+        # does not re-STALE on the next scheduled scan.
+        assert kw["bump_updated_at"] is True
 
         fs.delete_review_entry.assert_awaited_once()
         assert fs.delete_review_entry.await_args.args == ("ws1", "r1")
@@ -346,7 +349,7 @@ class TestResolveReviewErrors:
 
 
 class TestResolveReviewAtomicity:
-    """MTRNIX-319: resolve_review must group the three PG writes into one
+    """PROJ-319: resolve_review must group the three PG writes into one
     transaction via ``pg_store.begin()`` so a failure on save_machine_event
     does not leave a partially-committed state behind."""
 
@@ -411,6 +414,66 @@ class TestResolveReviewAtomicity:
         assert _RollbackTxn.exited_with_exception
         # Best-effort Qdrant sync must not run when the transaction fails.
         deps["qdrant"].update_payload.assert_not_awaited()
+
+
+class TestResolveReviewMirrorCascade:
+    """PROJ-395: resolving one side of a duplicate pair cascade-deletes the
+    mirror review entry so the pair leaves the queue as a unit."""
+
+    async def test_mirror_entry_is_cascade_deleted(self) -> None:
+        fs = MagicMock()
+        # Primary entry is paired (carries a related_record_id).
+        primary = _review(review_id="r1", target_id="mem001")
+        primary.related_record_id = "mem002"
+        fs.list_review_entries = AsyncMock(return_value=[primary])
+        # Mirror lookup (target=mem002, related=mem001) returns the mirror.
+        mirror = _review(review_id="r_mirror", target_id="mem002")
+        mirror.related_record_id = "mem001"
+        fs.find_review_entry = AsyncMock(return_value=mirror)
+        fs.delete_review_entry = AsyncMock(return_value=True)
+        fs.save_machine_event = AsyncMock(side_effect=lambda evt, **_kw: evt)
+        pg = MagicMock()
+        pg.get = AsyncMock(return_value=_record())
+        pg.update_lifecycle = AsyncMock(return_value=_record(status=LifecycleStatus.ARCHIVED))
+        service, _ = _make_service(freshness_store=fs, pg_store=pg)
+
+        await service.resolve_review("ws1", review_id="r1", action="archive")
+
+        # Both the primary and the mirror were deleted.
+        deleted_ids = {c.args[1] for c in fs.delete_review_entry.await_args_list}
+        assert deleted_ids == {"r1", "r_mirror"}
+
+        # Two audit events: the primary (target=A) carrying the mirror link,
+        # and a dedicated cascade event on the partner record (target=B).
+        events = [c.args[0] for c in fs.save_machine_event.await_args_list]
+        primary = next(e for e in events if e.target_id == "mem001")
+        assert primary.payload["mirror_review_entry_id"] == "r_mirror"
+        partner = next(e for e in events if e.target_id == "mem002")
+        assert partner.event_type == "freshness_review_resolved"
+        assert partner.payload["action"] == "cascade_mirror"
+        assert partner.payload["review_entry_id"] == "r_mirror"
+        assert partner.payload["resolved_via_review_entry_id"] == "r1"
+        assert partner.payload["resolved_via_target_id"] == "mem001"
+
+    async def test_no_mirror_lookup_for_unpaired_reason(self) -> None:
+        """low_confidence_decision entries carry no related_record_id — the
+        mirror lookup must be skipped entirely."""
+        fs = MagicMock()
+        fs.list_review_entries = AsyncMock(
+            return_value=[_review(reason="low_confidence_decision")]
+        )
+        fs.find_review_entry = AsyncMock()
+        fs.delete_review_entry = AsyncMock(return_value=True)
+        fs.save_machine_event = AsyncMock(side_effect=lambda evt, **_kw: evt)
+        pg = MagicMock()
+        pg.get = AsyncMock(return_value=_record())
+        pg.update_lifecycle = AsyncMock(return_value=_record(status=LifecycleStatus.ACTIVE))
+        service, _ = _make_service(freshness_store=fs, pg_store=pg)
+
+        await service.resolve_review("ws1", review_id="r1", action="keep")
+
+        fs.find_review_entry.assert_not_awaited()
+        fs.delete_review_entry.assert_awaited_once()
 
 
 class TestSearchStatusFilterPlumbing:

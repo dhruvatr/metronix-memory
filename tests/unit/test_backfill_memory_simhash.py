@@ -1,4 +1,4 @@
-"""Tests for scripts/backfill_memory_simhash.py (MTRNIX-277).
+"""Tests for scripts/backfill_memory_simhash.py (PROJ-277).
 
 The backfill script is thin — tests focus on the async helper (_process_workspace
 and _run) by monkey-patching MemoryPostgresStore and the engine.
@@ -17,7 +17,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 from backfill_memory_simhash import _process_workspace  # noqa: E402
 
-from metatron.ingestion.dedup import simhash  # noqa: E402
+from metronix.ingestion.dedup import simhash  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Async generator helper

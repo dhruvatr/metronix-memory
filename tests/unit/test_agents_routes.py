@@ -15,18 +15,18 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from metatron.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
-from metatron.agents.service import (
+from metronix.agents.models import AgentConfigVersion, AgentRecord, AgentStatus
+from metronix.agents.service import (
     AgentInvalidStateTransitionError,
     AgentNameConflictError,
     AgentNotFoundError,
     AgentRegistryService,
 )
-from metatron.api.dependencies import get_agent_registry_service
-from metatron.api.routes.agents import router as agents_router
-from metatron.auth.dependencies import get_current_user
-from metatron.core.config import Settings
-from metatron.core.models import Role, User
+from metronix.api.dependencies import get_agent_registry_service
+from metronix.api.routes.agents import router as agents_router
+from metronix.auth.dependencies import get_current_user
+from metronix.core.config import Settings
+from metronix.core.models import Role, User
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,9 +35,9 @@ if TYPE_CHECKING:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        METATRON_ENV="development",
+        METRONIX_ENV="development",
         AUTH_ENABLED=False,
-        METATRON_SECRET_KEY="test-secret",
+        METRONIX_SECRET_KEY="test-secret",
     )
 
 
@@ -202,7 +202,7 @@ class TestListAgents:
         assert kwargs["status"] == AgentStatus.ACTIVE
         assert kwargs["name_prefix"] == "Tra"
 
-    # MTRNIX-324: default-exclude ARCHIVED + include_archived opt-in
+    # PROJ-324: default-exclude ARCHIVED + include_archived opt-in
 
     def test_list_default_excludes_archived(
         self, client: TestClient, service: AsyncMock

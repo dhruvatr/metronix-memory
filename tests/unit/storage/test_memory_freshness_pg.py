@@ -1,12 +1,12 @@
-"""Unit tests for FreshnessPostgresStore (MTRNIX-304)."""
+"""Unit tests for FreshnessPostgresStore (PROJ-304)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from metatron.core.models import MachineEvent, ReviewEntry
-from metatron.storage.memory_freshness_pg import FreshnessPostgresStore
+from metronix.core.models import MachineEvent, ReviewEntry
+from metronix.storage.memory_freshness_pg import FreshnessPostgresStore
 
 
 def _make_store() -> tuple[FreshnessPostgresStore, MagicMock]:
@@ -61,7 +61,7 @@ class TestReviewEntries:
     async def test_list_review_entries_filters_by_record(self) -> None:
         store, engine = _make_store()
         conn = AsyncMock()
-        # Phase B schema (MTRNIX-313): column is ``target_id`` not ``record_id``.
+        # Phase B schema (PROJ-313): column is ``target_id`` not ``record_id``.
         # Phase A test still passes the Python keyword ``record_id=`` which
         # the store treats as an alias for ``target_id=``.
         row_data = {

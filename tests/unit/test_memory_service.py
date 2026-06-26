@@ -6,15 +6,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from metatron.core.exceptions import MemoryNotFoundError
-from metatron.core.models import (
+from metronix.core.config import get_settings
+from metronix.core.exceptions import MemoryNotFoundError
+from metronix.core.models import (
     LifecycleStatus,
     MemoryKind,
     MemoryRecord,
     MemoryScope,
 )
-from metatron.ingestion.dedup import simhash
-from metatron.memory.service import MemoryService
+from metronix.ingestion.dedup import simhash
+from metronix.memory.service import MemoryService
 
 
 def _make_service(workspace_id: str = "ws1"):
@@ -55,17 +56,17 @@ class TestCacheSession:
         record = _sample_record()
         redis_cache.cache.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph") as mock_graph:
+        with patch("metronix.memory.service.save_memory_to_graph") as mock_graph:
             result = await service.cache_session("ws1", "sess1", record)
 
         assert result.id == "mem001"
-        # Phase 2: ttl_seconds is now resolved to the settings default (14400)
-        # before being forwarded to redis.cache — the call must include the resolved TTL.
+        # Phase 2: ttl_seconds is now resolved to the settings default before
+        # being forwarded to redis.cache — the call must include the resolved TTL.
         redis_cache.cache.assert_called_once_with(
             "ws1",
             "sess1",
             record,
-            ttl_seconds=14400,
+            ttl_seconds=get_settings().memory_session_ttl,
         )
         mock_graph.assert_called_once_with(record)
 
@@ -74,7 +75,7 @@ class TestCacheSession:
         record = _sample_record()
         redis_cache.cache.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             await service.cache_session("ws1", "sess1", record, ttl_seconds=120)
 
         redis_cache.cache.assert_called_once_with(
@@ -90,7 +91,7 @@ class TestCacheSession:
         redis_cache.cache.return_value = record
 
         with patch(
-            "metatron.memory.service.save_memory_to_graph",
+            "metronix.memory.service.save_memory_to_graph",
             side_effect=Exception("neo4j down"),
         ):
             result = await service.cache_session("ws1", "sess1", record)
@@ -182,7 +183,7 @@ class TestSave:
         pg_store.get_by_hash.return_value = None
         pg_store.save.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph") as mock_graph:
+        with patch("metronix.memory.service.save_memory_to_graph") as mock_graph:
             result = await service.save("ws1", record)
 
         assert result.id == "mem001"
@@ -201,7 +202,7 @@ class TestSave:
         pg_store.save.side_effect = lambda r: call_order.append("pg") or record
         qdrant_store.upsert.side_effect = lambda r: call_order.append("qdrant")
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             await service.save("ws1", record)
 
         assert call_order == ["pg", "qdrant"]
@@ -213,7 +214,7 @@ class TestSave:
         pg_store.save.return_value = record
 
         with patch(
-            "metatron.memory.service.save_memory_to_graph",
+            "metronix.memory.service.save_memory_to_graph",
             side_effect=Exception("neo4j down"),
         ):
             result = await service.save("ws1", record)
@@ -241,7 +242,7 @@ class TestSave:
         qdrant_store.upsert.side_effect = Exception("qdrant down")
 
         with (
-            patch("metatron.memory.service.save_memory_to_graph"),
+            patch("metronix.memory.service.save_memory_to_graph"),
             pytest.raises(Exception, match="qdrant down"),
         ):
             await service.save("ws1", record)
@@ -252,7 +253,7 @@ class TestSave:
         pg_store.get_by_hash.return_value = None
         pg_store.save.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             await service.save("ws1", record)
 
         assert record.content_hash != ""
@@ -264,7 +265,7 @@ class TestSave:
 
         new_record = _sample_record(id="new001", scope=MemoryScope.PER_AGENT)
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             result = await service.save("ws1", new_record)
 
         assert result.id == "existing001"
@@ -282,7 +283,7 @@ class TestDelete:
         service, _, qdrant_store, pg_store = _make_service()
         pg_store.delete.return_value = True
 
-        with patch("metatron.memory.service.delete_memory_node") as mock_graph:
+        with patch("metronix.memory.service.delete_memory_node") as mock_graph:
             mock_graph.return_value = True
             result = await service.delete("ws1", "mem001")
 
@@ -303,7 +304,7 @@ class TestDelete:
         pg_store.delete.return_value = True
         qdrant_store.delete.side_effect = Exception("qdrant down")
 
-        with patch("metatron.memory.service.delete_memory_node"):
+        with patch("metronix.memory.service.delete_memory_node"):
             result = await service.delete("ws1", "mem001")
 
         assert result is True
@@ -370,7 +371,7 @@ class TestReset:
         service, _, qdrant_store, pg_store = _make_service()
         pg_store.reset.return_value = (2, ["m1", "m2"])
 
-        with patch("metatron.memory.service.delete_memory_node") as mock_graph:
+        with patch("metronix.memory.service.delete_memory_node") as mock_graph:
             mock_graph.return_value = True
             count = await service.reset("ws1", agent_id="agent1")
 
@@ -385,7 +386,7 @@ class TestReset:
         service, _, qdrant_store, pg_store = _make_service()
         pg_store.reset.return_value = (1, ["m1"])
 
-        with patch("metatron.memory.service.delete_memory_node"):
+        with patch("metronix.memory.service.delete_memory_node"):
             count = await service.reset("ws1", scope=MemoryScope.GLOBAL)
 
         assert count == 1
@@ -414,7 +415,7 @@ class TestPromote:
         pg_store.get_by_hash.return_value = None
         pg_store.save.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             result = await service.promote("ws1", "sess1", "mem001")
 
         assert result.scope == MemoryScope.PER_AGENT
@@ -429,7 +430,7 @@ class TestPromote:
         pg_store.get_by_hash.return_value = None
         pg_store.save.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             result = await service.promote(
                 "ws1",
                 "sess1",
@@ -447,7 +448,7 @@ class TestPromote:
         pg_store.get_by_hash.return_value = None
         pg_store.save.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             result = await service.promote("ws1", "sess1", "mem001")
 
         assert result.scope == MemoryScope.PER_AGENT
@@ -463,7 +464,7 @@ class TestPromote:
 
 
 # ---------------------------------------------------------------------------
-# list_preferences (MTRNIX-275)
+# list_preferences (PROJ-275)
 # ---------------------------------------------------------------------------
 
 
@@ -593,6 +594,33 @@ class TestWorkspaceIsolation:
         with pytest.raises(ValueError, match="workspace_id mismatch"):
             await service.get("ws_other", "mem001")
 
+    async def test_rejects_mismatch_on_count_records(self) -> None:
+        service, _, _, _ = _make_service(workspace_id="ws1")
+
+        with pytest.raises(ValueError, match="workspace_id mismatch"):
+            await service.count_records("ws_other")
+
+    async def test_count_records_delegates_filters_to_pg(self) -> None:
+        service, _, _, pg_store = _make_service(workspace_id="ws1")
+        pg_store.count_records.return_value = 7
+
+        total = await service.count_records(
+            "ws1",
+            agent_id="agent1",
+            scope=MemoryScope.PER_AGENT,
+            lifetime="persistent",
+        )
+
+        assert total == 7
+        pg_store.count_records.assert_awaited_once_with(
+            "ws1",
+            agent_id="agent1",
+            scope=MemoryScope.PER_AGENT,
+            kind_filter=None,
+            status=None,
+            lifetime="persistent",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Content hash exact-match semantics
@@ -608,7 +636,7 @@ class TestContentHashSemantics:
         pg_store.get_by_hash.return_value = None
         pg_store.save.side_effect = lambda r: r
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             await service.save("ws1", r1)
             await service.save("ws1", r2)
 
@@ -633,14 +661,14 @@ class TestPromotePartialFailure:
         qdrant_store.upsert.side_effect = Exception("qdrant down")
 
         with (
-            patch("metatron.memory.service.save_memory_to_graph"),
+            patch("metronix.memory.service.save_memory_to_graph"),
             pytest.raises(Exception, match="qdrant down"),
         ):
             await service.promote("ws1", "sess1", "mem001")
 
 
 # ---------------------------------------------------------------------------
-# Freshness hook (MTRNIX-304)
+# Freshness hook (PROJ-304)
 # ---------------------------------------------------------------------------
 
 
@@ -652,9 +680,9 @@ class TestFreshnessHook:
         pg_store.get_by_hash.return_value = None
 
         with (
-            patch("metatron.memory.service.save_memory_to_graph"),
+            patch("metronix.memory.service.save_memory_to_graph"),
             patch(
-                "metatron.memory.service.enqueue_if_enabled",
+                "metronix.memory.service.enqueue_if_enabled",
                 side_effect=Exception("boom"),
             ) as mock_enqueue,
         ):
@@ -677,9 +705,9 @@ class TestFreshnessHook:
         pg_store.get_by_hash.return_value = None
 
         with (
-            patch("metatron.memory.service.save_memory_to_graph"),
+            patch("metronix.memory.service.save_memory_to_graph"),
             patch(
-                "metatron.memory.service.enqueue_if_enabled",
+                "metronix.memory.service.enqueue_if_enabled",
                 new_callable=AsyncMock,
             ) as mock_enqueue,
         ):
@@ -696,9 +724,9 @@ class TestFreshnessHook:
         pg_store.delete.return_value = True
 
         with (
-            patch("metatron.memory.service.delete_memory_node"),
+            patch("metronix.memory.service.delete_memory_node"),
             patch(
-                "metatron.memory.service.enqueue_if_enabled",
+                "metronix.memory.service.enqueue_if_enabled",
                 new_callable=AsyncMock,
             ) as mock_enqueue,
         ):
@@ -711,7 +739,7 @@ class TestFreshnessHook:
 
 
 # ---------------------------------------------------------------------------
-# SimHash population on save (MTRNIX-277)
+# SimHash population on save (PROJ-277)
 # ---------------------------------------------------------------------------
 
 
@@ -725,7 +753,7 @@ class TestSaveSimhash:
         pg_store.get_by_hash.return_value = None
         pg_store.save.return_value = record
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             result = await service.save("ws1", record)
 
         expected_simhash = simhash(content)
@@ -745,7 +773,7 @@ class TestSaveSimhash:
         )
         new_record.content_simhash = 0  # start unset
 
-        with patch("metatron.memory.service.save_memory_to_graph"):
+        with patch("metronix.memory.service.save_memory_to_graph"):
             result = await service.save("ws1", new_record)
 
         # The returned record is the *existing* one — the new record is discarded.

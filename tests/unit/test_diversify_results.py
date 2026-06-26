@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from metatron.retrieval.search import (
+from metronix.retrieval.search import (
     _JIRA_KEY_RE,
     _append_sources,
     _collect_frags,
@@ -32,12 +32,12 @@ class TestResultType:
 class TestCollectFragsLabeling:
     def test_labels_added(self) -> None:
         base = [
-            {"memory": "some jira content", "type": "jira", "title": "MTRNIX-78"},
+            {"memory": "some jira content", "type": "jira", "title": "PROJ-78"},
             {"memory": "some confluence page", "type": "confluence", "title": "Architecture"},
         ]
         frags, _, _, _ = _collect_frags(base, set(), 0)
         assert len(frags) == 2
-        assert frags[0]["text"].startswith("[JIRA] MTRNIX-78\n")
+        assert frags[0]["text"].startswith("[JIRA] PROJ-78\n")
         assert frags[1]["text"].startswith("[CONFLUENCE] Architecture\n")
 
     def test_no_label_for_unknown(self) -> None:
@@ -56,12 +56,12 @@ class TestAppendSources:
     def test_appends_sources(self) -> None:
         results = [
             {"title": "2026-02-03 Summary", "type": "confluence"},
-            {"title": "[MTRNIX-109] Setup MLFlow", "type": "jira"},
+            {"title": "[PROJ-109] Setup MLFlow", "type": "jira"},
         ]
         out = _append_sources("Some answer.", results)
         assert "\U0001f4da Sources:" in out
         assert "\U0001f4c4 2026-02-03 Summary" in out
-        assert "\U0001f4cb [MTRNIX-109] Setup MLFlow" in out
+        assert "\U0001f4cb [PROJ-109] Setup MLFlow" in out
 
     def test_no_sources_when_empty(self) -> None:
         assert _append_sources("Answer.", []) == "Answer."
@@ -140,7 +140,7 @@ class TestDetectResponseLanguage:
         assert detect_response_language("Что делает команда на этой неделе?") == "Russian"
 
     def test_english_not_affected_by_single_russian_word(self) -> None:
-        assert detect_response_language("What about задача MTRNIX-123?") == "English"
+        assert detect_response_language("What about задача PROJ-123?") == "English"
 
     def test_pure_english_after_russian_history_not_mixed(self) -> None:
         """Language detection must use only the current question, not composite."""
@@ -186,7 +186,7 @@ class TestExtractProperNouns:
         assert extract_proper_nouns("what happened last week?") == []
 
     def test_single_capitalized_word_ignored(self) -> None:
-        assert extract_proper_nouns("What is Metatron?") == []
+        assert extract_proper_nouns("What is Metronix?") == []
 
     def test_russian_proper_nouns(self) -> None:
         assert extract_proper_nouns("Что такое Проект Аврора?") == ["Проект Аврора"]
@@ -198,7 +198,7 @@ class TestExtractProperNouns:
 
 class TestSourcesToMarkdown:
     def test_limits_displayed_sources(self) -> None:
-        from metatron.api.routes.openai_compat import _sources_to_markdown
+        from metronix.api.routes.openai_compat import _sources_to_markdown
 
         sources = [f"\U0001f4c4 Page {i} \u2014 https://example.com/{i}" for i in range(10)]
         md = _sources_to_markdown(sources)
@@ -206,7 +206,7 @@ class TestSourcesToMarkdown:
         assert len(lines) == 5
 
     def test_custom_limit(self) -> None:
-        from metatron.api.routes.openai_compat import _sources_to_markdown
+        from metronix.api.routes.openai_compat import _sources_to_markdown
 
         sources = [f"\U0001f4c4 Page {i} \u2014 https://example.com/{i}" for i in range(10)]
         md = _sources_to_markdown(sources, limit=3)
@@ -214,26 +214,26 @@ class TestSourcesToMarkdown:
         assert len(lines) == 3
 
     def test_empty_sources(self) -> None:
-        from metatron.api.routes.openai_compat import _sources_to_markdown
+        from metronix.api.routes.openai_compat import _sources_to_markdown
 
         assert _sources_to_markdown([]) == ""
 
 
 class TestJiraKeyRegex:
     def test_extracts_standard_key(self) -> None:
-        assert _JIRA_KEY_RE.findall("What is MTRNIX-108?") == ["MTRNIX-108"]
+        assert _JIRA_KEY_RE.findall("What is PROJ-108?") == ["PROJ-108"]
 
     def test_extracts_multiple_keys(self) -> None:
-        keys = _JIRA_KEY_RE.findall("Compare MTRNIX-108 and PROJ-42")
-        assert set(k.upper() for k in keys) == {"MTRNIX-108", "PROJ-42"}
+        keys = _JIRA_KEY_RE.findall("Compare PROJ-108 and PROJ-42")
+        assert set(k.upper() for k in keys) == {"PROJ-108", "PROJ-42"}
 
     def test_case_insensitive(self) -> None:
         keys = _JIRA_KEY_RE.findall("mtrnix-108")
-        assert [k.upper() for k in keys] == ["MTRNIX-108"]
+        assert [k.upper() for k in keys] == ["PROJ-108"]
 
     def test_no_match_without_key(self) -> None:
         assert _JIRA_KEY_RE.findall("What is the team doing?") == []
 
     def test_deduplicates_keys(self) -> None:
-        keys = _JIRA_KEY_RE.findall("MTRNIX-108 vs MTRNIX-108")
+        keys = _JIRA_KEY_RE.findall("PROJ-108 vs PROJ-108")
         assert len(keys) == 2

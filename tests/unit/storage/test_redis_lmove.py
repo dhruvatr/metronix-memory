@@ -1,4 +1,4 @@
-"""Unit tests for RedisStore LMOVE-family primitives (MTRNIX-316).
+"""Unit tests for RedisStore LMOVE-family primitives (PROJ-316).
 
 Covers ``lmove_rightleft`` (the RPOPLPUSH-style primitive used by the
 freshness processing-list reclaim pattern), ``peek_tail`` (LINDEX key -1),
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-from metatron.storage.redis import RedisStore
+from metronix.storage.redis import RedisStore
 
 
 def _make_store() -> tuple[RedisStore, AsyncMock]:

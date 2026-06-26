@@ -9,12 +9,12 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
-from metatron.api.routes.connections import _run_connection_sync
-from metatron.core.config import Settings
-from metatron.core.models import Document, SyncResult
-from metatron.storage.pg_connection import get_session
-from metatron.storage.pg_models import ConnectionRow, SyncLogRow
-from metatron.storage.postgres import PostgresStore
+from metronix.connectors.connection_sync import run_connection_sync
+from metronix.core.config import Settings
+from metronix.core.models import Document, SyncResult
+from metronix.storage.pg_connection import get_session
+from metronix.storage.pg_models import ConnectionRow, SyncLogRow
+from metronix.storage.postgres import PostgresStore
 
 
 @pytest.fixture
@@ -83,17 +83,17 @@ async def test_run_connection_sync_finalizes_running_row_on_success(store, seede
     )
 
     with (
-        patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
+        patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry),
         patch(
-            "metatron.ingestion.pipeline.ingest_documents",
+            "metronix.ingestion.pipeline.ingest_documents",
             AsyncMock(return_value=fake_ingest_result),
         ),
         patch(
-            "metatron.ingestion.pipeline.process_all_unsynced_graphs",
+            "metronix.ingestion.pipeline.process_all_unsynced_graphs",
             AsyncMock(return_value={"ok": 1, "errors": 0}),
         ),
     ):
-        await _run_connection_sync(
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -126,8 +126,8 @@ async def test_run_connection_sync_marks_failed_on_exception(store, seeded_ids):
     fake_registry = MagicMock()
     fake_registry.create.return_value = fake_connector
 
-    with patch("metatron.api.routes.connections._get_registry", return_value=fake_registry):
-        await _run_connection_sync(
+    with patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry):
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -147,7 +147,7 @@ async def test_run_connection_sync_marks_failed_on_exception(store, seeded_ids):
 
 
 async def test_run_connection_sync_failed_does_not_advance_cursor(store, seeded_ids):
-    """Regression for MTRNIX-332 B1: failed sync must NOT move last_synced_at.
+    """Regression for PROJ-332 B1: failed sync must NOT move last_synced_at.
 
     Without the guard, the cursor advances unconditionally in the finally
     block — documents updated between the last good sync and the failure
@@ -176,8 +176,8 @@ async def test_run_connection_sync_failed_does_not_advance_cursor(store, seeded_
     fake_registry = MagicMock()
     fake_registry.create.return_value = fake_connector
 
-    with patch("metatron.api.routes.connections._get_registry", return_value=fake_registry):
-        await _run_connection_sync(
+    with patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry):
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -226,8 +226,8 @@ async def test_run_connection_sync_force_full_failed_does_not_advance_cursor(sto
     fake_registry = MagicMock()
     fake_registry.create.return_value = fake_connector
 
-    with patch("metatron.api.routes.connections._get_registry", return_value=fake_registry):
-        await _run_connection_sync(
+    with patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry):
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -271,17 +271,17 @@ async def test_run_connection_sync_success_advances_cursor_past_prior(store, see
     fake_registry.create.return_value = fake_connector
 
     with (
-        patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
+        patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry),
         patch(
-            "metatron.ingestion.pipeline.ingest_documents",
+            "metronix.ingestion.pipeline.ingest_documents",
             AsyncMock(return_value=_empty_ingest_result()),
         ),
         patch(
-            "metatron.ingestion.pipeline.process_all_unsynced_graphs",
+            "metronix.ingestion.pipeline.process_all_unsynced_graphs",
             AsyncMock(return_value={"ok": 0, "errors": 0}),
         ),
     ):
-        await _run_connection_sync(
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -308,7 +308,7 @@ async def test_run_connection_sync_success_advances_cursor_past_prior(store, see
 
 
 # ---------------------------------------------------------------------------
-# force_full flag (MTRNIX-332)
+# force_full flag (PROJ-332)
 # ---------------------------------------------------------------------------
 
 
@@ -339,13 +339,13 @@ async def test_run_connection_sync_force_full_bypasses_cursor(store, seeded_ids)
     fake_registry.create.return_value = fake_connector
 
     with (
-        patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
+        patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry),
         patch(
-            "metatron.ingestion.pipeline.ingest_documents",
+            "metronix.ingestion.pipeline.ingest_documents",
             AsyncMock(return_value=_empty_ingest_result()),
         ),
     ):
-        await _run_connection_sync(
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -381,13 +381,13 @@ async def test_run_connection_sync_default_uses_pg_cursor(store, seeded_ids):
     fake_registry.create.return_value = fake_connector
 
     with (
-        patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
+        patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry),
         patch(
-            "metatron.ingestion.pipeline.ingest_documents",
+            "metronix.ingestion.pipeline.ingest_documents",
             AsyncMock(return_value=_empty_ingest_result()),
         ),
     ):
-        await _run_connection_sync(
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -417,13 +417,13 @@ async def test_run_connection_sync_null_cursor_means_full_fetch(store, seeded_id
     fake_registry.create.return_value = fake_connector
 
     with (
-        patch("metatron.api.routes.connections._get_registry", return_value=fake_registry),
+        patch("metronix.connectors.connection_sync.get_registry", return_value=fake_registry),
         patch(
-            "metatron.ingestion.pipeline.ingest_documents",
+            "metronix.ingestion.pipeline.ingest_documents",
             AsyncMock(return_value=_empty_ingest_result()),
         ),
     ):
-        await _run_connection_sync(
+        await run_connection_sync(
             sync_id=sync_id,
             connection_id=cid,
             connector_type="jira",
@@ -439,7 +439,7 @@ async def test_run_connection_sync_null_cursor_means_full_fetch(store, seeded_id
 
 
 # ---------------------------------------------------------------------------
-# Concurrent-sync guard (MTRNIX-332)
+# Concurrent-sync guard (PROJ-332)
 # ---------------------------------------------------------------------------
 
 
@@ -452,7 +452,7 @@ async def test_trigger_sync_returns_409_when_connection_is_syncing(seeded_ids):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from metatron.api.routes.connections import router as connections_router
+    from metronix.api.routes.connections import router as connections_router
 
     ws, cid = seeded_ids
 

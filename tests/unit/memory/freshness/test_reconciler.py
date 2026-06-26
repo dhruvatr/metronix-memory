@@ -10,9 +10,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from metatron.core.models import MemoryRecord, MemoryScope, ReviewEntry
-from metatron.memory.freshness.reconciler import Reconciler
-from metatron.memory.freshness.target_memory import MemoryTarget
+from metronix.core.models import MemoryRecord, MemoryScope, ReviewEntry
+from metronix.memory.freshness.reconciler import Reconciler
+from metronix.memory.freshness.target_memory import MemoryTarget
 
 
 def _record(**overrides: object) -> MemoryRecord:
@@ -49,7 +49,7 @@ def _build_reconciler(
 
 # ``MemoryTarget.alias_edge`` goes through ``asyncio.to_thread`` calling the
 # module-level ``alias_link_memory_items`` in the shared stages module.
-_ALIAS_PATH = "metatron.freshness.stages.reconciler.alias_link_memory_items"
+_ALIAS_PATH = "metronix.freshness.stages.reconciler.alias_link_memory_items"
 
 
 class TestReconciler:
@@ -115,6 +115,40 @@ class TestReconciler:
 
         # Returns the pre-existing entry, and does NOT create a new one.
         assert out is existing
+        fs.save_review_entry.assert_not_awaited()
+
+    async def test_mirror_pair_is_not_duplicated(self) -> None:
+        """MTRNIX-395: if the reverse-direction entry exists, reuse it.
+
+        When the partner record (rec2) was processed first it created
+        (target=rec2, related=rec1). Processing rec1 must NOT create the
+        mirror (target=rec1, related=rec2) — the pair is one finding.
+        """
+        rec, pg, qdrant, coord, fs = _build_reconciler()
+        coord.acquire_lock.return_value = "tok"
+        pg.get.return_value = _record()
+        qdrant.search.return_value = [
+            {"record_id": "rec1", "score": 1.0},
+            {"record_id": "rec2", "score": 0.95},
+        ]
+        mirror = ReviewEntry(
+            id="mirror",
+            workspace_id="ws1",
+            target_id="rec2",
+            target_kind="memory_record",
+            reason="possible_duplicate",
+            related_record_id="rec1",
+            content="",
+            confidence=0.95,
+        )
+        # Forward lookup (target=rec1, related=rec2) → None; mirror lookup
+        # (target=rec2, related=rec1) → the existing mirror entry.
+        fs.find_review_entry.side_effect = [None, mirror]
+
+        with patch(_ALIAS_PATH, return_value=None):
+            out = await rec.run("ws1", "rec1")
+
+        assert out is mirror
         fs.save_review_entry.assert_not_awaited()
 
     async def test_lock_contention_returns_none(self) -> None:

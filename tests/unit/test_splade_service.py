@@ -12,7 +12,7 @@ class TestCallSpladeService:
 
     def test_call_splade_service_success(self):
         """Mock httpx, verify returns indices/values."""
-        import metatron.storage.qdrant as qdrant_mod
+        import metronix.storage.qdrant as qdrant_mod
 
         # Reset singleton
         qdrant_mod._splade_http_client = None
@@ -45,7 +45,7 @@ class TestCallSpladeService:
 
     def test_call_splade_service_with_max_length(self):
         """When max_length is provided, it is included in payload."""
-        import metatron.storage.qdrant as qdrant_mod
+        import metronix.storage.qdrant as qdrant_mod
 
         qdrant_mod._splade_http_client = None
 
@@ -72,7 +72,7 @@ class TestCallSpladeService:
         """When httpx raises, error propagates (caller handles fallback)."""
         import httpx
 
-        import metatron.storage.qdrant as qdrant_mod
+        import metronix.storage.qdrant as qdrant_mod
 
         qdrant_mod._splade_http_client = None
 
@@ -96,11 +96,11 @@ class TestDispatchWithService:
         settings.splade_enabled = True
         settings.splade_service_url = "http://splade:8080"
 
-        with patch("metatron.storage.qdrant.get_settings", return_value=settings), patch(
-            "metatron.storage.qdrant._call_splade_service",
+        with patch("metronix.storage.qdrant.get_settings", return_value=settings), patch(
+            "metronix.storage.qdrant._call_splade_service",
             return_value=([10, 42], [0.5, 1.2]),
         ) as mock_service:
-            from metatron.storage.qdrant import _compute_doc_sparse
+            from metronix.storage.qdrant import _compute_doc_sparse
 
             result = _compute_doc_sparse("test text")
 
@@ -114,11 +114,11 @@ class TestDispatchWithService:
         settings.splade_enabled = True
         settings.splade_service_url = "http://splade:8080"
 
-        with patch("metatron.storage.qdrant.get_settings", return_value=settings), patch(
-            "metatron.storage.qdrant._call_splade_service",
+        with patch("metronix.storage.qdrant.get_settings", return_value=settings), patch(
+            "metronix.storage.qdrant._call_splade_service",
             return_value=([10], [0.8]),
         ) as mock_service:
-            from metatron.storage.qdrant import _compute_query_sparse
+            from metronix.storage.qdrant import _compute_query_sparse
 
             result = _compute_query_sparse("test query")
 
@@ -132,14 +132,14 @@ class TestDispatchWithService:
         settings.splade_enabled = True
         settings.splade_service_url = "http://splade:8080"
 
-        with patch("metatron.storage.qdrant.get_settings", return_value=settings), patch(
-            "metatron.storage.qdrant._call_splade_service",
+        with patch("metronix.storage.qdrant.get_settings", return_value=settings), patch(
+            "metronix.storage.qdrant._call_splade_service",
             side_effect=Exception("connection refused"),
         ), patch(
-            "metatron.storage.qdrant.compute_bm25_sparse_vector",
+            "metronix.storage.qdrant.compute_bm25_sparse_vector",
             return_value=([1, 2], [0.5, 0.6]),
         ) as mock_bm25:
-            from metatron.storage.qdrant import _compute_doc_sparse
+            from metronix.storage.qdrant import _compute_doc_sparse
 
             result = _compute_doc_sparse("test text")
 
@@ -151,11 +151,11 @@ class TestDispatchWithService:
         settings.splade_enabled = True
         settings.splade_service_url = ""
 
-        with patch("metatron.storage.qdrant.get_settings", return_value=settings), patch(
-            "metatron.ingestion.splade.compute_splade_sparse_vector",
+        with patch("metronix.storage.qdrant.get_settings", return_value=settings), patch(
+            "metronix.ingestion.splade.compute_splade_sparse_vector",
             return_value=([10, 42], [0.5, 1.2]),
         ) as mock_local:
-            from metatron.storage.qdrant import _compute_doc_sparse
+            from metronix.storage.qdrant import _compute_doc_sparse
 
             result = _compute_doc_sparse("test text")
 

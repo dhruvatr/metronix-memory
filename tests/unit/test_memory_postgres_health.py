@@ -1,4 +1,4 @@
-"""Tests for MemoryPostgresStore health-tracking methods (MTRNIX-277).
+"""Tests for MemoryPostgresStore health-tracking methods (PROJ-277).
 
 All tests use mocked SQLAlchemy async engines so they run without a live DB.
 The round-trip tests for content_simhash are pure-Python and need no engine at all.
@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from metatron.core.models import LifecycleStatus
-from metatron.storage.memory_postgres import MemoryPostgresStore
-from metatron.storage.postgres import _from_pg_bigint, _to_pg_bigint
+from metronix.core.models import LifecycleStatus
+from metronix.storage.memory_postgres import MemoryPostgresStore
+from metronix.storage.postgres import _from_pg_bigint, _to_pg_bigint
 
 # ---------------------------------------------------------------------------
 # Helpers

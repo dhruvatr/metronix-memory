@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from metatron.api.app import create_app
-from metatron.api.dependencies import get_memory_service
-from metatron.core.config import get_settings
+from metronix.api.app import create_app
+from metronix.api.dependencies import get_memory_service
+from metronix.core.config import get_settings
 
 
 def test_event_bus_passed_into_memory_service() -> None:
@@ -20,6 +20,8 @@ def test_event_bus_passed_into_memory_service() -> None:
     req.app = app
     req.state = MagicMock()
     req.state.user = {"workspace_ids": ["ws_test"]}
+    req.query_params = {}
+    req.state._workspace_id_cached = None
 
     svc = get_memory_service(req)
     assert svc._event_bus is app.state.plugin_manager.get_event_bus()

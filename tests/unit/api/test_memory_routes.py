@@ -15,12 +15,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from metatron.api.dependencies import get_memory_service
-from metatron.api.routes.memory import router as memory_router
-from metatron.auth.dependencies import get_current_user
-from metatron.core.config import Settings
-from metatron.core.exceptions import MemoryNotFoundError
-from metatron.core.models import (
+from metronix.api.dependencies import get_memory_service
+from metronix.api.routes.memory import router as memory_router
+from metronix.auth.dependencies import get_current_user
+from metronix.core.config import Settings
+from metronix.core.exceptions import MemoryNotFoundError
+from metronix.core.models import (
     LifecycleStatus,
     MemoryRecord,
     MemoryScope,
@@ -29,7 +29,7 @@ from metatron.core.models import (
     Role,
     User,
 )
-from metatron.memory.service import MemoryService
+from metronix.memory.service import MemoryService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,9 +38,9 @@ if TYPE_CHECKING:
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        METATRON_ENV="development",
+        METRONIX_ENV="development",
         AUTH_ENABLED=False,
-        METATRON_SECRET_KEY="test-secret",
+        METRONIX_SECRET_KEY="test-secret",
     )
 
 
@@ -74,6 +74,7 @@ def _sample_record(**overrides: Any) -> MemoryRecord:
 def service() -> AsyncMock:
     """An AsyncMock MemoryService for dependency override."""
     mock = AsyncMock(spec=MemoryService)
+    mock.count_records = AsyncMock(return_value=0)
     return mock
 
 
@@ -274,6 +275,7 @@ class TestListRecords:
         service: AsyncMock,
     ) -> None:
         service.list_records.return_value = [_sample_record(id="m1")]
+        service.count_records = AsyncMock(return_value=1)
 
         response = client.get(
             "/api/v1/memory/records",
@@ -288,6 +290,7 @@ class TestListRecords:
         assert response.status_code == 200
         body = response.json()
         assert body["count"] == 1
+        assert body["total"] == 1
         assert body["limit"] == 10
         assert body["offset"] == 0
         assert body["has_more"] is False
@@ -296,8 +299,13 @@ class TestListRecords:
         kwargs = service.list_records.await_args.kwargs
         assert kwargs["agent_id"] == "agent-1"
         assert kwargs["scope"] == MemoryScope.PER_AGENT
-        assert kwargs["limit"] == 11  # limit + 1 for has_more detection
+        assert kwargs["limit"] == 10
         assert kwargs["offset"] == 0
+
+        # count_records must receive the same filter surface as list_records.
+        count_kwargs = service.count_records.await_args.kwargs
+        assert count_kwargs["agent_id"] == "agent-1"
+        assert count_kwargs["scope"] == MemoryScope.PER_AGENT
 
     def test_list_records_session_branch(
         self,
@@ -319,6 +327,7 @@ class TestListRecords:
         assert response.status_code == 200
         body = response.json()
         assert body["count"] == 1
+        assert body["total"] == 1
         service.list_session.assert_awaited_once_with("ws-test", "sess-1")
         service.list_records.assert_not_awaited()
 
@@ -327,7 +336,8 @@ class TestListRecords:
         client: TestClient,
         service: AsyncMock,
     ) -> None:
-        service.list_records.return_value = [_sample_record(id=f"m{i}") for i in range(3)]
+        service.list_records.return_value = [_sample_record(id=f"m{i}") for i in range(2)]
+        service.count_records = AsyncMock(return_value=3)
 
         response = client.get(
             "/api/v1/memory/records",
@@ -337,8 +347,29 @@ class TestListRecords:
         assert response.status_code == 200
         body = response.json()
         assert body["count"] == 2
+        assert body["total"] == 3
         assert body["has_more"] is True
         assert len(body["records"]) == 2
+
+    def test_list_total_respects_filters_last_page(
+        self,
+        client: TestClient,
+        service: AsyncMock,
+    ) -> None:
+        """Last page: offset + count == total → has_more=False, total unchanged."""
+        service.list_records.return_value = [_sample_record(id="m-last")]
+        service.count_records = AsyncMock(return_value=3)
+
+        response = client.get(
+            "/api/v1/memory/records",
+            params={"limit": 2, "offset": 2},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 1
+        assert body["total"] == 3
+        assert body["has_more"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -437,12 +468,12 @@ class TestMemoryCRUDCycle:
 
 
 # ---------------------------------------------------------------------------
-# MTRNIX-324: status field + status_filter
+# PROJ-324: status field + status_filter
 # ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
-# MTRNIX-324: GET /records/{record_id}
+# PROJ-324: GET /records/{record_id}
 # ---------------------------------------------------------------------------
 
 
@@ -629,7 +660,7 @@ class TestListStatusFilter:
 
 
 # ---------------------------------------------------------------------------
-# MTRNIX-324: GET /memory/graph
+# PROJ-324: GET /memory/graph
 # ---------------------------------------------------------------------------
 
 
@@ -746,7 +777,7 @@ class TestMemoryGraph:
 
 
 # ---------------------------------------------------------------------------
-# MTRNIX-324: GET /memory/review + POST /memory/review/{id}
+# PROJ-324: GET /memory/review + POST /memory/review/{id}
 # ---------------------------------------------------------------------------
 
 
@@ -1017,3 +1048,60 @@ class TestReviewResolve:
             json={"action": "keep"},
         )
         assert response.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# ?workspace_id query scoping + access check (Control Center, family B)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceQueryScoping:
+    def _client(
+        self, *, workspace_ids: list[str], service: AsyncMock, settings: Settings
+    ) -> TestClient:
+        app = FastAPI()
+        app.state.settings = settings
+        app.include_router(memory_router, prefix="/api/v1")
+        app.dependency_overrides[get_memory_service] = lambda: service
+        app.dependency_overrides[get_current_user] = lambda: _make_user()
+
+        @app.middleware("http")
+        async def _inject(request, call_next):  # type: ignore[no-untyped-def]
+            request.state.user = {"workspace_ids": workspace_ids}
+            return await call_next(request)
+
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_search_scopes_to_requested_workspace_for_star_token(
+        self, service: AsyncMock, settings: Settings
+    ) -> None:
+        service.search.return_value = []
+        client = self._client(workspace_ids=["*"], service=service, settings=settings)
+
+        resp = client.post(
+            "/api/v1/memory/search?workspace_id=ws-x",
+            json={"query": "hello"},
+        )
+
+        assert resp.status_code == 200
+        passed_ws = service.search.await_args.args[0]
+        assert passed_ws == "ws-x"
+
+    def test_list_forbidden_for_non_member(self, service: AsyncMock, settings: Settings) -> None:
+        client = self._client(workspace_ids=["ws-a"], service=service, settings=settings)
+
+        resp = client.get("/api/v1/memory/records?workspace_id=ws-x")
+
+        assert resp.status_code == 403
+        service.list_records.assert_not_awaited()
+
+    def test_list_without_param_uses_auth_derived(
+        self, service: AsyncMock, settings: Settings
+    ) -> None:
+        service.list_records.return_value = []
+        client = self._client(workspace_ids=["ws-a"], service=service, settings=settings)
+
+        resp = client.get("/api/v1/memory/records")
+
+        assert resp.status_code == 200
+        assert service.list_records.await_args.args[0] == "ws-a"

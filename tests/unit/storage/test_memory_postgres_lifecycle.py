@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from metatron.core.models import MemoryStatus
-from metatron.storage.memory_postgres import MemoryPostgresStore
+from metronix.core.models import MemoryStatus
+from metronix.storage.memory_postgres import MemoryPostgresStore
 
 _BASE_ROW = {
     "id": "mem001",
@@ -107,6 +107,57 @@ class TestUpdateLifecycle:
         assert out is not None
         assert out.evidence_count == 3
         assert out.verification_state == "verified"
+
+    async def test_lifecycle_update_does_not_bump_updated_at(self) -> None:
+        """MTRNIX-395: update_lifecycle must not touch ``updated_at``.
+
+        It is the freshness clock FreshnessMonitor reads for STALE; bumping it
+        on the Linker's evidence_count write made STALE unreachable. Only
+        ``save()`` (a real content edit) may move ``updated_at``.
+        """
+        store, engine = _make_store()
+        conn = AsyncMock()
+        updated = dict(_BASE_ROW, evidence_count=5)
+        result = MagicMock()
+        result.first.return_value = _mock_row(updated)
+        conn.execute.return_value = result
+        engine.begin.return_value = _FakeCtx(conn)
+
+        await store.update_lifecycle("ws1", "mem001", evidence_count=5)
+
+        sql = str(conn.execute.call_args.args[0])
+        # ``updated_at`` may still appear in the RETURNING column list — what
+        # must NOT happen is a SET write of it.
+        assert "updated_at = :updated_at" not in sql
+        assert "SET evidence_count = :evidence_count WHERE" in sql
+        params = conn.execute.call_args.args[1]
+        assert "updated_at" not in params
+
+    async def test_bump_updated_at_flag_writes_updated_at(self) -> None:
+        """MTRNIX-395: human curation opts back into the updated_at bump.
+
+        ``resolve_review`` passes ``bump_updated_at=True`` so a kept record's
+        freshness clock is refreshed and it does not immediately re-STALE.
+        """
+        store, engine = _make_store()
+        conn = AsyncMock()
+        updated = dict(_BASE_ROW, status="active")
+        result = MagicMock()
+        result.first.return_value = _mock_row(updated)
+        conn.execute.return_value = result
+        engine.begin.return_value = _FakeCtx(conn)
+
+        await store.update_lifecycle(
+            "ws1",
+            "mem001",
+            status=MemoryStatus.ACTIVE,
+            bump_updated_at=True,
+        )
+
+        sql = str(conn.execute.call_args.args[0])
+        assert "updated_at = :updated_at" in sql
+        params = conn.execute.call_args.args[1]
+        assert "updated_at" in params
 
     async def test_empty_update_falls_back_to_get(self) -> None:
         store, engine = _make_store()

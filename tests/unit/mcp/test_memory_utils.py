@@ -1,11 +1,11 @@
-"""Unit tests for MCP memory utility helpers (MTRNIX-314)."""
+"""Unit tests for MCP memory utility helpers (PROJ-314)."""
 
 from __future__ import annotations
 
 import pytest
 
-from metatron.core.models import LifecycleStatus
-from metatron.mcp.tools._memory_utils import parse_status_filter
+from metronix.core.models import LifecycleStatus
+from metronix.mcp.tools._memory_utils import parse_status_filter
 
 
 class TestParseStatusFilter:
