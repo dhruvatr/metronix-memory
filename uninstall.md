@@ -25,7 +25,7 @@ you set `COMPOSE_PROJECT_NAME`), substitute it accordingly.
 | Docker — volumes (data) | `metronix-memory_full_{pg,qdrant,neo4j,redis,ollama,file}_data` (+ `_openwebui_data`) |
 | Docker — built images | `metronix-memory-metronix-core`, `metronix-memory-splade` (+ `metronix-memory-embedding-proxy`) |
 | Docker — pulled images | `postgres:16-alpine`, `qdrant/qdrant:v1.18.0`, `neo4j:5-community`, `redis:7-alpine`, `ollama/ollama:latest` (+ `ghcr.io/open-webui/open-webui:main`) |
-| Repo root | `.env` (generated secrets), `metronix-hermes-setup.md` (paste-ready guide, if written) |
+| Repo root | `.env` (generated secrets), `metronix-hermes-setup/` (filled Hermes prompts, if written) |
 | `~/.hermes/` | `config.yaml` (`mcp_servers.metronix` block), `SOUL.md` (`--- metronix-config ---` block), plus `*.bak-<timestamp>` backups |
 
 ## 1. Stop the stack (reversible)
@@ -95,15 +95,17 @@ docker builder prune -f
 ## 4. Remove generated repo files
 
 The installer writes these into the repo root. `.env` is git-ignored;
-`metronix-hermes-setup.md` is a generated artifact you can safely delete. Removing them only
-affects your local deployment:
+`metronix-hermes-setup/` is a generated directory (filled Hermes prompts) you can safely
+delete. Removing them only affects your local deployment:
 
 ```bash
-rm -f .env metronix-hermes-setup.md
+rm -f .env
+rm -rf metronix-hermes-setup/
 ```
 
-> Keep `.env` if you plan to reinstall and want to preserve your secrets and database
-> passwords — `./install.sh` reuses an existing `.env` unless you pass `--reconfigure`.
+> Keep `.env` if you plan to reinstall and want to preserve your secrets, database
+> passwords, and the persisted agent id (`METRONIX_AGENT_ID`) — `./install.sh` reuses an
+> existing `.env` unless you pass `--reconfigure`.
 
 ## 5. Remove the MCP agent wiring (Hermes)
 
@@ -162,10 +164,11 @@ each line before running:
 # From the repo root
 docker compose -f docker-compose.full.yml down -v
 docker rmi metronix-memory-metronix-core:latest metronix-memory-splade:latest 2>/dev/null || true
-rm -f .env metronix-hermes-setup.md
-# Hermes: restore backups if present (see step 5 for the by-hand alternative)
-[ -e ~/.hermes/config.yaml.bak-* ] && cp $(ls -t ~/.hermes/config.yaml.bak-* | head -1) ~/.hermes/config.yaml
-[ -e ~/.hermes/SOUL.md.bak-*     ] && cp $(ls -t ~/.hermes/SOUL.md.bak-*     | head -1) ~/.hermes/SOUL.md
+rm -f .env
+rm -rf metronix-hermes-setup/
+# Hermes: restore the newest backup if present (see step 5 for the by-hand alternative)
+cfg=$(ls -t ~/.hermes/config.yaml.bak-* 2>/dev/null | head -1); [ -n "$cfg" ] && cp "$cfg" ~/.hermes/config.yaml
+soul=$(ls -t ~/.hermes/SOUL.md.bak-* 2>/dev/null | head -1); [ -n "$soul" ] && cp "$soul" ~/.hermes/SOUL.md
 ```
 
 Base images and the repo clone are left in place; remove them separately (step 3, and
