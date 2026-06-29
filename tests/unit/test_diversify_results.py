@@ -140,7 +140,7 @@ class TestDetectResponseLanguage:
         assert detect_response_language("Что делает команда на этой неделе?") == "Russian"
 
     def test_english_not_affected_by_single_russian_word(self) -> None:
-        assert detect_response_language("What about задача PROJ-123?") == "English"
+        assert detect_response_language("What about задача MTRNIX-123?") == "English"
 
     def test_pure_english_after_russian_history_not_mixed(self) -> None:
         """Language detection must use only the current question, not composite."""
@@ -202,7 +202,7 @@ class TestSourcesToMarkdown:
 
         sources = [f"\U0001f4c4 Page {i} \u2014 https://example.com/{i}" for i in range(10)]
         md = _sources_to_markdown(sources)
-        lines = [l for l in md.strip().splitlines() if l.startswith("- ")]
+        lines = [l for l in md.strip().splitlines() if l.startswith("- ")]  # noqa: E741
         assert len(lines) == 5
 
     def test_custom_limit(self) -> None:
@@ -210,7 +210,7 @@ class TestSourcesToMarkdown:
 
         sources = [f"\U0001f4c4 Page {i} \u2014 https://example.com/{i}" for i in range(10)]
         md = _sources_to_markdown(sources, limit=3)
-        lines = [l for l in md.strip().splitlines() if l.startswith("- ")]
+        lines = [l for l in md.strip().splitlines() if l.startswith("- ")]  # noqa: E741
         assert len(lines) == 3
 
     def test_empty_sources(self) -> None:
@@ -229,7 +229,7 @@ class TestJiraKeyRegex:
 
     def test_case_insensitive(self) -> None:
         keys = _JIRA_KEY_RE.findall("mtrnix-108")
-        assert [k.upper() for k in keys] == ["PROJ-108"]
+        assert [k.upper() for k in keys] == ["MTRNIX-108"]
 
     def test_no_match_without_key(self) -> None:
         assert _JIRA_KEY_RE.findall("What is the team doing?") == []
