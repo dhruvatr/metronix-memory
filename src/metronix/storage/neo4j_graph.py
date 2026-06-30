@@ -25,6 +25,16 @@ logger = structlog.get_logger()
 
 DEFAULT_WORKSPACE_ID = "MTRNIX"
 
+
+class GraphExtractionError(Exception):
+    """LLM-based graph extraction (NER) gave up after exhausting its retries.
+
+    Distinct from Neo4j/connection errors: this signals the *document* could not
+    be extracted (e.g. the LLM timed out repeatedly), so callers should park it
+    as ``graph_failed`` rather than retry it forever.
+    """
+
+
 _driver = None
 _driver_lock = Lock()
 
@@ -181,6 +191,10 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
     except Exception:
         pass  # telemetry is best-effort; never block the NER path
 
+    from metronix.core.config import get_settings
+
+    ner_timeout = get_settings().graph_extraction_llm_timeout
+
     content = ""
     for attempt in range(3):
         try:
@@ -197,7 +211,7 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
                 ],
                 temperature=0.1,
                 json_mode=True,
-                timeout=120,
+                timeout=ner_timeout,
                 call_site="ner_extraction",
             )
             break
@@ -212,8 +226,12 @@ def extract_graph_from_text(text: str, max_text_length: int = 8000) -> dict:
                 )
                 time.sleep(wait)
             else:
+                # Hard LLM failure (timeout / connection / 5xx) after all retries.
+                # Raise a typed error instead of returning empty entities: callers
+                # park the document as graph_failed (terminal) rather than marking
+                # it graph_synced with an empty graph or retrying it forever.
                 logger.error("graph.extract.failed", error=str(e))
-                return {"entities": [], "relationships": []}
+                raise GraphExtractionError(str(e)) from e
 
     content = content.strip()
     if "<think>" in content:

@@ -88,17 +88,17 @@ class TestMemoryReviewList:
         service = AsyncMock()
         service.list_review_entries = AsyncMock(return_value=([], 0))
 
-        with _patch_service(service) as patched:
+        with _patch_service(service):
             from metronix.mcp.tools.memory_review_list import (
                 metronix_memory_review_list,
             )
 
             await metronix_memory_review_list()
 
-        # Factory called with "default".
-        patched.call_args.args[0] if patched.call_args.args else None
-        # Simpler: assert service.list_review_entries's first positional arg.
-        assert service.list_review_entries.await_args.args[0] == "default"
+        # An omitted workspace resolves to the server default, not literal "default".
+        from metronix.mcp.config import get_default_workspace_id
+
+        assert service.list_review_entries.await_args.args[0] == get_default_workspace_id()
 
     async def test_service_failure_wrapped_in_internal_error(self) -> None:
         service = AsyncMock()

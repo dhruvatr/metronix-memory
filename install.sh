@@ -8,12 +8,14 @@ ENV_FILE=".env"
 EXAMPLE_FILE=".env.example"
 API_PORT=8000
 WEBUI_PORT=3080
+KB_PORT="${KB_FRONTEND_PORT:-3000}"   # honor KB_FRONTEND_PORT override (compose uses the same)
 
 MODE=""              # "memory" | "answers" (how Metronix is used)
 CHAT_URL=""          # OpenAI-compatible chat-model endpoint (answers mode)
 CHAT_MODEL=""        # model name the endpoint serves (answers mode)
 CHAT_API_KEY=""      # bearer token for the endpoint (optional; blank = no auth)
 ENABLE_WEBUI=false
+ENABLE_KB=false      # install the KB Admin Console web UI (profile kb)
 ASSUME_YES=false
 RECONFIGURE=false
 FRESH_DOCKER_RESET=false
@@ -95,6 +97,7 @@ Options:
   --chat-model <name>      Model the endpoint serves, e.g. deepseek-chat, llama3.1:8b
   --chat-api-key <key>     Bearer token for the endpoint (optional; blank = no auth)
   --openwebui              Enable the Open WebUI chat interface (:3080)
+  --kb                     Install the KB Admin Console web UI (:3000)
   --wire-hermes            Connect the Hermes agent to Metronix (edit ~/.hermes
                            config); with -y, apply without prompting. Also offered
                            interactively at the end of a normal install.
@@ -130,6 +133,7 @@ parse_args() {
       --agent-id)      [[ $# -ge 2 ]] || { err "--agent-id requires a value"; exit 2; }; AGENT_ID="$2"; shift 2 ;;
       --metronix-url)  [[ $# -ge 2 ]] || { err "--metronix-url requires a value"; exit 2; }; METRONIX_URL="$2"; shift 2 ;;
       --openwebui)   ENABLE_WEBUI=true; shift ;;
+      --kb)          ENABLE_KB=true; shift ;;
       -y|--yes)      ASSUME_YES=true; shift ;;
       --reconfigure) RECONFIGURE=true; shift ;;
       --fresh-docker-reset) FRESH_DOCKER_RESET=true; shift ;;
@@ -576,8 +580,10 @@ configure() {
   trap 'rm -f "$ENV_FILE"' EXIT
   cp "$EXAMPLE_FILE" "$ENV_FILE"
 
-  info "Vector embeddings run locally on the bundled Ollama (model: nomic-embed-text),"
-  info "set up automatically. The choice below is only about answer generation (chat)."
+  info "Vector embeddings run locally on the bundled Ollama (model: nomic-embed-text)."
+  info "Knowledge-graph extraction and local answers run on the bundled Ollama (model: qwen2.5:3b),"
+  info "pulled automatically on first start. No external LLM is required by default."
+  info "The choice below is only about answer generation (chat)."
   info ""
 
   # Pick the scenario: pure memory store vs. Metronix generating answers itself.
@@ -630,14 +636,12 @@ configure() {
     set_env LLM_PROVIDER_URL "$CHAT_URL"
     set_env LLM_PROVIDER_MODEL "$CHAT_MODEL"
     set_env LLM_PROVIDER_API_KEY "$CHAT_API_KEY"
-    set_env OLLAMA_CHAT_MODEL ""   # bundled Ollama stays embeddings-only
     ok "Answer generation -> $CHAT_URL (model: $CHAT_MODEL)"
   else
-    # Memory store: the connected agent does the answering. No chat model is
-    # configured and the bundled Ollama never pulls one (embeddings only).
+    # Memory store: the connected agent does the answering. The bundled Ollama
+    # still runs a small local model (OLLAMA_LLM_MODEL) for graph extraction.
     set_env LLM_PROVIDER ollama
-    set_env OLLAMA_CHAT_MODEL ""
-    ok "Memory-store mode — no answer-generation model configured."
+    ok "Memory-store mode — answers come from the connected agent."
   fi
 
   # Open WebUI is a chat front-end — it only works once Metronix can generate
@@ -653,6 +657,16 @@ configure() {
     read -rp "Enable Open WebUI chat interface (:$WEBUI_PORT)? [Y/n]: " ans \
       || { err "Aborted (no input)."; exit 1; }
     [[ "$ans" =~ ^[Nn] ]] || ENABLE_WEBUI=true
+  fi
+
+  # KB Admin Console — a web admin panel for connecting data sources and chat-bot
+  # channels, uploading files, and monitoring service/database health. It talks to
+  # the REST API only (no chat model), so it works in any mode and is offered
+  # unconditionally. With --kb or -y it is enabled/skipped without prompting.
+  if [[ "$ENABLE_KB" == false && "$ASSUME_YES" == false ]]; then
+    read -rp "Install the KB Admin Console (web admin panel, :$KB_PORT)? [Y/n]: " ans \
+      || { err "Aborted (no input)."; exit 1; }
+    [[ "$ans" =~ ^[Nn] ]] || ENABLE_KB=true
   fi
 
   # Resolve secrets into plain variables first. A failed generator inside the
@@ -971,6 +985,7 @@ launch() {
 
   local args=(-f "$COMPOSE_FILE")
   [[ "$ENABLE_WEBUI" == true ]] && args+=(--profile openwebui)
+  [[ "$ENABLE_KB" == true ]] && args+=(--profile kb)
   args+=(up -d --build)
   info "Building and starting the stack (first run can take 10-15 min)..."
   if ! "${COMPOSE[@]}" "${args[@]}"; then
@@ -1051,6 +1066,7 @@ print_links() {
   ok "Metronix Core is up."
   info "  API:          http://localhost:$API_PORT"
   info "  MCP endpoint: http://localhost:$API_PORT/mcp"
+  [[ "$ENABLE_KB" == true ]] && info "  KB Console:   http://localhost:$KB_PORT"
   [[ "$ENABLE_WEBUI" == true ]] && info "  Open WebUI:   http://localhost:$WEBUI_PORT"
   info ""
   info "Manage the stack:"
