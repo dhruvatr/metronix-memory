@@ -72,6 +72,10 @@ L0  core/           Config, models, events, plugin interfaces
 Get a backend running in four steps. This is the shortest path; for the full guide
 (prerequisites, Open WebUI, ports, troubleshooting) see `[install.md](install.md)`.
 
+> **Requirements:** Docker with **≥6 GB RAM** (8 GB recommended) and ~15 GB free disk. The
+> default Docker Desktop allotment (~2 GB) is too small for the full stack plus the local
+> graph model and will OOM-kill syncs — raise it under Settings → Resources → Memory.
+
 ### 1. Clone
 
 ```bash
@@ -99,8 +103,8 @@ Flags: `--mode memory|answers`, `--chat-url`, `--chat-model`, `--chat-api-key`, 
 cp .env.example .env
 ```
 
-For **agent memory over MCP** (Hermes, Cursor, …) you only need the MCP auth key. Embeddings for ingest come from the bundled Ollama container (`nomic-embed-text`, pulled on first
-`docker compose up`) — no chat LLM in `.env`.
+For **agent memory over MCP** (Hermes, Cursor, …) you only need the MCP auth key. Embeddings for ingest come from the bundled Ollama container (`nomic-embed-text`), and a small graph model (`qwen2.5:3b`) is pulled alongside it for knowledge-graph extraction — both on first
+`docker compose up`. No external chat LLM is required in `.env`.
 
 ```bash
 METRONIX_MCP_API_KEY=...   # generate: openssl rand -hex 32

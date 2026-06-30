@@ -112,13 +112,12 @@ class Settings(BaseSettings):
 
     # --- Ollama (embeddings) ---
     ollama_host: str = Field("http://localhost:11434", alias="OLLAMA_HOST")
-    ollama_chat_model: str = Field("llama3.1:8b", alias="OLLAMA_CHAT_MODEL")
     ollama_embed_model: str = Field("nomic-embed-text", alias="OLLAMA_EMBED_MODEL")
 
     # --- Ollama (LLM, separate from embeddings) ---
     ollama_llm_host: str = Field("", alias="OLLAMA_LLM_HOST")
     ollama_llm_port: int = Field(11434, alias="OLLAMA_LLM_PORT")
-    ollama_llm_model: str = Field("llama3", alias="OLLAMA_LLM_MODEL")
+    ollama_llm_model: str = Field("qwen2.5:3b", alias="OLLAMA_LLM_MODEL")
 
     # --- LLM provider selection ---
     llm_provider: str = Field("ollama", alias="LLM_PROVIDER")
@@ -196,6 +195,10 @@ class Settings(BaseSettings):
     graph_extraction_enabled: bool = Field(True, alias="GRAPH_EXTRACTION_ENABLED")
     graph_extraction_workers: int = Field(1, alias="GRAPH_EXTRACTION_WORKERS")
     graph_extraction_min_chars: int = Field(100, alias="GRAPH_EXTRACTION_MIN_CHARS")
+    # Per-call timeout (seconds) for the NER/extraction LLM call. Local CPU
+    # inference of a small model over a full document can take minutes, so the
+    # default is generous; raise it on slow hardware, lower it for fast endpoints.
+    graph_extraction_llm_timeout: int = Field(300, alias="GRAPH_EXTRACTION_LLM_TIMEOUT")
 
     # --- Embedding cache ---
     embedding_cache_ttl: int = Field(3600, alias="EMBEDDING_CACHE_TTL")
@@ -276,9 +279,7 @@ class Settings(BaseSettings):
     freshness_decision_confidence_threshold: float = Field(
         default=0.7, alias="METRONIX_FRESHNESS_DECISION_CONFIDENCE_THRESHOLD"
     )
-    freshness_llm_model: str = Field(
-        default="qwen2.5-4b-instruct-q4", alias="METRONIX_FRESHNESS_LLM_MODEL"
-    )
+    freshness_llm_model: str = Field(default="qwen2.5:3b", alias="METRONIX_FRESHNESS_LLM_MODEL")
     freshness_llm_provider: str = Field(default="", alias="METRONIX_FRESHNESS_LLM_PROVIDER")
     freshness_llm_api_base_url: str = Field(
         default="", alias="METRONIX_FRESHNESS_LLM_API_BASE_URL"
@@ -543,6 +544,22 @@ class Settings(BaseSettings):
                 return host
             return f"{host}:{self.ollama_llm_port}"
         return f"http://{host}:{self.ollama_llm_port}"
+
+    def model_for_provider(self, provider: str) -> str:
+        """Return the configured model name for an LLM provider, or "".
+
+        Single source of truth for the provider -> model-attribute mapping
+        (previously inlined in retrieval/search.py as _PROVIDER_MODEL_ATTR).
+        """
+        attr = {
+            "ollama": "ollama_llm_model",
+            "deepseek": "deepseek_model",
+            "openrouter": "openrouter_model",
+            "custom": "custom_llm_model",
+        }.get(provider, "")
+        if not attr:
+            return ""
+        return getattr(self, attr, "") or ""
 
     @field_validator("log_level")
     @classmethod
