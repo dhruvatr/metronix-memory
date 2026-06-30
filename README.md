@@ -160,10 +160,10 @@ durable memory.
 ## Connect An Agent
 
 After Metronix is running, connect your agent through MCP. See
-`[connecting_to_agent.md](connecting_to_agent.md)` for the full walkthrough, which offers two
+[connecting_to_agent.md](connecting_to_agent.md) for the full walkthrough, which offers two
 paths:
 
-- **Prompt-based** — paste the prompts from `[prompts.md](prompts.md)` into your agent and it
+- **Prompt-based** — paste the prompts from [prompts.md](prompts.md) into your agent and it
 configures itself. The fastest path.
 - **Manual** — register the MCP connection by hand, no LLM involved (memory policy and
 migration are done via the prompts).
@@ -173,12 +173,12 @@ id, and a workspace id.
 
 Runtime-specific guides:
 
-- `[docs/integrations/cursor.md](docs/integrations/cursor.md)`
-- `[docs/integrations/claude-desktop.md](docs/integrations/claude-desktop.md)`
-- `[docs/integrations/hermes.md](docs/integrations/hermes.md)`
-- `[docs/integrations/openwebui.md](docs/integrations/openwebui.md)`
-- `[docs/integrations/librechat.md](docs/integrations/librechat.md)`
-- `[docs/integrations/openclaw.md](docs/integrations/openclaw.md)`
+- [docs/integrations/cursor.md](docs/integrations/cursor.md)
+- [docs/integrations/claude-desktop.md](docs/integrations/claude-desktop.md)
+- [docs/integrations/hermes.md](docs/integrations/hermes.md)
+- [docs/integrations/openwebui.md](docs/integrations/openwebui.md)
+- [docs/integrations/librechat.md](docs/integrations/librechat.md)
+- [docs/integrations/openclaw.md](docs/integrations/openclaw.md)
 
 ---
 
