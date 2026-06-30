@@ -138,6 +138,12 @@ curl http://localhost:8000/health
 A healthy backend exposes the REST API, the OpenAI-compatible API at `:8000/v1`, and the
 MCP endpoint at `:8000/mcp` (default on the host: `http://localhost:8000/mcp` — the
 `metronix-full-api` container, path `/mcp`; from Docker network: `http://metronix-core:8000/mcp`).
+If you have installed the KnowledgeBase-UI (e.g. http://localhost:3000), log in with your Metronix credentials.
+Default credentials:
+```bash
+login: admin@metronix.local
+pass: metronix
+```
 
 **Next steps:**
 
