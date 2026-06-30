@@ -147,11 +147,11 @@ pass: metronix
 
 **Next steps:**
 
-- `[install.md](install.md)` — full installation info: prerequisites, Open
+- [install.md](install.md) — full installation info: prerequisites, Open
 WebUI, ports, and troubleshooting.
-- `[connecting_to_agent.md](connecting_to_agent.md)` — connect an agent over MCP and give it
+- [connecting_to_agent.md](connecting_to_agent.md) — connect an agent over MCP and give it
 durable memory.
-- `[prompts.md](prompts.md)` — the agent setup prompts, ready to paste.
+- [prompts.md](prompts.md) — the agent setup prompts, ready to paste.
 
 ---
 
@@ -195,7 +195,7 @@ It ships as an optional service behind the `kb` Docker Compose profile:
 docker compose -f docker-compose.full.yml --profile kb up -d --build   # → http://localhost:3000
 ```
 
-See `[frontend/README.md](frontend/README.md)` for development, build, and configuration details.
+See [frontend/README.md](frontend/README.md) for development, build, and configuration details.
 
 > The full operational **Control Center** (agent registry, workflow builder, memory inspector,
 > FinOps) is a separate product and is not part of this repository.
