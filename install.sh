@@ -20,6 +20,7 @@ ASSUME_YES=false
 RECONFIGURE=false
 FRESH_DOCKER_RESET=false
 WIRE_HERMES=false    # run the Hermes wiring step (and, with -y, apply without prompt)
+WIRE_OPENCLAW=false  # run the OpenClaw wiring step (and, with -y, apply without prompt)
 AGENT_ID=""          # override the generated X-Agent-Id (Hermes wiring)
 METRONIX_URL=""      # override the MCP URL written into the agent config
 COMPOSE=()
@@ -101,6 +102,9 @@ Options:
   --wire-hermes            Connect the Hermes agent to Metronix (edit ~/.hermes
                            config); with -y, apply without prompting. Also offered
                            interactively at the end of a normal install.
+  --wire-openclaw          Connect the OpenClaw agent to Metronix (edit ~/.openclaw
+                           config); with -y, apply without prompting. Also offered
+                           interactively at the end of a normal install.
   --agent-id <id>          Override the generated agent id (X-Agent-Id)
   --metronix-url <url>     MCP URL written into the agent config
                            (default http://localhost:8000/mcp)
@@ -136,6 +140,7 @@ parse_args() {
       --chat-model)   [[ $# -ge 2 ]] || { err "--chat-model requires a value"; exit 2; }; CHAT_MODEL="$2"; shift 2 ;;
       --chat-api-key) [[ $# -ge 2 ]] || { err "--chat-api-key requires a value"; exit 2; }; CHAT_API_KEY="$2"; shift 2 ;;
       --wire-hermes)   WIRE_HERMES=true; shift ;;
+      --wire-openclaw) WIRE_OPENCLAW=true; shift ;;
       --agent-id)      [[ $# -ge 2 ]] || { err "--agent-id requires a value"; exit 2; }; AGENT_ID="$2"; shift 2 ;;
       --metronix-url)  [[ $# -ge 2 ]] || { err "--metronix-url requires a value"; exit 2; }; METRONIX_URL="$2"; shift 2 ;;
       --openwebui)   ENABLE_WEBUI=true; shift ;;
