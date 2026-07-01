@@ -78,8 +78,8 @@ class TestProfileWeights:
         assert set(QUERY_PROFILE_WEIGHTS[profile].keys()) == expected_keys
 
     def test_mixed_profile_weights(self) -> None:
-        """mixed (fallback) profile weights. NOTE (PROJ-397): these are the grid-searched
-        values committed on develop; they intentionally diverge from compute_signal_score()'s
+        """mixed (fallback) profile weights. NOTE (PROJ-397): these are the committed
+        grid-searched values; they intentionally diverge from compute_signal_score()'s
         own defaults. All profile weights — mixed included — are re-derived by the Phase 6
         grid-search re-run (S-grid); update here if that run changes them.
         """
