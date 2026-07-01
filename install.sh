@@ -462,7 +462,7 @@ wire_hermes() {
   resolve_agent_connection
 
   # Fallback in every can't/won't-auto-edit case: write the paste-ready guide.
-  local prompt_dir="./metronix-hermes-setup"
+  local prompt_dir="./metronix-agent-setup"
 
   if [[ -z "$H_KEY" ]]; then
     warn "No METRONIX_MCP_API_KEY in .env — cannot wire an agent without it."

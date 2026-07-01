@@ -292,9 +292,10 @@ After a successful install the script may **wire Hermes**:
 
 - Interactive prompt: edit `~/.hermes/config.yaml` + `SOUL.md`, or write a paste-ready guide.
 - `./install.sh --wire-hermes -y` — apply MCP wiring without prompting (requires existing `.env`).
-- Either way, filled prompts land in `**metronix-hermes-setup/`** (`1-install-mcp.md`,
-`2-memory-source.md`, `3-migrate.md`; gitignored). Paste prompts 2 and 3 after restarting
-Hermes — see `[docs/integrations/hermes.md](docs/integrations/hermes.md)`.
+- Either way, filled prompts land in **`metronix-agent-setup/`** (`1-install-mcp.md`,
+`2-memory-source.md`, `3-migrate.md`; gitignored) — the same directory every runtime uses.
+Paste prompts 2 and 3 after restarting Hermes — see
+`[docs/integrations/hermes.md](docs/integrations/hermes.md)`.
 
 Manual install: use `[connecting_to_agent.md](connecting_to_agent.md)` instead of the script
 for agent setup.
