@@ -91,7 +91,7 @@ Docker Desktop / OrbStack / `colima start` (macOS).
 ## 2. Clone the repository
 
 ```bash
-git clone -b develop https://github.com/mtrnix/metronix-memory.git
+git clone https://github.com/mtrnix/metronix-memory.git
 cd metronix-memory
 ```
 
