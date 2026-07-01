@@ -685,6 +685,9 @@ register_via_json_edit() {
   fi
   [[ -f "$config" ]] || printf '{}' > "$config"
   tmp="$(mktemp "$HOME/.metronix-claude.XXXXXX")"
+  # $u/$k/$a below are jq variables (bound via --arg), not shell variables —
+  # the filter is deliberately single-quoted so the shell leaves them alone.
+  # shellcheck disable=SC2016
   if ! jq_write "$config" \
       '(.mcpServers = (.mcpServers // {})) | (.mcpServers.metronix = {type:"http", url:$u, headers:{"Authorization":("Bearer " + $k), "X-Agent-Id":$a}})' \
       --arg u "$H_URL" --arg k "$H_KEY" --arg a "$H_AGENT" > "$tmp" 2>/dev/null; then
