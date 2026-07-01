@@ -6,12 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
-
-- **Breaking:** `POST /api/v1/auth/login` now requires `email`. Authenticate with the seeded
-  admin (`admin@metronix.local`) or another user account; requests sending only `password`
-  return `422`.
-
 ## [1.0.0] - 2026-06-29
 
 ### Added

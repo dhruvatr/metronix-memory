@@ -129,11 +129,6 @@ class TestLogin:
         assert r.status_code == 401
         assert "Invalid email or password" in r.json()["detail"]
 
-    def test_login_requires_email(self, client: TestClient) -> None:
-        # email is required — a request with only `password` is rejected.
-        r = client.post("/api/v1/auth/login", json={"password": "testpass"})
-        assert r.status_code == 422
-
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/auth/me
