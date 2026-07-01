@@ -81,7 +81,7 @@ Get a backend running in four steps. This is the shortest path; for the full gui
 ### 1. Clone
 
 ```bash
-git clone -b develop https://github.com/mtrnix/metronix-memory.git
+git clone https://github.com/mtrnix/metronix-memory.git
 cd metronix-memory
 ```
 

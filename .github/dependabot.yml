@@ -3,7 +3,7 @@ updates:
   # Python dependencies (uv lockfile + pyproject).
   - package-ecosystem: "uv"
     directory: "/"
-    target-branch: "develop"
+    target-branch: "main"
     schedule:
       interval: "weekly"
     # Paused during OSS launch: 0 stops new version-update PRs while still
@@ -23,7 +23,7 @@ updates:
   # GitHub Actions versions used in workflows.
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "develop"
+    target-branch: "main"
     schedule:
       interval: "weekly"
     # Paused during OSS launch (see note above). Restore to 5 to resume.

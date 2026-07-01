@@ -63,11 +63,11 @@ Before adding any import, verify the layer belongs below your target.
 Fork → Branch → Code → Test → Lint → PR
 ```
 
-1. **Branch** from `develop`: `feature/description` or `fix/description`
+1. **Branch** from `main`: `feature/description` or `fix/description`
 2. **Code** following existing patterns. No new dependencies without discussion.
 3. **Test** — every PR must pass `make test` and add tests for new behavior.
 4. **Lint** — run `make lint` and `make typecheck` before pushing.
-5. **PR** — open against `develop`, describe what and why, reference any issues.
+5. **PR** — open against `main`, describe what and why, reference any issues.
 
 ## Good First Issues
 

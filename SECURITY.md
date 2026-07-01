@@ -52,7 +52,7 @@ Security coverage applies to:
 
 | Version | Support |
 |---|---|
-| `develop` (latest) | ✅ Full support — security fixes land here first |
+| `main` (latest) | ✅ Full support — security fixes land here first |
 | Latest release tag | ✅ Security backports |
 | Older releases | ❌ Upgrade to latest |
 
