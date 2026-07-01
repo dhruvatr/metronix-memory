@@ -49,7 +49,7 @@ openclaw mcp set metronix '{"url":"http://localhost:8000/mcp","transport":"strea
 Verify with `openclaw mcp show metronix`.
 
 > **Confidence note:** the config path, CLI subcommands, and `SOUL.md` workspace path above
-> were confirmed against `docs.openclaw.ai` as of 2026-07-01. If a future OpenClaw release
+> were sourced from `docs.openclaw.ai` as of 2026-07-01. If a future OpenClaw release
 > changes its CLI or config schema, `openclaw mcp set`/`show --help` is the source of truth —
 > re-check there before assuming this doc is stale.
 >

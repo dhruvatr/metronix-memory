@@ -701,7 +701,9 @@ connect_agent() {
   info "Ready-to-paste prompts with the values above:    prompts.md"
 
   # Non-interactive runs keep the existing behavior: go straight to the Hermes
-  # step (-y and --wire-hermes are handled inside wire_hermes).
+  # step (-y and --wire-hermes are handled inside wire_hermes). --wire-openclaw -y
+  # never reaches this branch — main()'s own WIRE_OPENCLAW && ASSUME_YES shortcut
+  # intercepts and exits before connect_agent() is called.
   if [[ "$ASSUME_YES" == true ]]; then wire_hermes; return 0; fi
 
   info ""
