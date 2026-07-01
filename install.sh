@@ -395,6 +395,38 @@ yq_read() {
   fi
 }
 
+# openclaw detection: the CLI is required for the safe (schema-owned-by-the-tool)
+# edit path; a directory with no binary on PATH still counts as "found" so the
+# guide fallback still fires (rather than silently doing nothing), matching how
+# wire_hermes degrades when yq/Docker aren't available.
+openclaw_cli_available() { command -v openclaw >/dev/null 2>&1; }
+openclaw_found()         { openclaw_cli_available || [[ -d "$HOME/.openclaw" ]]; }
+
+# Minimal JSON string escaping for values we interpolate into a JSON literal
+# passed to `openclaw mcp set` (H_KEY/H_URL/H_AGENT are installer-controlled but
+# not guaranteed quote-free — e.g. a hand-edited METRONIX_MCP_API_KEY).
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+# Build the `openclaw mcp set metronix <json>` payload. Callers set H_URL / H_KEY
+# / H_AGENT first (resolve_agent_connection already does this for Hermes; reused
+# as-is here). Schema (url/transport/headers/timeout/connectTimeout) sourced from
+# https://docs.openclaw.ai/cli/mcp — re-verify there if OpenClaw's CLI changes.
+# The literal secret is written here by design — see this plan's Global
+# Constraints for why ${VAR}-style env indirection was rejected for OpenClaw.
+openclaw_mcp_json() {
+  local url key agent
+  url="$(json_escape "$H_URL")"
+  key="$(json_escape "$H_KEY")"
+  agent="$(json_escape "$H_AGENT")"
+  printf '{"url":"%s","transport":"streamable-http","headers":{"Authorization":"Bearer %s","X-Agent-Id":"%s"},"timeout":180,"connectTimeout":60}' \
+    "$url" "$key" "$agent"
+}
+
 # Classify a config: "has_metronix" | "has_mcp" (mcp_servers but no metronix) | "none".
 # Uses mikefarah-yq-compatible boolean reads (no jq-style if/then/else).
 hermes_mcp_state() {
