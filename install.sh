@@ -20,7 +20,7 @@ ASSUME_YES=false
 RECONFIGURE=false
 FRESH_DOCKER_RESET=false
 WIRE_HERMES=false    # run the Hermes wiring step (and, with -y, apply without prompt)
-WIRE_CLAUDE=false    # run the Claude Code wiring step (and, with -y, apply without prompt)
+CONNECT_CLAUDE=false    # run the Claude Code connection step (and, with -y, apply without prompt)
 AGENT_ID=""          # override the generated X-Agent-Id (Hermes/Claude Code wiring)
 METRONIX_URL=""      # override the MCP URL written into the agent config
 COMPOSE=()
@@ -102,7 +102,7 @@ Options:
   --wire-hermes            Connect the Hermes agent to Metronix (edit ~/.hermes
                            config); with -y, apply without prompting. Also offered
                            interactively at the end of a normal install.
-  --wire-claude            Connect Claude Code to Metronix (claude mcp add, or
+  --connect-claude         Connect Claude Code to Metronix (claude mcp add, or
                            edit ~/.claude.json if the CLI is unavailable); with
                            -y, apply without prompting (defaults to user scope).
                            Also offered interactively at the end of a normal
@@ -142,7 +142,7 @@ parse_args() {
       --chat-model)   [[ $# -ge 2 ]] || { err "--chat-model requires a value"; exit 2; }; CHAT_MODEL="$2"; shift 2 ;;
       --chat-api-key) [[ $# -ge 2 ]] || { err "--chat-api-key requires a value"; exit 2; }; CHAT_API_KEY="$2"; shift 2 ;;
       --wire-hermes)   WIRE_HERMES=true; shift ;;
-      --wire-claude)   WIRE_CLAUDE=true; shift ;;
+      --connect-claude)   CONNECT_CLAUDE=true; shift ;;
       --agent-id)      [[ $# -ge 2 ]] || { err "--agent-id requires a value"; exit 2; }; AGENT_ID="$2"; shift 2 ;;
       --metronix-url)  [[ $# -ge 2 ]] || { err "--metronix-url requires a value"; exit 2; }; METRONIX_URL="$2"; shift 2 ;;
       --openwebui)   ENABLE_WEBUI=true; shift ;;
@@ -266,7 +266,7 @@ claude_json_agent_id() {
 # request header — so METRONIX_AGENT_ID is purely the installer's own anchor.
 # Hermes and Claude Code share this one anchor by default (same human, same
 # memory), unless --agent-id is used to separate them explicitly.
-# wire_hermes() / wire_claude_code() persist the resolved value back to .env.
+# wire_hermes() / connect_claude_code() persist the resolved value back to .env.
 resolve_agent_id() {
   local config="$1" claude_config="$2" existing persisted
   if [[ -n "$AGENT_ID" ]]; then printf '%s' "$AGENT_ID"; return 0; fi
@@ -701,7 +701,7 @@ register_via_json_edit() {
   return 0
 }
 
-wire_claude_code() {
+connect_claude_code() {
   local printed="${AGENT_CONN_RESOLVED:-}"
   resolve_agent_connection
 
@@ -726,7 +726,7 @@ wire_claude_code() {
   fi
 
   # Which scope? Interactive: ask (default user). Non-interactive: always user,
-  # no override flag — --wire-claude just wires the common case unattended.
+  # no override flag — --connect-claude just connects the common case unattended.
   local scope=user
   if [[ "$ASSUME_YES" == false ]]; then
     info "Register Metronix at which Claude Code scope?"
@@ -794,11 +794,11 @@ connect_agent() {
   info "Setup walkthrough (auto and prompt-based paths): connecting_to_agent.md"
   info "Ready-to-paste prompts with the values above:    prompts.md"
 
-  # Non-interactive runs keep the existing behavior: --wire-claude picks Claude
+  # Non-interactive runs keep the existing behavior: --connect-claude picks Claude
   # Code, otherwise go straight to the Hermes step (-y and --wire-hermes are
   # handled inside wire_hermes; this preserves the historical default).
   if [[ "$ASSUME_YES" == true ]]; then
-    if [[ "$WIRE_CLAUDE" == true ]]; then wire_claude_code; else wire_hermes; fi
+    if [[ "$CONNECT_CLAUDE" == true ]]; then connect_claude_code; else wire_hermes; fi
     return 0
   fi
 
@@ -810,7 +810,7 @@ connect_agent() {
   read -rp "Choose 1, 2 or 3 [default: 1]: " ans || { err "Aborted (no input)."; exit 1; }
   case "${ans:-1}" in
     1|"") wire_hermes ;;
-    2)    wire_claude_code ;;
+    2)    connect_claude_code ;;
     3)    write_generic_prompt_dir "./metronix-agent-setup" ;;
     *)    err "Invalid choice: $ans"; exit 1 ;;
   esac
@@ -1418,9 +1418,9 @@ main() {
     wire_hermes
     exit 0
   fi
-  if [[ "$WIRE_CLAUDE" == true && "$ASSUME_YES" == true ]]; then
+  if [[ "$CONNECT_CLAUDE" == true && "$ASSUME_YES" == true ]]; then
     [[ -f "$ENV_FILE" ]] || { err "$ENV_FILE not found — run a full install first, or cd to the deployment dir."; exit 1; }
-    wire_claude_code
+    connect_claude_code
     exit 0
   fi
   check_prereqs

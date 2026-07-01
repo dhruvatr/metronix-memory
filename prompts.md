@@ -31,7 +31,7 @@ only at startup:
 
 > **Claude Code users:** Claude Code has shell access, so it can apply Prompt 1 itself —
 > it runs `claude mcp add` (or edits `~/.claude.json` as a fallback) instead of you doing it
-> by hand. `./install.sh --wire-claude` automates this same step outside the agent entirely.
+> by hand. `./install.sh --connect-claude` automates this same step outside the agent entirely.
 > See [`docs/integrations/claude-code.md`](docs/integrations/claude-code.md) and the
 > Claude-Code-specific prompt templates the installer fills into
 > `metronix-claude-code-setup/`.

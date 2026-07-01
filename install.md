@@ -22,7 +22,7 @@ Common flags (see `./install.sh --help` for the full list):
 | `--openwebui`                                  | Enable Open WebUI (`:3080`); only applies in **answers** mode                 |
 | `--kb`                                         | Install the KB Admin Console web UI (`:3000`); works in **any** mode          |
 | `--wire-hermes`                                | Connect Hermes after install (or `./install.sh --wire-hermes -y` alone)       |
-| `--wire-claude`                                | Connect Claude Code after install (or `./install.sh --wire-claude -y` alone)  |
+| `--connect-claude`                             | Connect Claude Code after install (or `./install.sh --connect-claude -y` alone) |
 | `--agent-id`, `--metronix-url`                 | Override agent id / MCP URL written into the agent config                     |
 | `--reconfigure`                                | Re-run `.env` setup even if `.env` already exists                             |
 | `--fresh-docker-reset`                         | Delete Metronix containers, images, volumes, and build cache before reinstall |
@@ -297,7 +297,7 @@ interactively, or force one with a flag:
   guide for any other client.
 - `./install.sh --wire-hermes -y` — apply Hermes MCP wiring without prompting (requires
   existing `.env`).
-- `./install.sh --wire-claude -y` — apply Claude Code MCP wiring without prompting, at
+- `./install.sh --connect-claude -y` — apply Claude Code MCP wiring without prompting, at
   **user** scope by default (requires existing `.env`).
 - Either way, filled prompts land in `metronix-hermes-setup/` or `metronix-claude-code-setup/`
   (`1-install-mcp.md`, `2-memory-source.md`, `3-migrate.md`; gitignored). Paste prompts 2 and 3

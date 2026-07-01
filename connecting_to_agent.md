@@ -62,7 +62,7 @@ the concrete paths — use it alongside whichever path you choose below:
   `file`, `terminal`, and `code_execution` toolsets for prompt-based setup (enabled by
   default after Hermes *Full Setup*)
 - **Claude Code** — [`docs/integrations/claude-code.md`](docs/integrations/claude-code.md) —
-  auto-wireable via `./install.sh --wire-claude` (runs `claude mcp add`); has shell access,
+  auto-connectable via `./install.sh --connect-claude` (runs `claude mcp add`); has shell access,
   so prompt-based setup works directly
 - **Cursor** — [`docs/integrations/cursor.md`](docs/integrations/cursor.md)
 - **Claude Desktop** — [`docs/integrations/claude-desktop.md`](docs/integrations/claude-desktop.md)

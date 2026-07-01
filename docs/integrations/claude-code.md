@@ -26,8 +26,8 @@ X-Agent-Id:     <stable-claude-code-agent-id>
 
 ### Automatic (installer)
 
-`./install.sh --wire-claude` (interactive, offered at the end of a normal
-install) or `./install.sh --wire-claude -y` (non-interactive, requires an
+`./install.sh --connect-claude` (interactive, offered at the end of a normal
+install) or `./install.sh --connect-claude -y` (non-interactive, requires an
 existing `.env`) runs `claude mcp add` for you. If the `claude` CLI isn't on
 PATH, it falls back to a validated, backed-up edit of `~/.claude.json` via
 `jq`. Either way, if it can't safely apply the change it writes ready-to-paste
