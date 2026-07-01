@@ -707,11 +707,13 @@ connect_agent() {
   info ""
   info "Which agent do you want to connect?"
   info "  1) Hermes - edit ~/.hermes for me, or generate paste-ready prompts   [default]"
-  info "  2) Another MCP client (Cursor, Claude Desktop/Code, Codex, ...) - generate paste-ready prompts"
-  read -rp "Choose 1 or 2 [default: 1]: " ans || { err "Aborted (no input)."; exit 1; }
+  info "  2) OpenClaw - edit ~/.openclaw for me, or generate paste-ready prompts"
+  info "  3) Another MCP client (Cursor, Claude Desktop/Code, Codex, ...) - generate paste-ready prompts"
+  read -rp "Choose 1, 2 or 3 [default: 1]: " ans || { err "Aborted (no input)."; exit 1; }
   case "${ans:-1}" in
     1|"") wire_hermes ;;
-    2)    write_generic_prompt_dir "./metronix-agent-setup" ;;
+    2)    wire_openclaw ;;
+    3)    write_generic_prompt_dir "./metronix-agent-setup" ;;
     *)    err "Invalid choice: $ans"; exit 1 ;;
   esac
 }
@@ -1316,6 +1318,11 @@ main() {
   if [[ "$WIRE_HERMES" == true && "$ASSUME_YES" == true ]]; then
     [[ -f "$ENV_FILE" ]] || { err "$ENV_FILE not found — run a full install first, or cd to the deployment dir."; exit 1; }
     wire_hermes
+    exit 0
+  fi
+  if [[ "$WIRE_OPENCLAW" == true && "$ASSUME_YES" == true ]]; then
+    [[ -f "$ENV_FILE" ]] || { err "$ENV_FILE not found — run a full install first, or cd to the deployment dir."; exit 1; }
+    wire_openclaw
     exit 0
   fi
   check_prereqs

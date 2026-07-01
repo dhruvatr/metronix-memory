@@ -122,4 +122,31 @@ work5="$(mktemp -d)"; cp "$REPO/prompts.md" "$work5/prompts.md"
 chk "bare -y -> not registered" "$([[ -f "$osd5/metronix.json" ]] && echo yes || echo no)" "no"
 chk "bare -y -> prompt dir written" "$([[ -d "$work5/metronix-agent-setup" ]] && echo yes || echo no)" "yes"
 
+echo "Task6: connect_agent menu includes OpenClaw as option 2"
+STUB_ENV4='get_env(){ case $1 in METRONIX_MCP_API_KEY) echo K;; DEFAULT_WORKSPACE_ID) echo MTRNIX;; esac; }'
+hd6="$(mktemp -d)"
+# Pipe "2" as the menu answer so the case statement dispatches to wire_openclaw;
+# with no ~/.openclaw under this fresh HOME, wire_openclaw takes its "not found"
+# branch and logs "OpenClaw not found" — proving dispatch actually reached it
+# (not just that the menu text looks right). PATH is sandboxed to /usr/bin:/bin so
+# a real `openclaw` CLI possibly installed on this machine can't leak through and
+# take wire_openclaw down the (interactive, stdin-exhausted) edit path instead.
+menu_out="$(HOME="$hd6" PATH="/usr/bin:/bin" bash -c "source '$INSTALL'; $STUB_ENV4; connect_agent" <<< "2" 2>&1)"
+chk "menu lists OpenClaw as option 2" "$(printf '%s' "$menu_out" | grep -c '2) OpenClaw')" "1"
+chk "menu lists Another MCP client as option 3" "$(printf '%s' "$menu_out" | grep -c '3) Another MCP client')" "1"
+chk "choosing 2 reaches wire_openclaw" "$(printf '%s' "$menu_out" | grep -c 'OpenClaw not found')" "1"
+chk "choosing 2 does not hit Invalid choice" "$(printf '%s' "$menu_out" | grep -c 'Invalid choice')" "0"
+
+echo "Task6b: standalone --wire-openclaw does not build the stack"
+hd="$(mktemp -d)"; work="$(mktemp -d)"; cp "$INSTALL" "$work/install.sh"; cp "$REPO/prompts.md" "$work/prompts.md"
+printf 'METRONIX_MCP_API_KEY=K\nDEFAULT_WORKSPACE_ID=MTRNIX\n' > "$work/.env"
+# PATH is sandboxed here for the same reason as the Task5 "absent" cases above:
+# this invocation uses -y (ASSUME_YES=true), so a leaked real `openclaw` CLI would
+# deterministically drive wire_openclaw into method=edit and run a REAL
+# `openclaw mcp set` against this machine's actual ~/.openclaw/openclaw.json — not
+# just a wrong test result, an actual mutation of the developer's real config.
+( cd "$work" && HOME="$hd" PATH="/usr/bin:/bin" bash -c "source ./install.sh; launch(){ echo BUILT; }; wait_health(){ :; }; print_links(){ :; }; check_prereqs(){ :; }; main --wire-openclaw -y" >/tmp/wo6.txt 2>&1 )
+chk "standalone did NOT build" "$(grep -q BUILT /tmp/wo6.txt && echo built || echo no)" "no"
+chk "standalone produced prompts (no ~/.openclaw present)" "$([[ -d "$work/metronix-agent-setup" ]] && echo yes || echo no)" "yes"
+
 echo ""; echo "TOTAL: $PASS passed, $FAIL failed"; [[ $FAIL -eq 0 ]]
