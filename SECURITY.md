@@ -20,14 +20,14 @@ Email: `security@mtrnix.com` (preferred) or use GitHub's [private vulnerability 
 |---|---|
 | Acknowledgement | Within 24 hours |
 | Triage and validation | Within 72 hours |
-| Fix development | Within 7 days (critical), 30 days (moderate) |
+| Fix development | Within 7 days for critical issues and 30 days for moderate issues.|
 | Coordinated disclosure | After fix is released and users have upgrade window |
 
 ### Disclosure Policy
 
 We follow coordinated disclosure:
 1. Fix is developed and tested
-2. Release is cut with the fix
+2. A Release is cut with the fix
 3. Advisory is published 7 days after release (to allow upgrades)
 4. Reporter is credited unless they request anonymity
 
@@ -35,7 +35,7 @@ We follow coordinated disclosure:
 
 Security coverage applies to:
 
-- **Metronix Core** — the API server, MCP server, ingestion/retrieval pipelines, memory service, connectors
+- **Metronix Core** — the API server, the MCP server, ingestion and retrieval pipelines, memory service, connectors
 - **Configuration** — `.env` handling, secrets management
 - **Authentication** — JWT, API keys, workspace isolation
 - **MCP transport** — stdio and streamable-http
@@ -58,7 +58,7 @@ Security coverage applies to:
 
 ## Security Best Practices for Deployers
 
-1. **Never expose** the API or MCP server to the public internet without a reverse proxy + TLS.
+1. **Never expose** the API or the MCP server to the public internet without a reverse proxy + TLS.
 2. **Rotate API keys** regularly. Use per-workspace keys with minimal scope.
 3. **Audit** your `.env` file — no defaults in production. All passwords must be unique.
 4. **Restrict** database ports (PostgreSQL, Qdrant, Neo4j, Redis) to Docker network — use `127.0.0.1:` bindings.
